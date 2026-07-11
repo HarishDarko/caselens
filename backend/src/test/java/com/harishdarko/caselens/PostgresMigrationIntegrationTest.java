@@ -32,7 +32,7 @@ class PostgresMigrationIntegrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -50,6 +50,16 @@ class PostgresMigrationIntegrationTest {
                 List<String> names = new ArrayList<>();
                 while (indexes.next()) names.add(indexes.getString(1));
                 assertThat(names).contains("idx_tickets_workspace_created", "uq_tickets_workspace_display_id");
+            }
+
+            try (ResultSet columns = statement.executeQuery(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'model_invocations'")) {
+                List<String> names = new ArrayList<>();
+                while (columns.next()) names.add(columns.getString(1));
+                assertThat(names).contains("ticket_id", "provider", "model_version", "prompt_version",
+                        "started_at", "ended_at", "latency_ms", "status", "sanitized_error_code",
+                        "input_tokens", "output_tokens");
+                assertThat(names).doesNotContain("raw_ticket", "request_body", "raw_response", "api_key");
             }
         }
     }

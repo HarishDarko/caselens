@@ -1,0 +1,14 @@
+version: v1
+policies:
+  - id: PAYMENT_CAPTURE_NO_SESSION
+    guidance: Verify session and payment state; do not promise a refund before confirmation.
+  - id: DUPLICATE_CHARGE_REVIEW
+    guidance: Collect transaction references and escalate for billing review.
+  - id: CHARGER_SITE_OUTAGE
+    guidance: Identify affected site scope and escalate operational impact.
+  - id: CONNECTOR_FAULT
+    guidance: Isolate connector-specific faults and check alternate connector availability.
+  - id: OCPP_CONNECTIVITY
+    guidance: Verify heartbeat, last-seen timestamp, and network path.
+  - id: ACCOUNT_AUTHORIZATION
+    guidance: Verify account or RFID state without requesting secrets.
