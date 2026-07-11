@@ -7,7 +7,7 @@ Implementation is in progress. The repository currently provides the executable 
 ## Prerequisites
 
 - Java 21 (newer installed JDKs must compile with the configured Java 21 target)
-- Node.js 22.13 LTS or Node.js 24+ and npm 10 or later
+- Node.js 22 LTS or Node.js 24 LTS and npm 10 or later
 - Docker Desktop with Docker Compose
 - PowerShell 7
 
@@ -35,10 +35,10 @@ Run the backend and frontend checks:
 Run each workspace directly:
 
 ```powershell
-./backend/mvnw.cmd -f ./backend/pom.xml spring-boot:run
+./scripts/backend-dev.ps1
 Set-Location frontend
 npm install
 npm run dev
 ```
 
-The backend reads runtime configuration from the environment variables listed in `.env.example`. Backend tests use an in-memory test profile and do not require PostgreSQL, LocalStack, or Docker.
+The backend helper loads the root `.env` file into its process before invoking Maven. Backend tests use an in-memory test profile and do not require PostgreSQL, LocalStack, or Docker.
