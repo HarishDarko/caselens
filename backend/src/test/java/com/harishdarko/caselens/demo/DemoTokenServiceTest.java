@@ -31,7 +31,10 @@ class DemoTokenServiceTest {
     @Test
     void rejectsATamperedTokenWithoutExposingVerificationDetails() {
         String token = service.create(UUID.randomUUID(), clock.instant().plusSeconds(3600));
-        String tampered = token.substring(0, token.length() - 1) + (token.endsWith("a") ? "b" : "a");
+        int signatureStart = token.lastIndexOf('.') + 1;
+        char firstSignatureCharacter = token.charAt(signatureStart);
+        char replacement = firstSignatureCharacter == 'A' ? 'B' : 'A';
+        String tampered = token.substring(0, signatureStart) + replacement + token.substring(signatureStart + 1);
 
         assertThatThrownBy(() -> service.verify(tampered))
                 .isInstanceOf(InvalidDemoTokenException.class)
