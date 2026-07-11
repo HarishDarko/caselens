@@ -1,0 +1,15 @@
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+target/
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+playwright-report/
+test-results/
+.superpowers/
