@@ -32,7 +32,7 @@ class PostgresMigrationIntegrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -66,7 +66,13 @@ class PostgresMigrationIntegrationTest {
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")) {
                 List<String> names = new ArrayList<>();
                 while (tables.next()) names.add(tables.getString(1));
-                assertThat(names).contains("outbox_event", "triage_job", "triage_attempt", "triage_result");
+                assertThat(names).contains("outbox_event", "triage_job", "triage_attempt", "triage_result",
+                        "triage_feedback", "evaluation_ground_truth");
+            }
+
+            try (ResultSet truth = statement.executeQuery("SELECT count(*) FROM evaluation_ground_truth")) {
+                assertThat(truth.next()).isTrue();
+                assertThat(truth.getInt(1)).isEqualTo(8);
             }
 
             try (ResultSet indexes = statement.executeQuery(

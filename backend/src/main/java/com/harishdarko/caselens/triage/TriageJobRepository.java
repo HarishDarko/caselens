@@ -16,6 +16,7 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
     Optional<TriageJob> findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(
             UUID ticketId, UUID workspaceId, int contentVersion);
     Page<TriageJob> findByWorkspaceIdAndStatusIn(UUID workspaceId, List<TriageJobStatus> statuses, Pageable pageable);
+    List<TriageJob> findByWorkspaceId(UUID workspaceId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
