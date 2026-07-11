@@ -9,15 +9,15 @@ class TicketRedactorTest {
 
     @Test
     void usesStablePlaceholdersWithoutChangingTheSourceInput() {
-        String subject = "Contact alex@example.com about payment ID PAY-99821";
-        String message = "alex@example.com called +1 416-555-0188. Card 4111 1111 1111 1111. "
+        String subject = "Contact reviewer@example.test about payment ID PAY-99821";
+        String message = "reviewer@example.test called +1 555-010-0188. Card 4111 1111 1111 1111. "
                 + "Payment ID PAY-99821 and RFID RFID-DEMO-A19 were rejected.";
 
         RedactedTicket redacted = redactor.redact(subject, message);
 
         assertThat(redacted.subject()).contains("[EMAIL_1]", "[PAYMENT_ID_1]");
         assertThat(redacted.message()).contains("[EMAIL_1]", "[PHONE_1]", "[CARD_1]", "[PAYMENT_ID_1]", "[RFID_1]");
-        assertThat(subject).isEqualTo("Contact alex@example.com about payment ID PAY-99821");
+        assertThat(subject).isEqualTo("Contact reviewer@example.test about payment ID PAY-99821");
         assertThat(message).contains("4111 1111 1111 1111");
     }
 
