@@ -14,3 +14,9 @@ terraform.tfvars
 playwright-report/
 test-results/
 .superpowers/
+
+# Local-only agent and continuation material
+AGENTS.md
+.agents/
+docs/PROJECT-HANDOFF.md
+docs/superpowers/
