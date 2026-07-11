@@ -25,7 +25,7 @@ class ApiExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<ProblemDetail> invalidArgument(IllegalArgumentException exception) {
-        return problem(HttpStatus.NOT_FOUND, "Not found", exception.getMessage());
+        return problem(HttpStatus.CONFLICT, "Invalid operation", "The requested operation is not valid");
     }
 
     @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class,

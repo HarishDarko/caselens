@@ -65,4 +65,15 @@ public class Ticket {
     public String getScenarioKey() { return scenarioKey; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    public void queue(Instant now) { transition(TicketStatus.QUEUED, now); }
+    public void processing(Instant now) { transition(TicketStatus.PROCESSING, now); }
+    public void completed(Instant now) { transition(TicketStatus.COMPLETED, now); }
+    public void failed(Instant now) { transition(TicketStatus.FAILED, now); }
+
+    private void transition(TicketStatus next, Instant now) {
+        Objects.requireNonNull(now, "Ticket timestamp is required");
+        this.status = Objects.requireNonNull(next, "Ticket status is required");
+        this.updatedAt = now;
+    }
 }

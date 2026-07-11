@@ -32,7 +32,7 @@ class PostgresMigrationIntegrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -60,6 +60,20 @@ class PostgresMigrationIntegrationTest {
                         "started_at", "ended_at", "latency_ms", "status", "sanitized_error_code",
                         "input_tokens", "output_tokens");
                 assertThat(names).doesNotContain("raw_ticket", "request_body", "raw_response", "api_key");
+            }
+
+            try (ResultSet tables = statement.executeQuery(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")) {
+                List<String> names = new ArrayList<>();
+                while (tables.next()) names.add(tables.getString(1));
+                assertThat(names).contains("outbox_event", "triage_job", "triage_attempt", "triage_result");
+            }
+
+            try (ResultSet indexes = statement.executeQuery(
+                    "SELECT indexname FROM pg_indexes WHERE tablename = 'triage_job'")) {
+                List<String> names = new ArrayList<>();
+                while (indexes.next()) names.add(indexes.getString(1));
+                assertThat(names).contains("uq_triage_job_active_ticket_version");
             }
         }
     }

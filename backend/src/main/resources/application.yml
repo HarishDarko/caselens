@@ -19,6 +19,8 @@ caselens:
   demo-passcode: ${CASELENS_DEMO_PASSCODE}
   session-secret: ${CASELENS_SESSION_SECRET}
   triage-queue-url: ${CASELENS_TRIAGE_QUEUE_URL}
+  queue:
+    enabled: ${CASELENS_QUEUE_ENABLED:false}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-3.5-flash}

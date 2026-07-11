@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.harishdarko.caselens.ticket.TicketRepository;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
@@ -8,11 +9,19 @@ import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class TriageConfiguration {
+    @Bean
+    @ConditionalOnMissingBean(OutboxPublisher.class)
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "caselens.queue.enabled", havingValue = "false", matchIfMissing = true)
+    OutboxPublisher outboxPublisher() {
+        return new NoopOutboxPublisher();
+    }
+
     @Bean
     PolicyCatalog policyCatalog() {
         return PolicyCatalog.defaultCatalog();
@@ -44,5 +53,12 @@ public class TriageConfiguration {
             PolicyCatalog policies, Clock clock, JpaModelInvocationRecorder invocationRecorder) {
         return new TriageEngine(new TicketRedactor(), provider, fallback, new SemanticValidator(policies),
                 new PriorityScorer(), invocationRecorder, clock);
+    }
+
+    @Bean
+    TriageWorker triageWorker(TriageJobRepository jobs, TicketRepository tickets, TriageResultRepository results,
+            TriageAttemptRepository attempts, TriageEngine engine, ObjectMapper objectMapper, Clock clock,
+            TriageMetrics metrics) {
+        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics);
     }
 }

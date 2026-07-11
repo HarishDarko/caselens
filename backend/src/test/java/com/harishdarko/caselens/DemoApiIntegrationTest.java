@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
     "CASELENS_DEMO_PASSCODE=reviewer",
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
     "CASELENS_TRIAGE_QUEUE_URL=http://localhost/unused",
+    "CASELENS_QUEUE_ENABLED=false",
     "spring.datasource.url=jdbc:h2:mem:api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
