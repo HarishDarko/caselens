@@ -15,6 +15,7 @@ terraform.tfvars
 playwright-report/
 test-results/
 .superpowers/
+.codex-remote-attachments/
 
 # Local-only agent and continuation material
 AGENTS.md

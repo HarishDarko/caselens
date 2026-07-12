@@ -4,7 +4,8 @@ locals {
 
 resource "aws_s3_bucket" "frontend" {
   bucket        = local.name
-  force_destroy = false
+  force_destroy = var.force_destroy_storage
+
 }
 
 resource "aws_s3_bucket_versioning" "frontend" {
@@ -29,7 +30,8 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
 
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "${local.name}-artifacts"
-  force_destroy = false
+  force_destroy = var.force_destroy_storage
+
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
@@ -58,10 +60,12 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
+
 }
 
 resource "aws_cloudfront_response_headers_policy" "frontend_security" {
   name = "${local.name}-security-headers"
+
 
   security_headers_config {
     content_security_policy {
@@ -147,6 +151,7 @@ resource "aws_sqs_queue" "dlq" {
   name                      = "${local.name}-triage-dlq"
   message_retention_seconds = 1209600
   sqs_managed_sse_enabled   = true
+
 }
 
 resource "aws_sqs_queue" "triage" {
@@ -164,21 +169,25 @@ resource "aws_secretsmanager_secret" "application" {
   name                    = "${local.name}/application"
   description             = "Runtime secrets are provisioned out-of-band; Terraform never stores their values."
   recovery_window_in_days = 7
+
 }
 
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${local.name}-api"
   retention_in_days = 30
+
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/aws/lambda/${local.name}-worker"
   retention_in_days = 30
+
 }
 
 resource "aws_cloudwatch_log_group" "relay" {
   name              = "/aws/lambda/${local.name}-relay"
   retention_in_days = 30
+
 }
 
 data "aws_iam_openid_connect_provider" "github" {
@@ -203,6 +212,7 @@ resource "aws_iam_role" "github_deploy" {
       }
     }]
   })
+
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
@@ -225,6 +235,7 @@ resource "aws_iam_role" "lambda_runtime" {
     Version   = "2012-10-17"
     Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }]
   })
+
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
@@ -316,6 +327,7 @@ resource "aws_apigatewayv2_api" "api" {
   count         = var.deploy_compute ? 1 : 0
   name          = "${local.name}-api"
   protocol_type = "HTTP"
+
 }
 
 resource "aws_apigatewayv2_integration" "api" {
@@ -366,6 +378,7 @@ resource "aws_cloudwatch_event_rule" "relay_schedule" {
   count               = var.deploy_compute ? 1 : 0
   name                = "${local.name}-relay-schedule"
   schedule_expression = "rate(1 minute)"
+
 }
 
 resource "aws_cloudwatch_event_target" "relay" {

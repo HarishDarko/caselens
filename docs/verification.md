@@ -9,7 +9,7 @@ Verified locally on 2026-07-12 from `feat/production-proof`.
 | Browser | 2 Playwright journeys passed; 2 project-specific skips are intentional |
 | Local API | Health endpoint returned `UP`; mock-provider queue round-trip completed with persisted result and feedback |
 | Providers | Groq, Gemini, and deterministic-provider adapter tests passed; live provider calls remain opt-in through the ignored local `.env` |
-| Terraform | `fmt -check`, provider initialization with the lockfile, `terraform validate`, and read-only base/compute plans passed |
+| Terraform | `fmt -check`, provider initialization with the lockfile, application and bootstrap `terraform validate`, read-only base/compute plans, and bootstrap state-bucket/destroy-role plan passed; destroy workflow YAML and safety guards parsed locally |
 | Containers | Backend and frontend multi-stage images built successfully; backend runs as UID 10001; frontend container smoke returned HTTP 200 |
 | Privacy | Secret-pattern scan found only explicit synthetic test configuration; `.env`, history notes, continuation docs, Terraform state, and generated dependencies remain ignored |
 

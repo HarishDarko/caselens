@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: 1.11.2
       - name: Terraform format check
         working-directory: infra/terraform
         run: terraform fmt -check -recursive
@@ -76,6 +76,12 @@ jobs:
         run: terraform init -backend=false -input=false
       - name: Terraform validate
         working-directory: infra/terraform
+        run: terraform validate
+      - name: Bootstrap Terraform init
+        working-directory: infra/terraform/bootstrap
+        run: terraform init -backend=false -input=false
+      - name: Bootstrap Terraform validate
+        working-directory: infra/terraform/bootstrap
         run: terraform validate
 
   security:

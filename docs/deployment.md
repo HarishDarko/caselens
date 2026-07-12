@@ -74,3 +74,55 @@ Before a production apply, configure all of the following:
 
 No cloud resource has been created by this deployment task. The first cloud
 mutation should be a reviewed Terraform plan followed by explicit approval.
+
+## Terraform state and teardown
+
+Terraform state is stored in a separate private, versioned S3 bucket so local
+runs and GitHub Actions share the same resource inventory. The state bucket is
+bootstrapped separately and is deliberately not destroyed with the CaseLens
+application stack.
+
+Create the state bucket once with the bootstrap stack, using a globally unique
+name:
+
+```powershell
+terraform -chdir=infra/terraform/bootstrap init
+terraform -chdir=infra/terraform/bootstrap plan `
+  -var="bucket_name=<globally-unique-state-bucket>"
+terraform -chdir=infra/terraform/bootstrap apply `
+  -var="bucket_name=<globally-unique-state-bucket>"
+```
+
+Read the bootstrap output and save the destroy role ARN as the protected
+GitHub **environment** secret `AWS_DESTROY_ROLE_ARN`:
+
+```powershell
+terraform -chdir=infra/terraform/bootstrap output -raw github_destroy_role_arn
+```
+
+Then initialize the application stack with that bucket before planning or
+applying it:
+
+```powershell
+terraform -chdir=infra/terraform init `
+  -backend-config="bucket=<globally-unique-state-bucket>" `
+  -backend-config="region=ca-central-1"
+```
+
+Set the same bucket name as the GitHub repository variable
+`CASELENS_TERRAFORM_STATE_BUCKET`. The existing `AWS_DEPLOY_ROLE_ARN` secret
+continues to serve normal artifact publication. The separate
+`AWS_DESTROY_ROLE_ARN` environment secret is used only by the protected
+teardown workflow and is created by the bootstrap stack, outside the
+application state that it destroys.
+
+After the demo, open **Actions → CaseLens Terraform Destroy**, run it on
+`feat/production-proof`, and type `DESTROY_CASELENS`. The protected `production`
+environment approves the workflow before it receives AWS credentials. The
+workflow then refuses the wrong branch, wrong confirmation, missing state
+configuration, or empty state; it prints the destroy plan and applies only that
+exact saved plan. It sets `force_destroy_storage=true` for this explicit
+teardown so current and versioned demo bucket objects are removed before bucket
+deletion. It removes the application resources but preserves the state bucket
+for recovery. Delete the bootstrap stack separately only when the project and
+its Terraform history are no longer needed.

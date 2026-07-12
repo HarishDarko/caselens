@@ -80,3 +80,9 @@ variable "alarm_topic_arns" {
   type    = list(string)
   default = []
 }
+
+variable "force_destroy_storage" {
+  description = "Allow the explicit teardown workflow to empty versioned application buckets before deletion."
+  type        = bool
+  default     = false
+}
