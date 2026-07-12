@@ -17,6 +17,7 @@ import java.util.function.IntSupplier;
 
 public final class GeminiTriageProvider implements TriageProvider {
     private static final String PROMPT_VERSION = "triage-v1";
+    private static final int MAX_RESPONSE_CHARS = 65_536;
     private final URI endpoint;
     private final String apiKey;
     private final String model;
@@ -24,10 +25,16 @@ public final class GeminiTriageProvider implements TriageProvider {
     private final ObjectMapper mapper;
     private final Duration requestTimeout;
     private final IntSupplier retryDelayMillis;
+    private final PolicyCatalog policyCatalog;
     private final PromptBuilder promptBuilder = new PromptBuilder(PROMPT_VERSION);
 
     public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
             ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis) {
+        this(endpoint, apiKey, model, client, mapper, requestTimeout, retryDelayMillis, PolicyCatalog.defaultCatalog());
+    }
+
+    public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
+            ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis, PolicyCatalog policyCatalog) {
         this.endpoint = Objects.requireNonNull(endpoint);
         this.apiKey = required(apiKey, "Gemini API key");
         this.model = required(model, "Gemini model");
@@ -35,6 +42,7 @@ public final class GeminiTriageProvider implements TriageProvider {
         this.mapper = Objects.requireNonNull(mapper);
         this.requestTimeout = Objects.requireNonNull(requestTimeout);
         this.retryDelayMillis = Objects.requireNonNull(retryDelayMillis);
+        this.policyCatalog = Objects.requireNonNull(policyCatalog);
     }
 
     @Override
@@ -50,6 +58,9 @@ public final class GeminiTriageProvider implements TriageProvider {
                 .build();
 
         HttpResponse<String> response = sendWithOneTransientRetry(httpRequest);
+        if (response.body().length() > MAX_RESPONSE_CHARS) {
+            throw new ProviderCallException("Gemini provider response was too large", "RESPONSE_TOO_LARGE");
+        }
         try {
             JsonNode root = mapper.readTree(response.body());
             String output = outputText(root);
@@ -105,7 +116,8 @@ public final class GeminiTriageProvider implements TriageProvider {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", model);
         root.put("input", promptBuilder.build(request, redactedTicket));
-        root.put("system_instruction", promptBuilder.systemInstruction());
+        root.put("system_instruction", promptBuilder.systemInstruction()
+                + " Use only policy identifiers permitted by the response schema; return an empty policyIds array when none apply.");
         root.put("store", false);
         ObjectNode responseFormat = root.putObject("response_format");
         responseFormat.put("type", "text");
@@ -132,7 +144,10 @@ public final class GeminiTriageProvider implements TriageProvider {
         evidenceProperties.putObject("quote").put("type", "string").put("minLength", 3).put("maxLength", 400);
         evidenceProperties.putObject("meaning").put("type", "string").put("minLength", 3).put("maxLength", 240);
         required(evidenceItem, "quote", "meaning");
-        properties.putObject("policyIds").put("type", "array").put("maxItems", 3).putObject("items").put("type", "string");
+        ObjectNode policyIds = properties.putObject("policyIds").put("type", "array").put("maxItems", 3);
+        ObjectNode policyId = policyIds.putObject("items").put("type", "string");
+        ArrayNode allowedPolicyIds = policyId.putArray("enum");
+        policyCatalog.ids().stream().sorted().forEach(allowedPolicyIds::add);
         properties.putObject("explanation").put("type", "string").put("minLength", 30).put("maxLength", 600);
         properties.putObject("recommendedActions").put("type", "array").put("minItems", 1).put("maxItems", 5)
                 .putObject("items").put("type", "string").put("minLength", 3).put("maxLength", 240);

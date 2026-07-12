@@ -52,6 +52,7 @@ class GeminiTriageProviderTest {
         assertThat(body.get()).contains("\"store\":false");
         assertThat(body.get()).contains("\"response_format\"");
         assertThat(body.get()).contains("\"additionalProperties\":false");
+        assertThat(body.get()).contains("PAYMENT_CAPTURE_NO_SESSION");
         assertThat(apiKey.get()).isEqualTo("secret-key");
         assertThat(body.get()).doesNotContain("secret-key");
     }
@@ -72,6 +73,19 @@ class GeminiTriageProviderTest {
                 .extracting(exception -> ((ProviderCallException) exception).errorCode())
                 .isEqualTo("AUTHENTICATION_FAILURE");
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void rejectsAnOversizedProviderResponseBeforeParsing() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/interactions", exchange -> respond(exchange, 200, "x".repeat(65_537)));
+        server.start();
+
+        assertThatThrownBy(() -> provider().analyze(request(), new RedactedTicket(
+                "Payment accepted", "Payment accepted but session never started.")))
+                .isInstanceOf(ProviderCallException.class)
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("RESPONSE_TOO_LARGE");
     }
 
     private GeminiTriageProvider provider() {

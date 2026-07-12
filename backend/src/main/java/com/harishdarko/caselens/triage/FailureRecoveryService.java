@@ -22,7 +22,7 @@ public class FailureRecoveryService {
     @Transactional(readOnly = true)
     public Page<TriageJobSnapshot> failures(UUID workspaceId, int page, int size) {
         PageRequest request = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
-        return jobs.findByWorkspaceIdAndStatusIn(workspaceId,
+        return jobs.findUnreplayedFailures(workspaceId,
                 List.of(TriageJobStatus.RETRYABLE_FAILURE, TriageJobStatus.TERMINAL_FAILURE), request)
                 .map(TriageJob::snapshot);
     }

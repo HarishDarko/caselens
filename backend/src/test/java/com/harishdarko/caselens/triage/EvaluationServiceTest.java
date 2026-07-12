@@ -118,6 +118,26 @@ class EvaluationServiceTest {
         assertThat(summary.failureRate()).isEqualTo(0.5);
     }
 
+    @Test
+    void calculatesFailureRateFromTheLatestReplayOutcome() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageJob original = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, CREATED);
+        original.claim(CREATED.plusMillis(10));
+        original.terminalFailure("PROVIDER_TIMEOUT", CREATED.plusMillis(20));
+        TriageJob replay = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1,
+                CREATED.plusSeconds(1));
+        replay.setReplayedFromJobId(original.getId());
+        replay.claim(CREATED.plusSeconds(1).plusMillis(10));
+        replay.complete(CREATED.plusSeconds(1).plusMillis(20));
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+
+        assertThat(service().summarize(workspaceId).failureRate()).isEqualTo(0.0);
+    }
+
     private EvaluationService service() {
         return new EvaluationService(results, jobs, tickets, feedback, groundTruth, invocations,
                 Clock.fixed(FINISHED, ZoneOffset.UTC));

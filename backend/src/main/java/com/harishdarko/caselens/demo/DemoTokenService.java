@@ -17,6 +17,9 @@ public final class DemoTokenService {
     private final Clock clock;
 
     public DemoTokenService(String secret, Clock clock) {
+        if (secret == null || secret.length() < 32) {
+            throw new IllegalArgumentException("Demo session secret must be at least 32 characters");
+        }
         this.algorithm = Algorithm.HMAC256(secret);
         this.clock = clock;
     }

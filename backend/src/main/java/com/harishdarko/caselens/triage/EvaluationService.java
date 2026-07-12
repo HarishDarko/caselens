@@ -76,11 +76,25 @@ public class EvaluationService {
         }
 
         List<ModelInvocation> storedInvocations = ticketIds.isEmpty() ? List.of() : invocations.findByTicketIds(ticketIds);
+        Map<JobKey, TriageJob> latestJobs = latestJobs(storedJobs);
         return new EvaluationSummary(clock.instant(), storedResults.size(), evaluated,
                 ratio(categoryMatches, evaluated), ratio(urgencyMatches, evaluated), ratio(fullMatches, evaluated),
                 ratio(corrections, storedResults.size()), percentile(latencies, 0.50), percentile(latencies, 0.95),
-                ratio((int) storedJobs.stream().filter(this::isFailure).count(),
-                        (int) storedJobs.stream().filter(this::isFinal).count()), usage(storedInvocations));
+                ratio((int) latestJobs.values().stream().filter(this::isFailure).count(),
+                        (int) latestJobs.values().stream().filter(this::isFinal).count()), usage(storedInvocations));
+    }
+
+    private Map<JobKey, TriageJob> latestJobs(List<TriageJob> storedJobs) {
+        Map<JobKey, TriageJob> latest = new HashMap<>();
+        for (TriageJob job : storedJobs) {
+            JobKey key = new JobKey(job.getTicketId(), job.getContentVersion());
+            TriageJob prior = latest.get(key);
+            if (prior == null || job.getCreatedAt().isAfter(prior.getCreatedAt())
+                    || (job.getCreatedAt().equals(prior.getCreatedAt()) && job.getId().compareTo(prior.getId()) > 0)) {
+                latest.put(key, job);
+            }
+        }
+        return latest;
     }
 
     private Map<UUID, TriageFeedback> latestFeedback(UUID workspaceId) {
@@ -135,4 +149,6 @@ public class EvaluationService {
         private long inputTokens;
         private long outputTokens;
     }
+
+    private record JobKey(UUID ticketId, int contentVersion) {}
 }

@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 interface DemoWorkspaceRepository extends JpaRepository<DemoWorkspace, UUID> {
     boolean existsByIdAndExpiresAtAfter(UUID id, Instant now);
+    long deleteByExpiresAtBefore(Instant now);
 }

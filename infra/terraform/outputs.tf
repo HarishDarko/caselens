@@ -1,0 +1,8 @@
+output "frontend_bucket_name" { value = aws_s3_bucket.frontend.bucket }
+output "cloudfront_distribution_id" { value = aws_cloudfront_distribution.frontend.id }
+output "cloudfront_domain_name" { value = aws_cloudfront_distribution.frontend.domain_name }
+output "triage_queue_url" { value = aws_sqs_queue.triage.url }
+output "triage_dlq_url" { value = aws_sqs_queue.dlq.url }
+output "github_deploy_role_arn" { value = aws_iam_role.github_deploy.arn }
+output "application_secret_arn" { value = aws_secretsmanager_secret.application.arn }
+output "api_url" { value = var.deploy_compute ? aws_apigatewayv2_stage.default[0].invoke_url : null }

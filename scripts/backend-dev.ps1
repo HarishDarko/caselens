@@ -23,5 +23,18 @@ foreach ($line in Get-Content -LiteralPath $environmentFile) {
     [Environment]::SetEnvironmentVariable($name, $value, 'Process')
 }
 
+if ([string]::IsNullOrWhiteSpace($env:SPRING_PROFILES_ACTIVE)) {
+    $env:SPRING_PROFILES_ACTIVE = 'local'
+}
+if ([string]::IsNullOrWhiteSpace($env:AWS_ENDPOINT_URL)) {
+    $env:AWS_ENDPOINT_URL = 'http://localhost:4566'
+}
+if ([string]::IsNullOrWhiteSpace($env:CASELENS_TRIAGE_QUEUE_URL)) {
+    $env:CASELENS_TRIAGE_QUEUE_URL = 'http://localhost:4566/000000000000/caselens-triage'
+}
+if ([string]::IsNullOrWhiteSpace($env:CASELENS_QUEUE_ENABLED)) {
+    $env:CASELENS_QUEUE_ENABLED = 'true'
+}
+
 & "$repositoryRoot\backend\mvnw.cmd" -f "$repositoryRoot\backend\pom.xml" spring-boot:run
 exit $LASTEXITCODE

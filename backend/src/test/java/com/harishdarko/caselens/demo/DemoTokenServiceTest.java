@@ -49,4 +49,11 @@ class DemoTokenServiceTest {
                 .isInstanceOf(InvalidDemoTokenException.class)
                 .hasMessage("Invalid or expired demo session");
     }
+
+    @Test
+    void rejectsAWeakSigningSecretAtStartup() {
+        assertThatThrownBy(() -> new DemoTokenService("short", clock))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Demo session secret must be at least 32 characters");
+    }
 }

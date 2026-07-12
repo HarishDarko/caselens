@@ -3,7 +3,9 @@ package com.harishdarko.caselens;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -48,6 +50,22 @@ class DemoApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+    }
+
+    @Test
+    void allowsTheConfiguredLocalReviewerOriginToCallTheApi() throws Exception {
+        mvc.perform(options("/api/tickets")
+                        .header("Origin", "http://localhost:4173")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "authorization,content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:4173"));
+    }
+
+    @Test
+    void keepsMetricsBehindDemoAuthentication() throws Exception {
+        mvc.perform(get("/actuator/metrics"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

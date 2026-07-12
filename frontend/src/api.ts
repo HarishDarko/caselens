@@ -1,0 +1,146 @@
+export type ApiTicket = {
+  id: string
+  displayId: string
+  subject: string
+  message: string
+  channel: string
+  status: string
+  scenarioKey: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type TicketPage = {
+  content: ApiTicket[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+}
+
+export type TriageProcessing = {
+  job: {
+    id: string
+    eventId: string
+    ticketId: string
+    status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
+    attemptCount: number
+    startedAt: string | null
+    completedAt: string | null
+    lastErrorCode: string | null
+    attempts: Array<Record<string, unknown>>
+  }
+  result: TriageResult | null
+}
+
+export type TriageResult = {
+  id: string
+  ticketId: string
+  category: string
+  urgency: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  slaRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  sentiment: string
+  summary: string
+  evidence: Array<{ quote: string; meaning: string } | string>
+  policyIds: string[]
+  explanation: string
+  recommendedActions: string[]
+  suggestedReply: string
+  reliabilitySignal: string
+  warnings: string[]
+  priorityScore: number
+  appliedRules: Array<{ code: string; points: number; explanation: string }>
+  decisionSource: 'AI_VALIDATED' | 'RULES_FALLBACK'
+  modelVersion: string
+  promptVersion: string
+  createdAt: string
+}
+
+export type FeedbackResponse = {
+  id: string
+  ticketId: string
+  originalResultId: string
+  correctedCategory: string
+  correctedUrgency: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  correctedSlaRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  note: string
+  submittedBy: string
+  createdAt: string
+}
+
+export type EvaluationSummary = {
+  generatedAt: string
+  triageResults: number
+  evaluatedResults: number
+  categoryAgreementRate: number
+  urgencyAgreementRate: number
+  agreementRate: number
+  correctionRate: number
+  medianLatencyMs: number
+  p95LatencyMs: number
+  failureRate: number
+  providerUsage: Array<{ provider: string; requests: number; successes: number; failures: number; inputTokens: number; outputTokens: number }>
+}
+
+export type FailurePage = {
+  content: Array<TriageProcessing['job']>
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+}
+
+type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseLensApi {
+  let token = ''
+
+  async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const headers = new Headers(init.headers)
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    const response = await fetcher(`${baseUrl.replace(/\/$/, '')}${path}`, { ...init, headers })
+    if (!response.ok) {
+      let detail = `Request failed with status ${response.status}`
+      try {
+        const problem = await response.json() as { detail?: string }
+        if (problem.detail) detail = problem.detail
+      } catch { /* Preserve the status-only error when the body is not JSON. */ }
+      throw new Error(detail)
+    }
+    if (response.status === 204) return undefined as T
+    return response.json() as Promise<T>
+  }
+
+  return {
+    createSession: (passcode) => request<{ token: string; expiresAt: string }>('/api/demo/session', {
+      method: 'POST', body: JSON.stringify({ passcode }),
+    }),
+    setToken: (value) => { token = value },
+    resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
+    listTickets: () => request<TicketPage>('/api/tickets?page=0&size=50'),
+    createScenario: (scenarioKey) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST' }),
+    requestTriage: (ticketId) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST' }),
+    getProcessing: (ticketId) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`),
+    submitFeedback: (ticketId, payload) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+    getEvaluation: () => request<EvaluationSummary>('/api/evaluation'),
+    listFailures: () => request<FailurePage>('/api/operations/failures?page=0&size=50'),
+    retryFailure: (jobId) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST' }),
+  }
+}
+
+export type CaseLensApi = {
+  createSession: (passcode: string) => Promise<{ token: string; expiresAt: string }>
+  setToken: (token: string) => void
+  resetDemo: () => Promise<{ seeded: number }>
+  listTickets: () => Promise<TicketPage>
+  createScenario: (scenarioKey: string) => Promise<ApiTicket>
+  requestTriage: (ticketId: string) => Promise<TriageProcessing['job']>
+  getProcessing: (ticketId: string) => Promise<TriageProcessing>
+  submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }) => Promise<FeedbackResponse>
+  getEvaluation: () => Promise<EvaluationSummary>
+  listFailures: () => Promise<FailurePage>
+  retryFailure: (jobId: string) => Promise<TriageProcessing['job']>
+}

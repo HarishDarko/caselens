@@ -18,13 +18,24 @@ caselens:
   ai-provider: ${CASELENS_AI_PROVIDER:mock}
   demo-passcode: ${CASELENS_DEMO_PASSCODE}
   session-secret: ${CASELENS_SESSION_SECRET}
+  web:
+    origins: ${CASELENS_WEB_ORIGINS:http://localhost:4173,http://127.0.0.1:4173}
   triage-queue-url: ${CASELENS_TRIAGE_QUEUE_URL}
   queue:
     enabled: ${CASELENS_QUEUE_ENABLED:false}
+  rate-limit:
+    default-per-minute: ${CASELENS_RATE_LIMIT_DEFAULT_PER_MINUTE:30}
+    session-per-minute: ${CASELENS_RATE_LIMIT_SESSION_PER_MINUTE:20}
+    triage-per-minute: ${CASELENS_RATE_LIMIT_TRIAGE_PER_MINUTE:30}
+    mutation-per-minute: ${CASELENS_RATE_LIMIT_MUTATION_PER_MINUTE:${CASELENS_RATE_LIMIT_DEFAULT_PER_MINUTE:30}}
+  cleanup:
+    initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:3600000}
+    fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:3600000}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-3.5-flash}
     endpoint: ${GEMINI_ENDPOINT:https://generativelanguage.googleapis.com/v1/interactions}
+    request-timeout: ${GEMINI_REQUEST_TIMEOUT:30s}
 
 aws:
   region: ${AWS_REGION:ca-central-1}
@@ -34,4 +45,19 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never

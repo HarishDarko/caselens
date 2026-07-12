@@ -38,14 +38,20 @@ public class TriageConfiguration {
             @Value("${caselens.gemini.endpoint:https://generativelanguage.googleapis.com/v1/interactions}") String endpoint,
             @Value("${caselens.gemini.api-key:}") String apiKey,
             @Value("${caselens.gemini.model:gemini-3.5-flash}") String model,
+            @Value("${caselens.gemini.request-timeout:30s}") Duration requestTimeout,
+            PolicyCatalog policyCatalog,
             ObjectMapper objectMapper) {
         if ("mock".equalsIgnoreCase(provider)) return new MockTriageProvider();
         if ("gemini".equalsIgnoreCase(provider)) {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+            HttpClient client = geminiHttpClient(Duration.ofSeconds(2));
             return new GeminiTriageProvider(URI.create(endpoint), apiKey, model, client, objectMapper,
-                    Duration.ofSeconds(8), () -> ThreadLocalRandom.current().nextInt(25, 126));
+                    requestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126), policyCatalog);
         }
         throw new IllegalArgumentException("Unsupported AI provider");
+    }
+
+    static HttpClient geminiHttpClient(Duration connectTimeout) {
+        return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(connectTimeout).build();
     }
 
     @Bean
