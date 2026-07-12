@@ -10,6 +10,19 @@
 - The static frontend build accepts `VITE_API_BASE_URL`, and Lambda API CORS
   accepts the configured `web_origins` list.
 
+## Local readiness evidence
+
+Verified on 2026-07-12 from `feat/production-proof`:
+
+- Terraform format check, provider initialization with the committed lockfile,
+  and `terraform validate` passed.
+- Backend and frontend production images built successfully.
+- The backend image declares non-root UID `10001`.
+- The frontend image served the built reviewer console with HTTP 200 from a
+  temporary local container.
+- Backend regression, frontend unit, lint, typecheck, build, and Playwright
+  checks passed; see `docs/verification.md` for the current counts.
+
 ## Required external setup
 
 Before a production apply, configure all of the following:
@@ -25,6 +38,6 @@ Before a production apply, configure all of the following:
    `false` by default because the current Spring Boot artifact is verified as a
    long-running local service, not yet as a Lambda-native handler artifact.
 
-No cloud resource or paid deployment action is performed by local verification.
-The first apply should be a reviewed Terraform plan followed by an explicit
-approval.
+The local AWS CLI currently has no credentials, so no Terraform plan, cloud
+resource, paid action, or deployment was attempted. The first cloud action
+should be a reviewed Terraform plan followed by explicit approval.
