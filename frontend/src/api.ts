@@ -18,6 +18,13 @@ export type TicketPage = {
   totalPages: number
 }
 
+export type RuntimeSummary = {
+  environment: 'LOCAL_REVIEW' | 'AWS_DEMO'
+  database: 'POSTGRESQL' | 'NEON_POSTGRESQL'
+  queue: 'LOCALSTACK_SQS' | 'AMAZON_SQS'
+  aiProvider: 'GROQ' | 'GEMINI' | 'DETERMINISTIC'
+}
+
 export type TriageProcessing = {
   job: {
     id: string
@@ -166,6 +173,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     }),
     setToken: (value) => { token = value },
     resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
+    getRuntimeSummary: () => request<RuntimeSummary>('/api/demo/runtime'),
     listTickets: () => request<TicketPage>('/api/tickets?page=0&size=50'),
     createScenario: (scenarioKey) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST' }),
     requestTriage: (ticketId) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST' }),
@@ -184,6 +192,7 @@ export type CaseLensApi = {
   createSession: (passcode: string) => Promise<{ token: string; expiresAt: string }>
   setToken: (token: string) => void
   resetDemo: () => Promise<{ seeded: number }>
+  getRuntimeSummary: () => Promise<RuntimeSummary>
   listTickets: () => Promise<TicketPage>
   createScenario: (scenarioKey: string) => Promise<ApiTicket>
   requestTriage: (ticketId: string) => Promise<TriageProcessing['job']>

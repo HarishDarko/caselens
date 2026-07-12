@@ -19,6 +19,7 @@ function mockBackend() {
     const url = String(input)
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 8 })
+    if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
     if (url.includes('/api/demo/scenarios/')) return response({ ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide' }, 201)
     if (url.includes('/api/tickets?page=')) return response({ content: [apiTicket], page: 0, size: 50, totalElements: 1, totalPages: 1 })
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: null, completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'RULES_FALLBACK', modelVersion: 'mock-v1', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
@@ -50,6 +51,10 @@ test('opens the reviewer workspace from the shared passcode screen', async () =>
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   expect(screen.getByText('Isolated demo workspace')).toBeInTheDocument()
+  expect(screen.getByText('Local review')).toBeInTheDocument()
+  expect(screen.getByText('Neon PostgreSQL')).toBeInTheDocument()
+  expect(screen.getByText('LocalStack SQS')).toBeInTheDocument()
+  expect(screen.getByText('Groq')).toBeInTheDocument()
 })
 
 test('opens the reviewer workspace from the real session and ticket endpoints', async () => {

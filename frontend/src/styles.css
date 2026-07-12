@@ -71,6 +71,8 @@ input, textarea { min-width: 0; width: 100%; border: 1px solid #bfc7c1; border-r
 .rail-footer { margin-top: auto; padding: 1rem .35rem 0; border-top: 1px solid #35403d; }
 .preview-label { display: flex; align-items: center; gap: .55rem; color: #d7e3dc; font: .68rem var(--mono); }
 .rail-footer p { color: #8fa39d; font-size: .68rem; line-height: 1.5; }
+.runtime-stack { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .7rem; }
+.runtime-stack span { padding: .24rem .38rem; border: 1px solid #42504b; color: #b8c8c1; font: .58rem var(--mono); }
 .text-button { padding: 0; border: 0; color: #75c9bb; background: transparent; font: .68rem var(--mono); }
 .workspace-main { min-width: 0; background: var(--paper); }
 .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 4.3rem; padding: 0 clamp(1.35rem, 4vw, 4rem); border-bottom: 1px solid var(--line); }
