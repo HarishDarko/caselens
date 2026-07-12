@@ -27,6 +27,11 @@ public class OperationsController {
         this.recovery = recovery;
     }
 
+    @GetMapping("/overview")
+    OperationsOverview overview(@AuthenticationPrincipal DemoPrincipal principal) {
+        return recovery.overview(principal.workspaceId());
+    }
+
     @GetMapping("/failures")
     FailurePageResponse failures(@AuthenticationPrincipal DemoPrincipal principal,
             @RequestParam(defaultValue = "0") @Min(0) int page,

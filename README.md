@@ -61,8 +61,13 @@ The local UI supports:
 - exact evidence, policies, explanations, recommended actions, and suggested replies;
 - AI-validated results with deterministic rules fallback;
 - human urgency corrections stored beside immutable original results;
-- evaluation metrics derived from persisted results and feedback;
-- operational failure visibility and retry actions.
+- evaluation metrics derived from persisted results and feedback, with a recent
+  event stream showing provider, model version, decision source, latency, and
+  reviewer correction state;
+- live operations telemetry for queued, processing, completed, retryable, and
+  terminal jobs, provider failures, rules fallbacks, recent processing, and
+  retry actions. Evaluation and Operations refresh every five seconds while
+  their views are open.
 
 ## Verification commands
 

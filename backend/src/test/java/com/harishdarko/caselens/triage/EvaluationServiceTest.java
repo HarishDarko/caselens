@@ -70,6 +70,59 @@ class EvaluationServiceTest {
             assertThat(usage.inputTokens()).isEqualTo(120L);
             assertThat(usage.outputTokens()).isEqualTo(40L);
         });
+        assertThat(summary.recentEvents()).singleElement().satisfies(event -> {
+            assertThat(event.provider()).isEqualTo("mock");
+            assertThat(event.modelVersion()).isEqualTo("mock-v1");
+            assertThat(event.decisionSource()).isEqualTo("AI_VALIDATED");
+            assertThat(event.evaluated()).isTrue();
+            assertThat(event.corrected()).isTrue();
+            assertThat(event.latencyMs()).isEqualTo(2000L);
+        });
+    }
+
+    @Test
+    void returnsRecentEvaluationEventsNewestFirst() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID olderTicketId = UUID.randomUUID();
+        UUID newerTicketId = UUID.randomUUID();
+        TriageResult older = resultAt(workspaceId, olderTicketId, FINISHED.minusSeconds(1));
+        TriageResult newer = resultAt(workspaceId, newerTicketId, FINISHED);
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(older, newer));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(invocations.findByTicketIds(List.of(olderTicketId, newerTicketId))).thenReturn(List.of());
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.recentEvents()).extracting(EvaluationEvent::resultId)
+                .containsExactly(newer.getId(), older.getId());
+    }
+
+    @Test
+    void reportsFallbackAndProviderFailureInRecentEvents() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageResult fallback = result(workspaceId, ticketId, DecisionSource.RULES_FALLBACK);
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), fallback.getEventId(), workspaceId, ticketId, 1, CREATED);
+        job.claim(CREATED.plusMillis(100));
+        job.complete(FINISHED);
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(fallback));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(invocations.findByTicketIds(List.of(ticketId))).thenReturn(List.of(ModelInvocation.from(
+                new ModelInvocationRecord(ticketId, "groq", "openai/gpt-oss-20b", "triage-v1", CREATED,
+                        CREATED.plusMillis(800), 800, "FAILURE", "SCHEMA_FAILURE", null, null))));
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.recentEvents()).singleElement().satisfies(event -> {
+            assertThat(event.provider()).isEqualTo("groq");
+            assertThat(event.decisionSource()).isEqualTo("RULES_FALLBACK");
+            assertThat(event.evaluated()).isFalse();
+            assertThat(event.corrected()).isFalse();
+        });
     }
 
     @Test
@@ -148,12 +201,24 @@ class EvaluationServiceTest {
     }
 
     private TriageResult result(UUID workspaceId, UUID ticketId) {
+        return result(workspaceId, ticketId, DecisionSource.AI_VALIDATED);
+    }
+
+    private TriageResult result(UUID workspaceId, UUID ticketId, DecisionSource source) {
+        return resultAt(workspaceId, ticketId, source, FINISHED);
+    }
+
+    private TriageResult resultAt(UUID workspaceId, UUID ticketId, Instant createdAt) {
+        return resultAt(workspaceId, ticketId, DecisionSource.AI_VALIDATED, createdAt);
+    }
+
+    private TriageResult resultAt(UUID workspaceId, UUID ticketId, DecisionSource source, Instant createdAt) {
         TriageResult result = TriageResult.from(UUID.randomUUID(), workspaceId,
                 new TriageDecision(ticketId, Category.CHARGING_SESSION, Urgency.MEDIUM, SlaRisk.MEDIUM,
                         Sentiment.NEGATIVE, "Charging session did not start", List.of(), List.of(),
                         "The session did not start.", List.of("Inspect the charger"), "We are reviewing it.",
-                        ReliabilitySignal.HIGH, List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"),
-                FINISHED, new ObjectMapper());
+                        ReliabilitySignal.HIGH, List.of(), 55, List.of(), source, "mock-v1", "triage-v1"),
+                createdAt, new ObjectMapper());
         return result;
     }
 }

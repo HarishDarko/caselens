@@ -23,6 +23,15 @@ requests, feedback, evaluation, and operational recovery. The queue worker
 owns processing and idempotent job claims. PostgreSQL is the durable source of
 truth; SQS is delivery infrastructure, not the system of record.
 
+The reviewer console keeps the operational views evidence-backed. The
+workspace-scoped evaluation summary joins persisted results, ground truth,
+feedback, jobs, and model invocations into bounded recent events. The
+workspace-scoped operations overview derives queue counts, fallback/provider
+failure totals, recent job state, and provider latency/token aggregates from
+the same database records. The browser polls only the active observability
+view, and the API response contains metadata rather than ticket subject,
+message, prompts, responses, or credentials.
+
 ## Trust boundaries
 
 1. The browser is untrusted. It receives only a short-lived demo token and

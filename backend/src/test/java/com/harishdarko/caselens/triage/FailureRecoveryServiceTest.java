@@ -17,6 +17,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class FailureRecoveryServiceTest {
     @Mock TriageJobRepository jobs;
     @Mock TriageRequestService requests;
+    @Mock TriageResultRepository results;
+    @Mock ModelInvocationRepository invocations;
 
     @Test
     void rejectsCrossWorkspaceAndCompletedRecoveryAttempts() {
@@ -30,7 +32,7 @@ class FailureRecoveryServiceTest {
             return workspaceId.equals(requestedWorkspace) ? Optional.of(completed) : Optional.empty();
         });
 
-        FailureRecoveryService service = new FailureRecoveryService(jobs, requests);
+        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations, java.time.Clock.systemUTC());
 
         assertThatThrownBy(() -> service.retry(UUID.randomUUID(), jobId, "corr"))
                 .isInstanceOf(TicketNotFoundException.class);

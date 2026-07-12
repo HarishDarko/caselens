@@ -28,10 +28,12 @@ describe('CaseLens API client', () => {
 
     await api.createScenario('charger-offline-site-wide')
     await api.getEvaluation()
+    await api.getOperationsOverview()
     await api.listFailures()
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/demo/scenarios/charger-offline-site-wide', expect.objectContaining({ method: 'POST' }))
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/evaluation', expect.anything())
-    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/operations/failures?page=0&size=50', expect.anything())
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/operations/overview', expect.anything())
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/operations/failures?page=0&size=50', expect.anything())
   })
 })

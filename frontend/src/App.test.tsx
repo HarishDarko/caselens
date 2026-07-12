@@ -24,7 +24,8 @@ function mockBackend() {
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: null, completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'RULES_FALLBACK', modelVersion: 'mock-v1', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
-    if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 220, failureRate: 0, providerUsage: [] })
+    if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 220, failureRate: 0, providerUsage: [], recentEvents: [{ resultId: 'result-1', createdAt: '2026-07-11T09:14:02Z', latencyMs: 184, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', evaluated: true, corrected: false }] })
+    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 1, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [], providers: [] })
     if (url.includes('/api/operations/failures')) return response({ content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 })
     throw new Error(`Unhandled test URL: ${url}`)
   })
@@ -104,4 +105,22 @@ test('shows measured evaluation and operational failure views', async () => {
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+})
+
+test('surfaces persisted evaluation activity and operations telemetry', async () => {
+  render(<MemoryRouter><App /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
+  expect(screen.getByText('openai/gpt-oss-20b')).toBeInTheDocument()
+  expect(screen.getByText('AI_VALIDATED')).toBeInTheDocument()
+  expect(screen.getAllByText('184 ms').length).toBeGreaterThan(0)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await waitFor(() => expect(screen.getByText('Provider failures')).toBeInTheDocument())
+  expect(screen.getByText('Completed jobs')).toBeInTheDocument()
+  expect(screen.getByText('1', { selector: '.ops-value' })).toBeInTheDocument()
 })

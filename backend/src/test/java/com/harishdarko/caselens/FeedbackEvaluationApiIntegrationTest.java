@@ -115,7 +115,11 @@ class FeedbackEvaluationApiIntegrationTest {
                 .andExpect(jsonPath("$.categoryAgreementRate").value(1.0))
                 .andExpect(jsonPath("$.urgencyAgreementRate").value(0.0))
                 .andExpect(jsonPath("$.correctionRate").value(1.0))
-                .andExpect(jsonPath("$.medianLatencyMs").value(2000));
+                .andExpect(jsonPath("$.medianLatencyMs").value(2000))
+                .andExpect(jsonPath("$.recentEvents[0].decisionSource").value("AI_VALIDATED"))
+                .andExpect(jsonPath("$.recentEvents[0].evaluated").value(true))
+                .andExpect(jsonPath("$.recentEvents[0].corrected").value(true))
+                .andExpect(jsonPath("$.recentEvents[0].modelVersion").value("mock-v1"));
 
         assertThat(results.findById(original.getId()).orElseThrow().getUrgency()).isEqualTo(Urgency.MEDIUM);
     }
@@ -143,6 +147,24 @@ class FeedbackEvaluationApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"urgency\":\"HIGH\",\"note\":\"Cross-workspace attempt\"}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void exposesWorkspaceScopedOperationsOverviewWithoutTicketContent() throws Exception {
+        String token = session();
+
+        mvc.perform(get("/api/operations/overview"))
+                .andExpect(status().isUnauthorized());
+
+        mvc.perform(get("/api/operations/overview").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.queue.queued").value(0))
+                .andExpect(jsonPath("$.queue.processing").value(0))
+                .andExpect(jsonPath("$.queue.completed").value(0))
+                .andExpect(jsonPath("$.recent").isArray())
+                .andExpect(jsonPath("$.providers").isArray())
+                .andExpect(jsonPath("$.recent[*].subject").doesNotExist())
+                .andExpect(jsonPath("$.recent[*].message").doesNotExist());
     }
 
     private String session() throws Exception {

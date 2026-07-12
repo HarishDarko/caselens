@@ -80,6 +80,54 @@ export type EvaluationSummary = {
   p95LatencyMs: number
   failureRate: number
   providerUsage: Array<{ provider: string; requests: number; successes: number; failures: number; inputTokens: number; outputTokens: number }>
+  recentEvents: EvaluationEvent[]
+}
+
+export type EvaluationEvent = {
+  resultId: string
+  createdAt: string
+  latencyMs: number
+  provider: string | null
+  modelVersion: string
+  decisionSource: 'AI_VALIDATED' | 'RULES_FALLBACK'
+  evaluated: boolean
+  corrected: boolean
+}
+
+export type OperationsOverview = {
+  generatedAt: string
+  queue: {
+    queued: number
+    processing: number
+    completed: number
+    retryableFailures: number
+    terminalFailures: number
+  }
+  fallbackCount: number
+  providerFailureCount: number
+  recent: Array<{
+    jobId: string
+    ticketId: string
+    status: TriageProcessing['job']['status']
+    attemptCount: number
+    createdAt: string
+    updatedAt: string
+    completedAt: string | null
+    lastErrorCode: string | null
+    provider: string | null
+    modelVersion: string | null
+    decisionSource: 'AI_VALIDATED' | 'RULES_FALLBACK' | null
+    latencyMs: number
+  }>
+  providers: Array<{
+    provider: string
+    requests: number
+    successes: number
+    failures: number
+    inputTokens: number
+    outputTokens: number
+    averageLatencyMs: number | null
+  }>
 }
 
 export type FailurePage = {
@@ -126,6 +174,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
       method: 'POST', body: JSON.stringify(payload),
     }),
     getEvaluation: () => request<EvaluationSummary>('/api/evaluation'),
+    getOperationsOverview: () => request<OperationsOverview>('/api/operations/overview'),
     listFailures: () => request<FailurePage>('/api/operations/failures?page=0&size=50'),
     retryFailure: (jobId) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST' }),
   }
@@ -141,6 +190,7 @@ export type CaseLensApi = {
   getProcessing: (ticketId: string) => Promise<TriageProcessing>
   submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }) => Promise<FeedbackResponse>
   getEvaluation: () => Promise<EvaluationSummary>
+  getOperationsOverview: () => Promise<OperationsOverview>
   listFailures: () => Promise<FailurePage>
   retryFailure: (jobId: string) => Promise<TriageProcessing['job']>
 }
