@@ -48,6 +48,27 @@ class RateLimitApiIntegrationTest {
     }
 
     @Test
+    void usesTheForwardedClientAddressForGatewaySessionLimits() throws Exception {
+        String request = "{\"passcode\":\"reviewer\"}";
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(post("/api/demo/session")
+                            .header("X-CaseLens-Client-Ip", "198.51.100.10")
+                            .contentType(MediaType.APPLICATION_JSON).content(request))
+                    .andExpect(status().isOk());
+        }
+
+        mvc.perform(post("/api/demo/session")
+                        .header("X-CaseLens-Client-Ip", "198.51.100.10")
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isTooManyRequests());
+
+        mvc.perform(post("/api/demo/session")
+                        .header("X-CaseLens-Client-Ip", "198.51.100.11")
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void exposesSafeLivenessAndReadinessProbes() throws Exception {
         mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));
         mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UP"));

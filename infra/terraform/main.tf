@@ -39,6 +39,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   }
 }
 
+resource "aws_s3_bucket_versioning" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+  versioning_configuration { status = "Enabled" }
+}
+
 resource "aws_s3_bucket_public_access_block" "artifacts" {
   bucket                  = aws_s3_bucket.artifacts.id
   block_public_acls       = true
@@ -180,6 +185,8 @@ data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 }
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_iam_role" "github_deploy" {
   name = "${local.name}-github-deploy"
   assume_role_policy = jsonencode({
@@ -203,8 +210,10 @@ resource "aws_iam_role_policy" "github_deploy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.frontend.arn },
+      { Effect = "Allow", Action = ["s3:ListBucket"], Resource = [aws_s3_bucket.frontend.arn, aws_s3_bucket.artifacts.arn] },
       { Effect = "Allow", Action = ["s3:PutObject", "s3:DeleteObject", "s3:GetObject"], Resource = "${aws_s3_bucket.frontend.arn}/*" },
+      { Effect = "Allow", Action = ["s3:PutObject", "s3:DeleteObject", "s3:GetObject"], Resource = "${aws_s3_bucket.artifacts.arn}/*" },
+      { Effect = "Allow", Action = ["lambda:GetFunction", "lambda:UpdateFunctionCode", "lambda:PublishVersion"], Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${local.name}-*" },
       { Effect = "Allow", Action = ["cloudfront:CreateInvalidation"], Resource = aws_cloudfront_distribution.frontend.arn }
     ]
   })
@@ -231,12 +240,20 @@ resource "aws_iam_role_policy" "lambda_queue" {
   })
 }
 
+resource "aws_iam_role_policy" "lambda_secrets" {
+  role = aws_iam_role.lambda_runtime.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.application.arn }]
+  })
+}
+
 resource "aws_lambda_function" "api" {
   count            = var.deploy_compute ? 1 : 0
   function_name    = "${local.name}-api"
   role             = aws_iam_role.lambda_runtime.arn
   runtime          = "java21"
-  handler          = "com.harishdarko.caselens.lambda.ApiHandler::handleRequest"
+  handler          = "com.harishdarko.caselens.lambda.ApiHandler"
   s3_bucket        = var.lambda_artifact_bucket
   s3_key           = var.api_lambda_s3_key
   publish          = true
@@ -248,6 +265,7 @@ resource "aws_lambda_function" "api" {
     variables = merge({
       CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
       CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED        = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -257,7 +275,7 @@ resource "aws_lambda_function" "worker" {
   function_name = "${local.name}-worker"
   role          = aws_iam_role.lambda_runtime.arn
   runtime       = "java21"
-  handler       = "com.harishdarko.caselens.lambda.WorkerHandler::handleRequest"
+  handler       = "com.harishdarko.caselens.lambda.WorkerHandler"
   s3_bucket     = var.lambda_artifact_bucket
   s3_key        = var.worker_lambda_s3_key
   publish       = true
@@ -268,6 +286,7 @@ resource "aws_lambda_function" "worker" {
     variables = merge({
       CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
       CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED        = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -277,7 +296,7 @@ resource "aws_lambda_function" "relay" {
   function_name = "${local.name}-relay"
   role          = aws_iam_role.lambda_runtime.arn
   runtime       = "java21"
-  handler       = "com.harishdarko.caselens.lambda.RelayHandler::handleRequest"
+  handler       = "com.harishdarko.caselens.lambda.RelayHandler"
   s3_bucket     = var.lambda_artifact_bucket
   s3_key        = var.relay_lambda_s3_key
   publish       = true
@@ -288,6 +307,7 @@ resource "aws_lambda_function" "relay" {
     variables = merge({
       CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
       CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED        = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -318,6 +338,11 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.api[0].id
   name        = "$default"
   auto_deploy = true
+  route_settings {
+    route_key              = "$default"
+    throttling_burst_limit = 10
+    throttling_rate_limit  = 5
+  }
 }
 
 resource "aws_lambda_permission" "api_gateway" {
@@ -333,7 +358,7 @@ resource "aws_lambda_event_source_mapping" "worker" {
   count                   = var.deploy_compute ? 1 : 0
   event_source_arn        = aws_sqs_queue.triage.arn
   function_name           = aws_lambda_function.worker[0].arn
-  batch_size              = 5
+  batch_size              = 1
   function_response_types = ["ReportBatchItemFailures"]
 }
 

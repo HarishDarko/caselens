@@ -56,13 +56,13 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
 
     private String keyFor(HttpServletRequest request) {
         if (!"POST".equalsIgnoreCase(request.getMethod())) return null;
-        if (request.getRequestURI().equals("/api/demo/session")) return "session:" + request.getRemoteAddr();
+        if (request.getRequestURI().equals("/api/demo/session")) return "session:" + clientAddress(request);
         if (request.getRequestURI().matches("/api/tickets/[^/]+/triage")) {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
                 return "triage:" + principal.workspaceId();
             }
-            return "triage:" + request.getRemoteAddr();
+            return "triage:" + clientAddress(request);
         }
         if (request.getRequestURI().startsWith("/api/demo/")
                 || request.getRequestURI().matches("/api/operations/failures/[^/]+/retry")) {
@@ -70,9 +70,15 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
             if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
                 return "mutation:" + principal.workspaceId();
             }
-            return "mutation:" + request.getRemoteAddr();
+            return "mutation:" + clientAddress(request);
         }
         return null;
+    }
+
+    private String clientAddress(HttpServletRequest request) {
+        String gatewayAddress = request.getHeader("X-CaseLens-Client-Ip");
+        if (gatewayAddress != null && !gatewayAddress.isBlank()) return gatewayAddress.trim();
+        return request.getRemoteAddr();
     }
 
     private int limitFor(HttpServletRequest request) {

@@ -16,7 +16,7 @@ variable "aws_region" {
 variable "github_repository" {
   description = "Owner/repository allowed to assume the deployment role."
   type        = string
-  default     = ""
+  default     = "HarishDarko/caselens"
 }
 
 variable "github_branch" {
@@ -54,21 +54,26 @@ variable "deploy_compute" {
 variable "lambda_artifact_bucket" {
   type    = string
   default = ""
+
+  validation {
+    condition     = !var.deploy_compute || length(trimspace(var.lambda_artifact_bucket)) > 0
+    error_message = "lambda_artifact_bucket is required when deploy_compute is true."
+  }
 }
 
 variable "api_lambda_s3_key" {
   type    = string
-  default = "artifacts/caselens-api.zip"
+  default = "artifacts/caselens-lambda.jar"
 }
 
 variable "worker_lambda_s3_key" {
   type    = string
-  default = "artifacts/caselens-worker.zip"
+  default = "artifacts/caselens-lambda.jar"
 }
 
 variable "relay_lambda_s3_key" {
   type    = string
-  default = "artifacts/caselens-relay.zip"
+  default = "artifacts/caselens-lambda.jar"
 }
 
 variable "alarm_topic_arns" {

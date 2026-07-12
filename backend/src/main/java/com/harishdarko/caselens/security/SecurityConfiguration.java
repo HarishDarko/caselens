@@ -12,7 +12,9 @@ import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -40,9 +42,18 @@ class SecurityConfiguration {
     }
 
     @Bean
+    @Profile("!lambda")
     RateLimitService rateLimitService(Clock clock,
             @Value("${caselens.rate-limit.default-per-minute:30}") int defaultLimit) {
         return new RateLimitService(clock, defaultLimit, Duration.ofMinutes(1));
+    }
+
+    @Bean
+    @Profile("lambda")
+    RateLimitService lambdaRateLimitService(Clock clock,
+            @Value("${caselens.rate-limit.default-per-minute:30}") int defaultLimit,
+            JdbcTemplate jdbcTemplate) {
+        return new RateLimitService(clock, defaultLimit, Duration.ofMinutes(1), jdbcTemplate);
     }
 
     @Bean

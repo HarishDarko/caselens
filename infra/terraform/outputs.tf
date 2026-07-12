@@ -5,4 +5,5 @@ output "triage_queue_url" { value = aws_sqs_queue.triage.url }
 output "triage_dlq_url" { value = aws_sqs_queue.dlq.url }
 output "github_deploy_role_arn" { value = aws_iam_role.github_deploy.arn }
 output "application_secret_arn" { value = aws_secretsmanager_secret.application.arn }
+output "lambda_artifact_bucket_name" { value = aws_s3_bucket.artifacts.bucket }
 output "api_url" { value = var.deploy_compute ? aws_apigatewayv2_stage.default[0].invoke_url : null }

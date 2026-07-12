@@ -11,7 +11,15 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import com.harishdarko.caselens.security.RateLimitExceededException;
+import com.harishdarko.caselens.security.RateLimitService;
 import org.flywaydb.core.Flyway;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -32,7 +40,8 @@ class PostgresMigrationIntegrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
+        flyway.migrate();
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -67,7 +76,7 @@ class PostgresMigrationIntegrationTest {
                 List<String> names = new ArrayList<>();
                 while (tables.next()) names.add(tables.getString(1));
                 assertThat(names).contains("outbox_event", "triage_job", "triage_attempt", "triage_result",
-                        "triage_feedback", "evaluation_ground_truth");
+                        "triage_feedback", "evaluation_ground_truth", "rate_limit_buckets");
             }
 
             try (ResultSet truth = statement.executeQuery("SELECT count(*) FROM evaluation_ground_truth")) {
@@ -82,6 +91,29 @@ class PostgresMigrationIntegrationTest {
                 assertThat(names).contains("uq_triage_job_active_ticket_version");
             }
         }
+    }
+
+    @Test
+    void persistsLambdaRateLimitBucketsAcrossApplicationInstances() {
+        Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        RateLimitService service = new RateLimitService(
+                Clock.fixed(Instant.parse("2040-07-11T12:00:00Z"), ZoneOffset.UTC), 2, Duration.ofMinutes(1),
+                new JdbcTemplate(dataSource));
+
+        String key = "198.51.100.20-" + UUID.randomUUID();
+        service.acquire(key);
+        service.acquire(key);
+
+        assertThatThrownBy(() -> service.acquire(key))
+                .isInstanceOf(RateLimitExceededException.class)
+                .extracting(exception -> ((RateLimitExceededException) exception).retryAfterSeconds())
+                .isEqualTo(60L);
     }
 
     private String validTicketInsert(UUID workspace, UUID ticket, String displayId) {

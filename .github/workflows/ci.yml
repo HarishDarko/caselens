@@ -27,6 +27,9 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: ./mvnw -B -ntp test
+      - name: Verify Lambda package
+        working-directory: backend
+        run: ./mvnw -B -ntp -Plambda -DskipTests package
 
   frontend:
     runs-on: ubuntu-latest
@@ -131,11 +134,42 @@ jobs:
         env:
           CASELENS_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
         run: test -n "$CASELENS_API_BASE_URL"
+      - name: Build Lambda artifact
+        working-directory: backend
+        run: ./mvnw -B -ntp -Plambda -DskipTests package
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       - name: Publish frontend to the deployment bucket
         run: aws s3 sync frontend/dist "s3://${{ vars.CASELENS_FRONTEND_BUCKET }}" --delete
+      - name: Publish Lambda artifact
+        env:
+          CASELENS_ARTIFACT_BUCKET: ${{ vars.CASELENS_ARTIFACT_BUCKET }}
+        run: |
+          test -n "$CASELENS_ARTIFACT_BUCKET"
+          aws s3 cp backend/target/caselens-lambda.jar "s3://${CASELENS_ARTIFACT_BUCKET}/artifacts/caselens-lambda.jar"
+      - name: Optionally update deployed Lambda functions
+        env:
+          CASELENS_LAMBDA_DEPLOY_ENABLED: ${{ vars.CASELENS_LAMBDA_DEPLOY_ENABLED }}
+          CASELENS_LAMBDA_FUNCTIONS: ${{ vars.CASELENS_LAMBDA_FUNCTIONS }}
+          CASELENS_ARTIFACT_BUCKET: ${{ vars.CASELENS_ARTIFACT_BUCKET }}
+        run: |
+          if [ "$CASELENS_LAMBDA_DEPLOY_ENABLED" != "true" ]; then
+            echo "Lambda runtime update is disabled; artifact publication completed."
+            exit 0
+          fi
+          test -n "$CASELENS_LAMBDA_FUNCTIONS"
+          version="$(aws s3api head-object --bucket "$CASELENS_ARTIFACT_BUCKET" --key artifacts/caselens-lambda.jar --query VersionId --output text)"
+          test -n "$version" && test "$version" != "None"
+          IFS=',' read -ra functions <<< "$CASELENS_LAMBDA_FUNCTIONS"
+          for function in "${functions[@]}"; do
+            aws lambda update-function-code \
+              --function-name "$function" \
+              --s3-bucket "$CASELENS_ARTIFACT_BUCKET" \
+              --s3-key artifacts/caselens-lambda.jar \
+              --s3-object-version "$version" \
+              --publish
+          done
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "${{ vars.CASELENS_CLOUDFRONT_DISTRIBUTION_ID }}" --paths '/*'
