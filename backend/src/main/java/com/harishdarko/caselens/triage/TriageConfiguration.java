@@ -41,7 +41,7 @@ public class TriageConfiguration {
             @Value("${caselens.gemini.request-timeout:30s}") Duration requestTimeout,
             @Value("${caselens.groq.endpoint:https://api.groq.com/openai/v1/chat/completions}") String groqEndpoint,
             @Value("${caselens.groq.api-key:}") String groqApiKey,
-            @Value("${caselens.groq.model:llama-3.1-8b-instant}") String groqModel,
+            @Value("${caselens.groq.model:openai/gpt-oss-20b}") String groqModel,
             @Value("${caselens.groq.request-timeout:20s}") Duration groqRequestTimeout,
             PolicyCatalog policyCatalog,
             ObjectMapper objectMapper) {

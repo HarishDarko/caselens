@@ -2,6 +2,7 @@ package com.harishdarko.caselens.triage;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.net.URI;
@@ -120,12 +121,65 @@ public final class GroqTriageProvider implements TriageProvider {
                 + " Use only policy identifiers permitted by the response schema; return an empty policyIds array when none apply."
                 + " Allowed policyIds: " + String.join(", ", policyCatalog.ids().stream().sorted().toList()) + ".");
         messages.addObject().put("role", "user").put("content", promptBuilder.build(request, redactedTicket));
-        root.putObject("response_format").put("type", "json_object");
+        root.set("response_format", responseFormat());
         try {
             return mapper.writeValueAsString(root);
         } catch (IOException exception) {
             throw new ProviderCallException("Groq provider request could not be encoded", "REQUEST_ENCODING", exception);
         }
+    }
+
+    private ObjectNode responseFormat() {
+        if (!supportsStrictSchema()) return mapper.createObjectNode().put("type", "json_object");
+        ObjectNode responseFormat = mapper.createObjectNode().put("type", "json_schema");
+        ObjectNode jsonSchema = responseFormat.putObject("json_schema");
+        jsonSchema.put("name", "caselens_triage");
+        jsonSchema.put("strict", true);
+        jsonSchema.set("schema", schema());
+        return responseFormat;
+    }
+
+    private boolean supportsStrictSchema() {
+        return "openai/gpt-oss-20b".equals(model) || "openai/gpt-oss-120b".equals(model);
+    }
+
+    private ObjectNode schema() {
+        ObjectNode schema = mapper.createObjectNode().put("type", "object").put("additionalProperties", false);
+        ObjectNode properties = schema.putObject("properties");
+        enumProperty(properties, "category", Category.values());
+        enumProperty(properties, "urgency", Urgency.values());
+        enumProperty(properties, "slaRisk", SlaRisk.values());
+        enumProperty(properties, "sentiment", Sentiment.values());
+        properties.putObject("summary").put("type", "string").put("minLength", 20).put("maxLength", 300);
+        ObjectNode evidence = properties.putObject("evidence").put("type", "array").put("minItems", 1).put("maxItems", 5);
+        ObjectNode evidenceItem = evidence.putObject("items").put("type", "object").put("additionalProperties", false);
+        ObjectNode evidenceProperties = evidenceItem.putObject("properties");
+        evidenceProperties.putObject("quote").put("type", "string").put("minLength", 3).put("maxLength", 400);
+        evidenceProperties.putObject("meaning").put("type", "string").put("minLength", 3).put("maxLength", 240);
+        required(evidenceItem, "quote", "meaning");
+        ObjectNode policyIds = properties.putObject("policyIds").put("type", "array").put("maxItems", 3);
+        ObjectNode policyId = policyIds.putObject("items").put("type", "string");
+        ArrayNode allowedPolicyIds = policyId.putArray("enum");
+        policyCatalog.ids().stream().sorted().forEach(allowedPolicyIds::add);
+        properties.putObject("explanation").put("type", "string").put("minLength", 30).put("maxLength", 600);
+        properties.putObject("recommendedActions").put("type", "array").put("minItems", 1).put("maxItems", 5)
+                .putObject("items").put("type", "string").put("minLength", 3).put("maxLength", 240);
+        properties.putObject("suggestedReply").put("type", "string").put("minLength", 20).put("maxLength", 1000);
+        properties.putObject("warnings").put("type", "array").put("maxItems", 5).putObject("items").put("type", "string");
+        required(schema, "category", "urgency", "slaRisk", "sentiment", "summary", "evidence", "policyIds",
+                "explanation", "recommendedActions", "suggestedReply", "warnings");
+        return schema;
+    }
+
+    private void enumProperty(ObjectNode properties, String name, Enum<?>[] values) {
+        ObjectNode property = properties.putObject(name).put("type", "string");
+        ArrayNode allowed = property.putArray("enum");
+        for (Enum<?> value : values) allowed.add(value.name());
+    }
+
+    private void required(ObjectNode node, String... names) {
+        ArrayNode required = node.putArray("required");
+        for (String name : names) required.add(name);
     }
 
     private ProviderTriageResult parseResult(String text) throws IOException {

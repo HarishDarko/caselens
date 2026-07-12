@@ -57,6 +57,28 @@ class GroqTriageProviderTest {
     }
 
     @Test
+    void usesStrictJsonSchemaForGroqModelsThatSupportIt() throws Exception {
+        AtomicReference<String> body = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes()));
+            respond(exchange, 200, validResponse());
+        });
+        server.start();
+
+        ProviderCall call = new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort()
+                        + "/openai/v1/chat/completions"), "secret-key", "openai/gpt-oss-20b",
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(), new ObjectMapper(),
+                Duration.ofSeconds(2), () -> 0).analyze(request(), new RedactedTicket(
+                        "Payment accepted", "Payment accepted but session never started."));
+
+        assertThat(call.result().modelVersion()).isEqualTo("openai/gpt-oss-20b");
+        assertThat(body.get()).contains("\"type\":\"json_schema\"");
+        assertThat(body.get()).contains("\"strict\":true");
+        assertThat(body.get()).contains("\"additionalProperties\":false");
+    }
+
+    @Test
     void doesNotRetryAuthenticationFailure() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);

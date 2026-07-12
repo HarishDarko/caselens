@@ -28,7 +28,7 @@ Copy-Item .env.example .env
 
 For a live Groq run, set `CASELENS_AI_PROVIDER=groq` and add the key to
 `GROQ_API_KEY` in the ignored `.env`. The default model is
-`llama-3.1-8b-instant`; leave the provider as `mock` for offline work.
+`openai/gpt-oss-20b`; leave the provider as `mock` for offline work.
 
 Start or stop PostgreSQL 16 and LocalStack SQS:
 
@@ -103,9 +103,10 @@ terraform validate
 ## Provider and data boundaries
 
 The Groq adapter uses the OpenAI-compatible chat-completions API with bearer
-authentication, JSON Object Mode, bounded retry behavior, a configurable
-request timeout, and policy IDs constrained by the versioned catalog. The fast
-default model is selected for latency comparison; the application still
+authentication, strict JSON Schema for the default model, JSON Object Mode for
+other explicitly configured models, bounded retry behavior, a configurable
+request timeout, and policy IDs constrained by the versioned catalog. The
+application still
 validates the complete structured result and falls back to deterministic rules
 when provider output is unavailable or invalid. Gemini remains available via
 its separate adapter. Ticket text is redacted before provider submission.
