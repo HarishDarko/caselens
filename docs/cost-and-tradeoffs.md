@@ -5,8 +5,8 @@
 The normal local path uses PostgreSQL and LocalStack in Docker plus the
 deterministic mock provider. This avoids cloud spend and model calls while
 still exercising persistence, the outbox, SQS semantics, retries, feedback,
-and evaluation. The Gemini path is opt-in through `.env` and should be used for
-occasional integration verification only.
+and evaluation. The Groq and Gemini paths are opt-in through `.env` and should
+be used for occasional integration verification only.
 
 ## Proposed AWS shape
 

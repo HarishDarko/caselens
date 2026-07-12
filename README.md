@@ -7,9 +7,9 @@ production-minded failure handling. All bundled and publicly stored ticket data
 is synthetic.
 
 The reviewer console is a working local product, not a static mockup. It talks
-to the Spring Boot API, PostgreSQL, and LocalStack SQS. Gemini is available as a
-provider, while the default local mode uses a deterministic mock so the demo is
-repeatable and does not spend on model calls.
+to the Spring Boot API, PostgreSQL, and LocalStack SQS. Groq and Gemini are
+available providers, while the default local mode uses a deterministic mock so
+the demo is repeatable and does not spend on model calls.
 
 ## Prerequisites
 
@@ -25,6 +25,10 @@ Create a local environment file before starting services:
 ```powershell
 Copy-Item .env.example .env
 ```
+
+For a live Groq run, set `CASELENS_AI_PROVIDER=groq` and add the key to
+`GROQ_API_KEY` in the ignored `.env`. The default model is
+`llama-3.1-8b-instant`; leave the provider as `mock` for offline work.
 
 Start or stop PostgreSQL 16 and LocalStack SQS:
 
@@ -98,12 +102,15 @@ terraform validate
 
 ## Provider and data boundaries
 
-The Gemini adapter uses the stable Interactions API with `store:false`, a
-closed structured-output schema, bounded retry behavior, a configurable
-request timeout, and policy IDs constrained to the versioned catalog. Ticket
-text is redacted before provider submission. Model invocation records store
-provider metadata, timing, status, and usage counts—not API keys, raw tickets,
-request bodies, or raw provider responses.
+The Groq adapter uses the OpenAI-compatible chat-completions API with bearer
+authentication, JSON Object Mode, bounded retry behavior, a configurable
+request timeout, and policy IDs constrained by the versioned catalog. The fast
+default model is selected for latency comparison; the application still
+validates the complete structured result and falls back to deterministic rules
+when provider output is unavailable or invalid. Gemini remains available via
+its separate adapter. Ticket text is redacted before provider submission.
+Model invocation records store provider metadata, timing, status, and usage
+counts—not API keys, raw tickets, request bodies, or raw provider responses.
 
 The first release intentionally does not include customer authentication, RAG,
 embeddings, Kubernetes, real OCPP traffic, real payment processing, or a live

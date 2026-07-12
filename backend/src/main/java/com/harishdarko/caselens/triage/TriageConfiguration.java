@@ -39,6 +39,10 @@ public class TriageConfiguration {
             @Value("${caselens.gemini.api-key:}") String apiKey,
             @Value("${caselens.gemini.model:gemini-3.5-flash}") String model,
             @Value("${caselens.gemini.request-timeout:30s}") Duration requestTimeout,
+            @Value("${caselens.groq.endpoint:https://api.groq.com/openai/v1/chat/completions}") String groqEndpoint,
+            @Value("${caselens.groq.api-key:}") String groqApiKey,
+            @Value("${caselens.groq.model:llama-3.1-8b-instant}") String groqModel,
+            @Value("${caselens.groq.request-timeout:20s}") Duration groqRequestTimeout,
             PolicyCatalog policyCatalog,
             ObjectMapper objectMapper) {
         if ("mock".equalsIgnoreCase(provider)) return new MockTriageProvider();
@@ -47,10 +51,19 @@ public class TriageConfiguration {
             return new GeminiTriageProvider(URI.create(endpoint), apiKey, model, client, objectMapper,
                     requestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126), policyCatalog);
         }
+        if ("groq".equalsIgnoreCase(provider)) {
+            HttpClient client = groqHttpClient(Duration.ofSeconds(2));
+            return new GroqTriageProvider(URI.create(groqEndpoint), groqApiKey, groqModel, client, objectMapper,
+                    groqRequestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126), policyCatalog);
+        }
         throw new IllegalArgumentException("Unsupported AI provider");
     }
 
     static HttpClient geminiHttpClient(Duration connectTimeout) {
+        return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(connectTimeout).build();
+    }
+
+    static HttpClient groqHttpClient(Duration connectTimeout) {
         return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(connectTimeout).build();
     }
 

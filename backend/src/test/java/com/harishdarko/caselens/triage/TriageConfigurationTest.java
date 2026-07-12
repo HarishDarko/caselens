@@ -12,4 +12,10 @@ class TriageConfigurationTest {
         assertThat(TriageConfiguration.geminiHttpClient(Duration.ofSeconds(2)).version())
                 .isEqualTo(HttpClient.Version.HTTP_1_1);
     }
+
+    @Test
+    void buildsGroqClientWithHttpOnePointOneForProviderCompatibility() {
+        assertThat(TriageConfiguration.groqHttpClient(Duration.ofSeconds(2)).version())
+                .isEqualTo(HttpClient.Version.HTTP_1_1);
+    }
 }

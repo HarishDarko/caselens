@@ -13,6 +13,7 @@ flowchart LR
   worker --> provider{Provider interface}
   provider --> mock[Deterministic mock]
   provider --> gemini[Gemini Interactions API]
+  provider --> groq[Groq chat completions API]
   worker -->|validated result or fallback| db
   reviewer -->|feedback + evaluation views| api
 ```
@@ -44,6 +45,6 @@ truth; SQS is delivery infrastructure, not the system of record.
   triage request and queue publication.
 - SQS/DLQ provides bounded retry behavior without requiring Kubernetes.
 - A provider-neutral interface makes offline mock runs deterministic and keeps
-  Gemini-specific transport code isolated.
+  provider-specific transport code isolated.
 - A managed PostgreSQL service is left as an explicit deployment decision; the
   first release does not hide that operational and cost trade-off.
