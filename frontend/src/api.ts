@@ -35,7 +35,15 @@ export type TriageProcessing = {
     startedAt: string | null
     completedAt: string | null
     lastErrorCode: string | null
-    attempts: Array<Record<string, unknown>>
+    attempts: Array<{
+      id: string
+      jobId: string
+      attemptNumber: number
+      status: 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
+      startedAt: string
+      completedAt: string | null
+      errorCode: string | null
+    }>
   }
   result: TriageResult | null
 }
