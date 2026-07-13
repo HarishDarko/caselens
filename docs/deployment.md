@@ -19,6 +19,13 @@ The CaseLens demo is deployed in AWS `ca-central-1`. The reviewer URL is
   development keeps the in-memory limiter for a dependency-light workflow.
 - The static frontend build accepts `VITE_API_BASE_URL`, and Lambda API CORS
   accepts the configured `web_origins` list.
+- The API Lambda publishes immutable SnapStart versions behind a Terraform-
+  managed `live` alias. API Gateway invokes only that alias. Operators wait for
+  AWS optimization, verify the version, and then pass its number through
+  `api_live_version`; publishing alone cannot move production traffic.
+- The Lambda database pool is suspended and its connections are evicted before
+  a SnapStart checkpoint. It resumes without reusing a checkpointed Neon
+  socket, avoiding stale-connection failures after restore.
 
 ## Local readiness evidence
 
@@ -69,8 +76,9 @@ The deployed environment uses the following configuration:
    functions exist, and set `CASELENS_LAMBDA_FUNCTIONS` to their exact comma-
    separated names. The manual workflow then updates each function to the
    versioned object; leaving the flag unset safely publishes only the artifact.
-8. A reviewed Terraform plan with `deploy_compute=true` and the artifact
-   bucket after the artifact has been published. Terraform creates/configures
+8. A reviewed Terraform plan with `deploy_compute=true`, the artifact bucket,
+   and `api_live_version` set to the published version after AWS reports its
+   SnapStart optimization as `On`. Terraform creates/configures
    the functions; the explicit CI runtime-update step owns subsequent code
    versions, while S3 versioning preserves rollback targets. Compute remains
    disabled by default until Neon connectivity and the secret are verified.
@@ -79,6 +87,15 @@ The base plan added 26 resources with no updates or deletions. The compute plan
 added 13 resources, updated one CloudFront setting, and deleted nothing. Final
 Terraform verification reported no pending changes. The public health check and
 an authenticated synthetic Groq/SQS journey passed after deployment.
+
+On 2026-07-12, the live API alias was advanced to SnapStart-optimized version
+10 with a Terraform plan of `0 to add, 1 to change, 0 to destroy`. A real login
+measured 7.0 seconds on the first restored request and 178-213 milliseconds on
+the next two client-observed requests. Lambda reported 1.1 seconds of restore
+time and about 64 milliseconds for each warm invocation. The remaining first-
+request time is the fresh Neon connection/query after the checkpointed pool is
+discarded; removing it completely would require an always-warm paid compute or
+database choice, so it is retained as an explicit cost/latency trade-off.
 
 ## Terraform state and teardown
 

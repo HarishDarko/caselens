@@ -282,8 +282,17 @@ resource "aws_lambda_function" "api" {
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
       MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
+      SPRING_PROFILES_ACTIVE                  = "lambda"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
+}
+
+resource "aws_lambda_alias" "api" {
+  count            = var.deploy_compute ? 1 : 0
+  name             = "live"
+  description      = "SnapStart-optimized API version used by API Gateway"
+  function_name    = aws_lambda_function.api[0].function_name
+  function_version = var.api_live_version
 }
 
 resource "aws_lambda_function" "worker" {
@@ -308,6 +317,7 @@ resource "aws_lambda_function" "worker" {
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
       MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
+      SPRING_PROFILES_ACTIVE                  = "lambda"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -334,6 +344,7 @@ resource "aws_lambda_function" "relay" {
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
       MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
+      SPRING_PROFILES_ACTIVE                  = "lambda"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -349,7 +360,7 @@ resource "aws_apigatewayv2_integration" "api" {
   count                  = var.deploy_compute ? 1 : 0
   api_id                 = aws_apigatewayv2_api.api[0].id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.api[0].invoke_arn
+  integration_uri        = aws_lambda_alias.api[0].invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -377,6 +388,7 @@ resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowHttpApiInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api[0].function_name
+  qualifier     = aws_lambda_alias.api[0].name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api[0].execution_arn}/*/*"
 }

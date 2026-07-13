@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    hikari:
+      minimum-idle: 0
+      maximum-pool-size: 4
+      allow-pool-suspension: true
+      connection-timeout: 3000
+      validation-timeout: 1000

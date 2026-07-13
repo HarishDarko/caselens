@@ -61,6 +61,17 @@ variable "lambda_artifact_bucket" {
   }
 }
 
+variable "api_live_version" {
+  description = "Published, SnapStart-optimized API Lambda version approved for the live alias."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.deploy_compute || (var.api_live_version != null && can(regex("^[1-9][0-9]*$", var.api_live_version)))
+    error_message = "api_live_version must be a positive published Lambda version when deploy_compute is true."
+  }
+}
+
 variable "api_lambda_s3_key" {
   type    = string
   default = "artifacts/caselens-lambda.jar"
