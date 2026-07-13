@@ -18,7 +18,7 @@ function mockBackend() {
     if (input === undefined) return response({})
     const url = String(input)
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
-    if (url.endsWith('/api/demo/reset')) return response({ seeded: 8 })
+    if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
     if (url.includes('/api/demo/scenarios/provider-retry-demo')) return response({ ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }, 201)
     if (url.includes('/api/demo/scenarios/')) return response({ ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide' }, 201)

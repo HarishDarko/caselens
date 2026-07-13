@@ -7,11 +7,11 @@ import org.junit.jupiter.api.Test;
 
 class DemoFailurePolicyTest {
     @Test
-    void failsOnlyTheFirstAttemptOfTheOriginalFixedScenario() {
+    void failsEveryDeliveryOfTheOriginalFixedScenarioButNeverItsReplay() {
         DemoFailurePolicy policy = new DemoFailurePolicy(true);
 
         assertThat(policy.shouldFail("provider-retry-demo", 1, null)).isTrue();
-        assertThat(policy.shouldFail("provider-retry-demo", 2, null)).isFalse();
+        assertThat(policy.shouldFail("provider-retry-demo", 2, null)).isTrue();
         assertThat(policy.shouldFail("provider-retry-demo", 1, UUID.randomUUID())).isFalse();
         assertThat(policy.shouldFail("charger-offline-site-wide", 1, null)).isFalse();
     }

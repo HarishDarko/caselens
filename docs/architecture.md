@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
   reviewer[Reviewer browser] -->|session + API calls| api[Spring Boot API]
-  api -->|workspace-scoped state| db[(PostgreSQL)]
+  api -->|workspace-scoped state| db[(Neon PostgreSQL)]
   api -->|transactional outbox| outbox[(Outbox rows)]
   outbox --> relay[Relay / SQS publisher]
   relay --> queue[SQS triage queue]
@@ -23,7 +23,9 @@ requests, feedback, evaluation, and operational recovery. The queue worker
 owns processing and idempotent job claims. PostgreSQL is the durable source of
 truth; SQS is delivery infrastructure, not the system of record.
 
-The reviewer console keeps the operational views evidence-backed. The
+The reviewer console keeps the operational views evidence-backed. Ticket
+detail renders the persisted outbox event, queue job, worker attempts, model,
+decision source, and processing latency. The
 workspace-scoped evaluation summary joins persisted results, ground truth,
 feedback, jobs, and model invocations into bounded recent events. The
 workspace-scoped operations overview derives queue counts, fallback/provider
@@ -55,5 +57,8 @@ message, prompts, responses, or credentials.
 - SQS/DLQ provides bounded retry behavior without requiring Kubernetes.
 - A provider-neutral interface makes offline mock runs deterministic and keeps
   provider-specific transport code isolated.
-- A managed PostgreSQL service is left as an explicit deployment decision; the
-  first release does not hide that operational and cost trade-off.
+- Neon supplies managed PostgreSQL without the fixed demo cost of an always-on
+  RDS instance. Lambda still owns connection-pool and cold-start constraints.
+- One fixed synthetic scenario can record a first-attempt provider timeout.
+  The demo flag, exact scenario key, first-attempt check, and replay guard keep
+  the mechanism out of arbitrary ticket input.

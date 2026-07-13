@@ -36,8 +36,7 @@ public class FailureRecoveryService {
     @Transactional(readOnly = true)
     public Page<TriageJobSnapshot> failures(UUID workspaceId, int page, int size) {
         PageRequest request = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
-        return jobs.findUnreplayedFailures(workspaceId,
-                List.of(TriageJobStatus.RETRYABLE_FAILURE, TriageJobStatus.TERMINAL_FAILURE), request)
+        return jobs.findRecoverableFailures(workspaceId, request)
                 .map(TriageJob::snapshot);
     }
 
@@ -137,6 +136,10 @@ public class FailureRecoveryService {
         if (job.getStatus() != TriageJobStatus.RETRYABLE_FAILURE
                 && job.getStatus() != TriageJobStatus.TERMINAL_FAILURE) {
             throw new IllegalArgumentException("Only failed triage jobs can be retried");
+        }
+        if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE
+                && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())) {
+            throw new IllegalArgumentException("Retryable jobs remain owned by SQS");
         }
         return requests.request(workspaceId, job.getTicketId(), correlationId);
     }

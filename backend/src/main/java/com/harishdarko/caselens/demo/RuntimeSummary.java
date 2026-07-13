@@ -13,7 +13,12 @@ public record RuntimeSummary(Environment environment, Database database, Queue q
                 parse(Environment.class, environment),
                 parse(Database.class, database),
                 parse(Queue.class, queue),
-                parse(AiProvider.class, aiProvider));
+                parseProvider(aiProvider));
+    }
+
+    private static AiProvider parseProvider(String value) {
+        if ("mock".equalsIgnoreCase(value.trim())) return AiProvider.DETERMINISTIC;
+        return parse(AiProvider.class, value);
     }
 
     private static <T extends Enum<T>> T parse(Class<T> type, String value) {

@@ -100,9 +100,9 @@ class TriageWorkerTest {
                 TriageMetrics.noop(), new DemoFailurePolicy(true));
         WorkerResult result = worker.process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
 
-        assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK);
         assertThat(job.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
-        assertThat(job.getLastErrorCode()).isEqualTo("PROVIDER_TIMEOUT");
+        assertThat(job.getLastErrorCode()).isEqualTo("SYNTHETIC_PROVIDER_TIMEOUT");
         verify(results, never()).save(any());
     }
 

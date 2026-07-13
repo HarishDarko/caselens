@@ -11,6 +11,6 @@ public final class DemoFailurePolicy {
     }
 
     public boolean shouldFail(String scenarioKey, int attemptNumber, UUID replayedFromJobId) {
-        return enabled && RETRY_SCENARIO.equals(scenarioKey) && attemptNumber == 1 && replayedFromJobId == null;
+        return enabled && RETRY_SCENARIO.equals(scenarioKey) && replayedFromJobId == null;
     }
 }

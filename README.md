@@ -6,10 +6,10 @@ deterministic prioritization, human review, asynchronous processing, and
 production-minded failure handling. All bundled and publicly stored ticket data
 is synthetic.
 
-The reviewer console is a working local product, not a static mockup. It talks
-to the Spring Boot API, PostgreSQL, and LocalStack SQS. Groq and Gemini are
-available providers, while the default local mode uses a deterministic mock so
-the demo is repeatable and does not spend on model calls.
+The reviewer console calls the Spring Boot API, stores state in Neon
+PostgreSQL, publishes work through SQS, and uses Groq for the reviewed demo
+path. A deterministic provider keeps automated tests and offline development
+repeatable. A separate Gemini adapter remains available.
 
 ## Prerequisites
 
@@ -27,8 +27,9 @@ Copy-Item .env.example .env
 ```
 
 For a live Groq run, set `CASELENS_AI_PROVIDER=groq` and add the key to
-`GROQ_API_KEY` in the ignored `.env`. The default model is
-`openai/gpt-oss-20b`; leave the provider as `mock` for offline work.
+`GROQ_API_KEY` in the ignored `.env`. Put the Neon JDBC URL, role, and password
+in the ignored `.env.neon`. The reviewed model is `openai/gpt-oss-20b`.
+Select `mock` only for offline work and automated tests.
 
 Start or stop PostgreSQL 16 and LocalStack SQS:
 
@@ -56,8 +57,11 @@ available at `http://localhost:8080`; its health endpoint is
 The local UI supports:
 
 - isolated reviewer sessions and workspace reset;
-- a prioritized synthetic inbox and scenario launcher;
+- a prioritized synthetic inbox, normal scenario launcher, and controlled
+  retry demonstration;
 - asynchronous triage through the outbox and SQS worker;
+- a durable processing trace with event/job IDs, attempts, model, decision
+  source, and latency;
 - exact evidence, policies, explanations, recommended actions, and suggested replies;
 - AI-validated results with deterministic rules fallback;
 - human urgency corrections stored beside immutable original results;
@@ -131,9 +135,10 @@ CloudWatch alarms, API Gateway, and optional Java 21 Lambda compute. GitHub
 Actions validates the backend, frontend, Terraform, containers, and security
 checks, and contains an OIDC-based publish path.
 
-No AWS resources are created by the local commands above. A real deployment
-still requires an AWS account bootstrap, an OIDC deploy role, a managed
-PostgreSQL choice, and explicit runtime secret configuration.
+No application resources are created by the local commands above. The AWS
+bootstrap state bucket and protected destroy role exist, Neon is the selected
+managed PostgreSQL service, and the application Terraform plan is ready for a
+separate approved deployment.
 
 See [docs/architecture.md](docs/architecture.md),
 [docs/security-hardening.md](docs/security-hardening.md),

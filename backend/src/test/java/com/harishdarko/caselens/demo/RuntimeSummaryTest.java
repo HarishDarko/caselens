@@ -23,6 +23,14 @@ class RuntimeSummaryTest {
         assertThatThrownByHostileValue("gsk_secret-value");
     }
 
+    @Test
+    void mapsTheActualOfflineProviderNameToTheSafeDeterministicLabel() {
+        RuntimeSummary summary = RuntimeSummary.from(
+                "local-review", "postgresql", "localstack-sqs", "mock");
+
+        assertThat(summary.aiProvider()).isEqualTo(RuntimeSummary.AiProvider.DETERMINISTIC);
+    }
+
     private static void assertThatThrownByHostileValue(String value) {
         org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
                 .isThrownBy(() -> RuntimeSummary.from(value, value, value, value))

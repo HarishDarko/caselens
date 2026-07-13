@@ -14,7 +14,7 @@ public class RuntimeSummaryController {
             @Value("${caselens.runtime.environment:local-review}") String environment,
             @Value("${caselens.runtime.database:postgresql}") String database,
             @Value("${caselens.runtime.queue:localstack-sqs}") String queue,
-            @Value("${caselens.runtime.ai-provider:deterministic}") String aiProvider) {
+            @Value("${caselens.ai-provider:mock}") String aiProvider) {
         this.summary = RuntimeSummary.from(environment, database, queue, aiProvider);
     }
 

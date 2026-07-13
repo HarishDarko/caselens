@@ -13,7 +13,8 @@ async function installApiStubs(page: import('@playwright/test').Page) {
     const url = new URL(request.url())
     let body: unknown
     if (url.pathname.endsWith('/api/demo/session')) body = { token: 'e2e-token', expiresAt: now }
-    else if (url.pathname.endsWith('/api/demo/reset')) body = { seeded: 8 }
+    else if (url.pathname.endsWith('/api/demo/runtime')) body = { environment: 'LOCAL_REVIEW', database: 'POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'DETERMINISTIC' }
+    else if (url.pathname.endsWith('/api/demo/reset')) body = { seeded: 9 }
     else if (url.pathname.endsWith('/api/tickets') && request.method() === 'GET') body = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }
     else if (url.pathname.endsWith('/api/evaluation')) body = evaluation
     else if (url.pathname.endsWith('/api/operations/overview')) body = operationsOverview

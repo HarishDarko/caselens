@@ -28,6 +28,19 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
             """)
     Page<TriageJob> findUnreplayedFailures(UUID workspaceId, List<TriageJobStatus> statuses, Pageable pageable);
 
+    @Query("""
+            select job from TriageJob job
+            where job.workspaceId = :workspaceId
+              and (job.status = com.harishdarko.caselens.triage.TriageJobStatus.TERMINAL_FAILURE
+                   or (job.status = com.harishdarko.caselens.triage.TriageJobStatus.RETRYABLE_FAILURE
+                       and job.lastErrorCode = 'SYNTHETIC_PROVIDER_TIMEOUT'))
+              and not exists (
+                  select replacement.id from TriageJob replacement
+                  where replacement.replayedFromJobId = job.id
+              )
+            """)
+    Page<TriageJob> findRecoverableFailures(UUID workspaceId, Pageable pageable);
+
     List<TriageJob> findByWorkspaceId(UUID workspaceId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)

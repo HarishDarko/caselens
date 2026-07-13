@@ -102,7 +102,7 @@ public class TriageWorker {
         tickets.save(ticket);
         try {
             if (demoFailurePolicy.shouldFail(ticket.getScenarioKey(), job.getAttemptCount(), job.getReplayedFromJobId())) {
-                throw new ProviderCallException("Synthetic demo provider timeout", "HTTP_503");
+                throw new SyntheticDemoRetryException();
             }
             TriageDecision decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
                     ticket.getChannel(), 0));
@@ -120,6 +120,20 @@ public class TriageWorker {
             log.info("triage.completed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} source={}",
                     message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(),
                     message.eventId(), decision.decisionSource());
+            return WorkerResult.ack();
+        } catch (SyntheticDemoRetryException failure) {
+            String errorCode = "SYNTHETIC_PROVIDER_TIMEOUT";
+            job.retryableFailure(errorCode, clock.instant());
+            ticket.queue(clock.instant());
+            jobs.save(job);
+            tickets.save(ticket);
+            if (attempt != null) {
+                attempt.fail(TriageAttemptStatus.RETRYABLE_FAILURE, errorCode, clock.instant());
+                attempts.save(attempt);
+            }
+            metrics.retryableFailure();
+            log.warn("triage.synthetic_demo_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), errorCode);
             return WorkerResult.ack();
         } catch (RuntimeException failure) {
             FailureClassification classification = classifier.classify(failure);
