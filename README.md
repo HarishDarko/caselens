@@ -58,38 +58,68 @@ evidence.
 - Java 21 (newer installed JDKs must compile with the configured Java 21 target)
 - Node.js 22 LTS or Node.js 24 LTS and npm 10 or later
 - Docker Desktop with Docker Compose
-- PowerShell 7
+- PowerShell 7 on Windows, or Bash on macOS/Linux
 
 ## Run the local product
 
-Create a local environment file before starting services:
+Create a local environment file before starting services.
+
+Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-For a live Groq run, set `CASELENS_AI_PROVIDER=groq` and add the key to
-`GROQ_API_KEY` in the ignored `.env`. Put the Neon JDBC URL, role, and password
-in the ignored `.env.neon`. The reviewed model is `openai/gpt-oss-20b`.
-Select `mock` only for offline work and automated tests.
+macOS/Linux:
 
-Start or stop PostgreSQL 16 and LocalStack SQS:
+```bash
+cp .env.example .env
+```
+
+For a live Groq run, set `CASELENS_AI_PROVIDER=groq` and add the key to
+`GROQ_API_KEY` in the ignored `.env`. To use Neon instead of the local
+PostgreSQL container, place its JDBC URL, role, and password in the datasource
+variables in `.env`. The reviewed model is `openai/gpt-oss-20b`. Select `mock`
+only for offline work and automated tests.
+
+Start PostgreSQL 16 and LocalStack SQS.
+
+Windows PowerShell:
 
 ```powershell
 ./scripts/dev-up.ps1
-./scripts/dev-down.ps1
 ```
 
-Start the backend in one PowerShell window and the built frontend preview in a
-second:
+macOS/Linux:
+
+```bash
+./scripts/dev-up.sh
+```
+
+Start the backend in one terminal and the built frontend preview in a second.
+
+Windows PowerShell:
 
 ```powershell
 ./scripts/backend-dev.ps1
 Set-Location frontend
-npm install
+npm ci
 npm run build
 npx vite preview --host 0.0.0.0 --port 4173
 ```
+
+macOS/Linux:
+
+```bash
+./scripts/backend-dev.sh
+cd frontend
+npm ci
+npm run build
+npx vite preview --host 0.0.0.0 --port 4173
+```
+
+Stop local dependencies with `./scripts/dev-down.ps1` on Windows or
+`./scripts/dev-down.sh` on macOS/Linux.
 
 Open [http://localhost:4173/](http://localhost:4173/) and use the local demo
 passcode from `.env` (the supplied example uses `reviewer`). The backend is
@@ -119,22 +149,42 @@ The local UI supports:
 
 Run the backend and frontend checks:
 
+Windows PowerShell:
+
 ```powershell
 ./scripts/test.ps1
 ```
 
-Run each workspace directly when iterating:
+macOS/Linux:
+
+```bash
+./scripts/test.sh
+```
+
+Run each workspace directly when iterating. Use `Set-Location frontend` in
+PowerShell or `cd frontend` in Bash:
 
 ```powershell
 ./scripts/backend-dev.ps1
 Set-Location frontend
-npm install
+npm ci
 npm run dev
 ```
 
-The backend helper loads the root `.env` file into its process before invoking Maven. Backend tests use an in-memory test profile and do not require PostgreSQL, LocalStack, or Docker.
+```bash
+./scripts/backend-dev.sh
+cd frontend
+npm ci
+npm run dev
+```
+
+The backend helpers load the root `.env` file into their process before
+invoking Maven. Backend tests use an in-memory test profile and do not require
+PostgreSQL, LocalStack, or Docker.
 
 The complete local verification also includes:
+
+Windows PowerShell:
 
 ```powershell
 Set-Location backend
@@ -146,6 +196,23 @@ npm run typecheck
 npm run build
 npm run test:e2e
 Set-Location ../infra/terraform
+terraform fmt -check -recursive
+terraform init -backend=false -input=false
+terraform validate
+```
+
+macOS/Linux:
+
+```bash
+cd backend
+./mvnw -B -ntp test
+cd ../frontend
+npm test -- --run
+npm run lint
+npm run typecheck
+npm run build
+npm run test:e2e
+cd ../infra/terraform
 terraform fmt -check -recursive
 terraform init -backend=false -input=false
 terraform validate

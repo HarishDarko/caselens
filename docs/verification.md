@@ -19,5 +19,6 @@ Verified locally on 2026-07-12 from `feat/production-proof`.
 | Containers | Backend and frontend multi-stage images built successfully; backend runs as UID 10001; frontend container smoke returned HTTP 200 |
 | Privacy | Secret-pattern scan found only explicit synthetic test configuration; `.env`, history notes, continuation docs, Terraform state, and generated dependencies remain ignored |
 | Public release check | On 2026-07-13, the deployed CloudFront URL returned HTTP 200; the remote repository contained only the rewritten `feat/production-proof` branch; internal continuation paths were absent from that branch's history; and a credential-pattern history scan found only an intentionally hostile synthetic URI in a sanitizer test |
+| Cross-platform local workflow | The macOS/Linux Bash entry points passed syntax validation; the Bash test helper ran the complete 115-test backend suite plus 11 frontend tests, lint, and typecheck from Git Bash; CI repeats Bash syntax validation on Ubuntu |
 
 Live reviewer URL: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).

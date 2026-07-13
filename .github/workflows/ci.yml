@@ -24,6 +24,8 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Validate macOS and Linux helper scripts
+        run: bash -n scripts/dev-up.sh scripts/dev-down.sh scripts/backend-dev.sh scripts/test.sh
       - name: Run backend tests
         working-directory: backend
         run: ./mvnw -B -ntp test
