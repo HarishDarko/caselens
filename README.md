@@ -31,19 +31,21 @@ an isolated, expiring workspace containing synthetic records only.
 The first login or triage request can take several seconds when Lambda or Neon
 has scaled down. Later requests normally use warm infrastructure.
 
-## Engineering evidence
+## Technical overview
 
-- Java 21 and Spring Boot implement the API, domain rules, queue worker, and
-  outbox relay as a modular monolith.
-- PostgreSQL transactions and a transactional outbox close the database/queue
-  dual-write gap; SQS delivery is duplicate-safe and recoverable through a DLQ.
-- Groq supplies structured recommendations. CaseLens redacts ticket text,
-  validates exact evidence and policy IDs, and uses deterministic rules when
-  provider output fails validation.
-- Human corrections preserve the original result and feed evaluation metrics
-  calculated from stored events rather than hard-coded dashboard values.
-- Terraform provisions the AWS runtime in `ca-central-1`; GitHub Actions uses
-  AWS OIDC and includes a protected, manually approved destroy workflow.
+| Area | Technology and implementation |
+| --- | --- |
+| Reviewer interface | React 19, TypeScript, Vite, TanStack Query, responsive CSS, Vitest, and Playwright |
+| Application | Java 21, Spring Boot, Spring Security, Spring Data JPA, Flyway, and a modular-monolith boundary around the API, domain, worker, and relay |
+| Durable data | Neon PostgreSQL 16 with workspace-scoped records, immutable original results, human feedback, and database-derived evaluation metrics |
+| Asynchronous processing | Transactional outbox, Amazon SQS and DLQ, EventBridge recovery, idempotent job claims, bounded retries, and operator replay |
+| AI safety | Groq for the live path, a Gemini adapter, strict structured output, redaction, exact-evidence and policy validation, deterministic priority, and rules fallback |
+| AWS runtime | API Gateway, Java Lambda with SnapStart aliases, S3, CloudFront, CloudWatch, Secrets Manager, and least-scope runtime IAM |
+| Delivery and verification | Terraform, GitHub Actions with AWS OIDC, Docker, LocalStack, Testcontainers, Trivy scanning, and protected manual teardown |
+
+Short-lived signed sessions isolate each reviewer workspace. Rate limits,
+sanitized logs, durable correlation IDs, health probes, queue telemetry, and a
+controlled retry scenario make failure behavior inspectable in the demo.
 
 See [the architecture](docs/architecture.md),
 [verification record](docs/verification.md),
