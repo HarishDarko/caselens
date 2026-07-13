@@ -18,6 +18,7 @@ import java.util.UUID;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class LambdaHandlerContractTest {
@@ -57,6 +58,27 @@ class LambdaHandlerContractTest {
 
         assertThat(WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker))
                 .containsExactly(Map.of("itemIdentifier", "retry-1"));
+    }
+
+    @Test
+    void workerBootstrapsSpringDependenciesWhenLambdaConstructsTheHandler() {
+        ObjectMapper mapper = new ObjectMapper();
+        TriageWorker worker = mock(TriageWorker.class);
+        AtomicBoolean mapperLoaded = new AtomicBoolean();
+        AtomicBoolean workerLoaded = new AtomicBoolean();
+
+        new WorkerHandler(
+                () -> {
+                    mapperLoaded.set(true);
+                    return mapper;
+                },
+                () -> {
+                    workerLoaded.set(true);
+                    return worker;
+                });
+
+        assertThat(mapperLoaded).isTrue();
+        assertThat(workerLoaded).isTrue();
     }
 
     @Test

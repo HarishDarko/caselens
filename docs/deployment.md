@@ -26,6 +26,10 @@ The CaseLens demo is deployed in AWS `ca-central-1`. The reviewer URL is
 - The Lambda database pool is suspended and its connections are evicted before
   a SnapStart checkpoint. It resumes without reusing a checkpointed Neon
   socket, avoiding stale-connection failures after restore.
+- The SQS event source invokes a separately pinned worker `live` alias. The
+  worker resolves its Spring dependencies when Lambda constructs the handler,
+  so the initialized application is captured in the SnapStart snapshot instead
+  of being built during the first queue delivery.
 
 ## Local readiness evidence
 
@@ -76,10 +80,14 @@ The deployed environment uses the following configuration:
    functions exist, and set `CASELENS_LAMBDA_FUNCTIONS` to their exact comma-
    separated names. The manual workflow then updates each function to the
    versioned object; leaving the flag unset safely publishes only the artifact.
-8. A reviewed Terraform plan with `deploy_compute=true`, the artifact bucket,
-   and `api_live_version` set to the published version after AWS reports its
-   SnapStart optimization as `On`. Terraform creates/configures
-   the functions; the explicit CI runtime-update step owns subsequent code
+8. For the first compute deployment only, run a reviewed plan with
+   `deploy_compute=true`, the artifact bucket, and
+   `bootstrap_live_aliases=true` while leaving both live-version inputs unset.
+   Terraform creates the functions and bootstraps each alias from the version
+   created in that apply. Leave bootstrap mode disabled for every later release
+   or rollback, and set `api_live_version` and `worker_live_version` explicitly
+   after AWS reports SnapStart optimization as `On`. The explicit CI runtime-
+   update step owns subsequent code
    versions, while S3 versioning preserves rollback targets. Compute remains
    disabled by default until Neon connectivity and the secret are verified.
 
@@ -96,6 +104,13 @@ time and about 64 milliseconds for each warm invocation. The remaining first-
 request time is the fresh Neon connection/query after the checkpointed pool is
 discarded; removing it completely would require an always-warm paid compute or
 database choice, so it is retained as an explicit cost/latency trade-off.
+
+The worker cold path was verified separately on 2026-07-12. Before the fix,
+SQS invoked `$LATEST` and the first job initialized Spring inside the request,
+taking 28-40 seconds in live measurements. Worker version 6 initializes Spring
+before its snapshot and is reached through the pinned worker alias. Its first
+real synthetic Groq journey completed in 7.27 seconds end to end; the next
+journey completed in 2.69 seconds. Both were `AI_VALIDATED` in one attempt.
 
 ## Terraform state and teardown
 

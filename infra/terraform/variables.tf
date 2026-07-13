@@ -61,14 +61,33 @@ variable "lambda_artifact_bucket" {
   }
 }
 
+variable "bootstrap_live_aliases" {
+  description = "One-time initial deployment mode that derives live aliases from versions created in the same apply."
+  type        = bool
+  default     = false
+}
+
 variable "api_live_version" {
-  description = "Published, SnapStart-optimized API Lambda version approved for the live alias."
+  description = "Published, SnapStart-optimized API version approved for live traffic; omit only during initial bootstrap."
   type        = string
   default     = null
 
   validation {
-    condition     = !var.deploy_compute || (var.api_live_version != null && can(regex("^[1-9][0-9]*$", var.api_live_version)))
-    error_message = "api_live_version must be a positive published Lambda version when deploy_compute is true."
+    condition = (!var.deploy_compute || var.bootstrap_live_aliases
+    || (var.api_live_version != null && can(regex("^[1-9][0-9]*$", var.api_live_version))))
+    error_message = "api_live_version must be a positive published version unless bootstrap_live_aliases is explicitly enabled."
+  }
+}
+
+variable "worker_live_version" {
+  description = "Published, SnapStart-optimized worker version approved for live traffic; omit only during initial bootstrap."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (!var.deploy_compute || var.bootstrap_live_aliases
+    || (var.worker_live_version != null && can(regex("^[1-9][0-9]*$", var.worker_live_version))))
+    error_message = "worker_live_version must be a positive published version unless bootstrap_live_aliases is explicitly enabled."
   }
 }
 

@@ -14,13 +14,25 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 public final class WorkerHandler implements RequestStreamHandler {
+    private final ObjectMapper mapper;
+    private final TriageWorker worker;
+    private final QueueMessageCodec codec;
+
+    public WorkerHandler() {
+        this(LambdaSpringContext::mapper, () -> LambdaSpringContext.get().getBean(TriageWorker.class));
+    }
+
+    WorkerHandler(Supplier<ObjectMapper> mapperSupplier, Supplier<TriageWorker> workerSupplier) {
+        this.mapper = mapperSupplier.get();
+        this.worker = workerSupplier.get();
+        this.codec = new QueueMessageCodec(mapper);
+    }
+
     @Override
     public void handleRequest(InputStream input, OutputStream output, Context context) throws IOException {
-        ObjectMapper mapper = LambdaSpringContext.mapper();
-        TriageWorker worker = LambdaSpringContext.get().getBean(TriageWorker.class);
-        QueueMessageCodec codec = new QueueMessageCodec(mapper);
         JsonNode records = mapper.readTree(input).path("Records");
         List<Map<String, String>> failures = retryableFailures(records, codec, worker);
         mapper.writeValue(output, Map.of("batchItemFailures", failures));

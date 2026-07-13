@@ -292,7 +292,7 @@ resource "aws_lambda_alias" "api" {
   name             = "live"
   description      = "SnapStart-optimized API version used by API Gateway"
   function_name    = aws_lambda_function.api[0].function_name
-  function_version = var.api_live_version
+  function_version = coalesce(var.api_live_version, aws_lambda_function.api[0].version)
 }
 
 resource "aws_lambda_function" "worker" {
@@ -320,6 +320,14 @@ resource "aws_lambda_function" "worker" {
       SPRING_PROFILES_ACTIVE                  = "lambda"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
+}
+
+resource "aws_lambda_alias" "worker" {
+  count            = var.deploy_compute ? 1 : 0
+  name             = "live"
+  description      = "SnapStart-optimized worker version used by the SQS event source"
+  function_name    = aws_lambda_function.worker[0].function_name
+  function_version = coalesce(var.worker_live_version, aws_lambda_function.worker[0].version)
 }
 
 resource "aws_lambda_function" "relay" {
@@ -396,7 +404,7 @@ resource "aws_lambda_permission" "api_gateway" {
 resource "aws_lambda_event_source_mapping" "worker" {
   count                   = var.deploy_compute ? 1 : 0
   event_source_arn        = aws_sqs_queue.triage.arn
-  function_name           = aws_lambda_function.worker[0].arn
+  function_name           = aws_lambda_alias.worker[0].arn
   batch_size              = 1
   function_response_types = ["ReportBatchItemFailures"]
 }
