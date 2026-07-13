@@ -13,6 +13,44 @@ repeatable. A separate Gemini adapter remains available.
 
 Live demo: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net)
 
+## Review the live system
+
+Use the demo passcode supplied with the review invitation. Each login creates
+an isolated, expiring workspace containing synthetic records only.
+
+1. Load **charger-offline-site-wide** from the ticket inbox.
+2. Open the case and inspect its deterministic priority, exact evidence,
+   policy, recommended actions, and suggested reply.
+3. Expand **Durable processing trace** to follow the database outbox, SQS job,
+   worker attempt, provider validation, and stored result.
+4. Save an urgency correction, then open **Evaluation** to see metrics derived
+   from persisted results and feedback.
+5. Run the controlled retry scenario and use **Operations** to inspect and
+   recover its bounded synthetic failure.
+
+The first login or triage request can take several seconds when Lambda or Neon
+has scaled down. Later requests normally use warm infrastructure.
+
+## Engineering evidence
+
+- Java 21 and Spring Boot implement the API, domain rules, queue worker, and
+  outbox relay as a modular monolith.
+- PostgreSQL transactions and a transactional outbox close the database/queue
+  dual-write gap; SQS delivery is duplicate-safe and recoverable through a DLQ.
+- Groq supplies structured recommendations. CaseLens redacts ticket text,
+  validates exact evidence and policy IDs, and uses deterministic rules when
+  provider output fails validation.
+- Human corrections preserve the original result and feed evaluation metrics
+  calculated from stored events rather than hard-coded dashboard values.
+- Terraform provisions the AWS runtime in `ca-central-1`; GitHub Actions uses
+  AWS OIDC and includes a protected, manually approved destroy workflow.
+
+See [the architecture](docs/architecture.md),
+[verification record](docs/verification.md),
+[threat model](docs/threat-model.md), and
+[deployment notes](docs/deployment.md) for implementation details and current
+evidence.
+
 ## Prerequisites
 
 - Java 21 (newer installed JDKs must compile with the configured Java 21 target)
@@ -143,8 +181,6 @@ Secrets Manager, and Neon PostgreSQL. Terraform state is held in a separate
 private, versioned S3 bucket. The protected manual destroy workflow preserves
 that state bucket while removing the application stack.
 
-See [docs/architecture.md](docs/architecture.md),
-[docs/security-hardening.md](docs/security-hardening.md),
-[docs/evaluation-metrics.md](docs/evaluation-metrics.md), and
-[docs/reviewer-walkthrough.md](docs/reviewer-walkthrough.md) for the design,
-operational boundaries, metric definitions, and a short demo script.
+See [security hardening](docs/security-hardening.md),
+[evaluation metric definitions](docs/evaluation-metrics.md), and the
+[reviewer walkthrough](docs/reviewer-walkthrough.md) for more detail.

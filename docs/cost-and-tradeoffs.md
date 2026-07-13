@@ -6,7 +6,7 @@ The reviewed local path uses Neon PostgreSQL, LocalStack SQS, and Groq. Tests
 use disposable PostgreSQL/LocalStack containers and a deterministic provider,
 which keeps routine verification repeatable.
 
-## Proposed AWS shape
+## Deployed AWS shape
 
 - S3 and CloudFront for the private static frontend;
 - API Gateway and Java 21 Lambda for the API surface;
@@ -18,8 +18,8 @@ which keeps routine verification repeatable.
 
 This shape keeps the always-on footprint small, but it moves complexity into
 deployment packaging, database connectivity, cold-start behavior, and
-observability. The Terraform defaults keep compute disabled until the Lambda
-artifacts and database path are ready.
+observability. The deployed environment uses versioned Lambda aliases while
+Terraform keeps compute disabled by default for new environments.
 
 ## Cost guardrails
 
