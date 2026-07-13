@@ -22,6 +22,8 @@ caselens:
     queue: ${CASELENS_RUNTIME_QUEUE:localstack-sqs}
     ai-provider: ${CASELENS_RUNTIME_AI_PROVIDER:deterministic}
   demo-passcode: ${CASELENS_DEMO_PASSCODE}
+  demo:
+    failure-scenarios-enabled: ${CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED:false}
   session-secret: ${CASELENS_SESSION_SECRET}
   web:
     origins: ${CASELENS_WEB_ORIGINS:http://localhost:4173,http://127.0.0.1:4173}

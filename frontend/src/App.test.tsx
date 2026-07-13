@@ -20,6 +20,7 @@ function mockBackend() {
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 8 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
+    if (url.includes('/api/demo/scenarios/provider-retry-demo')) return response({ ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }, 201)
     if (url.includes('/api/demo/scenarios/')) return response({ ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide' }, 201)
     if (url.includes('/api/tickets?page=')) return response({ content: [apiTicket], page: 0, size: 50, totalElements: 1, totalPages: 1 })
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
@@ -103,6 +104,22 @@ test('requires a reviewer note before saving a correction', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
 
   expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
+})
+
+test('launches the fixed synthetic retry demonstration', async () => {
+  const fetchMock = mockBackend()
+  render(<MemoryRouter><App /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+
+  expect(screen.getByText('Controlled retry demonstration')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/demo/scenarios/provider-retry-demo'),
+    expect.objectContaining({ method: 'POST' }),
+  ))
 })
 
 test('shows measured evaluation and operational failure views', async () => {

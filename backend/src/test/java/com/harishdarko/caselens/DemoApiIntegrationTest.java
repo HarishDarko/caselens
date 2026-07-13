@@ -103,7 +103,7 @@ class DemoApiIntegrationTest {
 
         mvc.perform(post("/api/demo/reset").header("Authorization", bearer(tokenA)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.seeded").value(8));
+                .andExpect(jsonPath("$.seeded").value(9));
 
         mvc.perform(get("/api/tickets/{id}", ticketB).header("Authorization", bearer(tokenB)))
                 .andExpect(status().isOk())

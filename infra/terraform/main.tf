@@ -274,13 +274,14 @@ resource "aws_lambda_function" "api" {
   snap_start { apply_on = "PublishedVersions" }
   environment {
     variables = merge({
-      CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
-      CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
-      CASELENS_QUEUE_ENABLED        = "true"
-      CASELENS_RUNTIME_ENVIRONMENT  = "aws-demo"
-      CASELENS_RUNTIME_DATABASE     = "neon-postgresql"
-      CASELENS_RUNTIME_QUEUE        = "amazon-sqs"
-      CASELENS_RUNTIME_AI_PROVIDER  = "groq"
+      CASELENS_TRIAGE_QUEUE_URL               = aws_sqs_queue.triage.url
+      CASELENS_SECRETS_MANAGER_NAME           = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED                  = "true"
+      CASELENS_RUNTIME_ENVIRONMENT            = "aws-demo"
+      CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
+      CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
+      CASELENS_RUNTIME_AI_PROVIDER            = "groq"
+      CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -299,13 +300,14 @@ resource "aws_lambda_function" "worker" {
   snap_start { apply_on = "PublishedVersions" }
   environment {
     variables = merge({
-      CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
-      CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
-      CASELENS_QUEUE_ENABLED        = "true"
-      CASELENS_RUNTIME_ENVIRONMENT  = "aws-demo"
-      CASELENS_RUNTIME_DATABASE     = "neon-postgresql"
-      CASELENS_RUNTIME_QUEUE        = "amazon-sqs"
-      CASELENS_RUNTIME_AI_PROVIDER  = "groq"
+      CASELENS_TRIAGE_QUEUE_URL               = aws_sqs_queue.triage.url
+      CASELENS_SECRETS_MANAGER_NAME           = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED                  = "true"
+      CASELENS_RUNTIME_ENVIRONMENT            = "aws-demo"
+      CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
+      CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
+      CASELENS_RUNTIME_AI_PROVIDER            = "groq"
+      CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -324,13 +326,14 @@ resource "aws_lambda_function" "relay" {
   snap_start { apply_on = "PublishedVersions" }
   environment {
     variables = merge({
-      CASELENS_TRIAGE_QUEUE_URL     = aws_sqs_queue.triage.url
-      CASELENS_SECRETS_MANAGER_NAME = aws_secretsmanager_secret.application.name
-      CASELENS_QUEUE_ENABLED        = "true"
-      CASELENS_RUNTIME_ENVIRONMENT  = "aws-demo"
-      CASELENS_RUNTIME_DATABASE     = "neon-postgresql"
-      CASELENS_RUNTIME_QUEUE        = "amazon-sqs"
-      CASELENS_RUNTIME_AI_PROVIDER  = "groq"
+      CASELENS_TRIAGE_QUEUE_URL               = aws_sqs_queue.triage.url
+      CASELENS_SECRETS_MANAGER_NAME           = aws_secretsmanager_secret.application.name
+      CASELENS_QUEUE_ENABLED                  = "true"
+      CASELENS_RUNTIME_ENVIRONMENT            = "aws-demo"
+      CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
+      CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
+      CASELENS_RUNTIME_AI_PROVIDER            = "groq"
+      CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }

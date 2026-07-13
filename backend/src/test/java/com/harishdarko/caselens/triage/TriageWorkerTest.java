@@ -65,7 +65,10 @@ class TriageWorkerTest {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
         Ticket ticket = ticket();
         when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
-        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(1);
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenAnswer(invocation -> {
+            job.claim(invocation.getArgument(1));
+            return 1;
+        });
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
         TriageProvider transientFailure = (request, redacted) -> {
             throw new ProviderCallException("provider unavailable", "HTTP_503");
@@ -77,6 +80,30 @@ class TriageWorkerTest {
         assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
         assertThat(job.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
         assertThat(job.getLastErrorCode()).isEqualTo("PROVIDER_TIMEOUT");
+    }
+
+    @Test
+    void recordsOneControlledRetryForTheFixedDemoScenario() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        Ticket ticket = Ticket.create(ticketId, workspaceId, "Synthetic provider timeout",
+                "This reserved synthetic case demonstrates a bounded provider retry.",
+                TicketChannel.WEB, "provider-retry-demo", clock.instant());
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenAnswer(invocation -> {
+            job.claim(invocation.getArgument(1));
+            return 1;
+        });
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+
+        TriageWorker worker = new TriageWorker(jobs, tickets, results, null,
+                transientEngine(new MockTriageProvider()), new ObjectMapper(), clock,
+                TriageMetrics.noop(), new DemoFailurePolicy(true));
+        WorkerResult result = worker.process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
+        assertThat(job.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
+        assertThat(job.getLastErrorCode()).isEqualTo("PROVIDER_TIMEOUT");
+        verify(results, never()).save(any());
     }
 
     @Test

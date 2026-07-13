@@ -103,6 +103,9 @@ input, textarea { min-width: 0; width: 100%; border: 1px solid #bfc7c1; border-r
 .scenario-kicker { color: var(--teal); font: .63rem var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .secondary-button { width: 100%; border: 1px solid var(--teal); padding: .65rem .7rem; color: var(--teal); background: transparent; font-size: .72rem; font-weight: 700; }
 .secondary-button:hover { color: #fff; background: var(--teal); }
+.scenario-divider { height: 1px; background: #b8d5ce; }
+.retry-demo-button { border-color: var(--coral); color: var(--coral); }
+.retry-demo-button:hover { background: var(--coral); }
 .ticket-list { display: grid; gap: .7rem; }
 .ticket-row { position: relative; padding: 1.05rem 1.1rem 1rem; border: 1px solid var(--line); background: var(--paper-strong); transition: border-color .16s ease, transform .16s ease; }
 .ticket-row:hover, .ticket-row.selected { border-color: var(--teal); transform: translateY(-2px); }

@@ -19,6 +19,7 @@ public class TriageWorker {
     private final ObjectMapper mapper;
     private final Clock clock;
     private final TriageMetrics metrics;
+    private final DemoFailurePolicy demoFailurePolicy;
     private final TriageFailureClassifier classifier = new TriageFailureClassifier();
 
     public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
@@ -29,6 +30,12 @@ public class TriageWorker {
     public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
             TriageResultRepository results, TriageAttemptRepository attempts, TriageEngine engine,
             ObjectMapper mapper, Clock clock, TriageMetrics metrics) {
+        this(jobs, tickets, results, attempts, engine, mapper, clock, metrics, new DemoFailurePolicy(false));
+    }
+
+    public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
+            TriageResultRepository results, TriageAttemptRepository attempts, TriageEngine engine,
+            ObjectMapper mapper, Clock clock, TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy) {
         this.jobs = Objects.requireNonNull(jobs);
         this.tickets = Objects.requireNonNull(tickets);
         this.results = Objects.requireNonNull(results);
@@ -37,6 +44,7 @@ public class TriageWorker {
         this.mapper = Objects.requireNonNull(mapper);
         this.clock = Objects.requireNonNull(clock);
         this.metrics = Objects.requireNonNull(metrics);
+        this.demoFailurePolicy = Objects.requireNonNull(demoFailurePolicy);
     }
 
     @org.springframework.transaction.annotation.Transactional
@@ -93,6 +101,9 @@ public class TriageWorker {
         ticket.processing(clock.instant());
         tickets.save(ticket);
         try {
+            if (demoFailurePolicy.shouldFail(ticket.getScenarioKey(), job.getAttemptCount(), job.getReplayedFromJobId())) {
+                throw new ProviderCallException("Synthetic demo provider timeout", "HTTP_503");
+            }
             TriageDecision decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
                     ticket.getChannel(), 0));
             results.save(TriageResult.from(job.getEventId(), job.getWorkspaceId(), decision, clock.instant(), mapper));

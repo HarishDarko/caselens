@@ -75,9 +75,15 @@ public class TriageConfiguration {
     }
 
     @Bean
+    DemoFailurePolicy demoFailurePolicy(
+            @Value("${caselens.demo.failure-scenarios-enabled:false}") boolean enabled) {
+        return new DemoFailurePolicy(enabled);
+    }
+
+    @Bean
     TriageWorker triageWorker(TriageJobRepository jobs, TicketRepository tickets, TriageResultRepository results,
             TriageAttemptRepository attempts, TriageEngine engine, ObjectMapper objectMapper, Clock clock,
-            TriageMetrics metrics) {
-        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics);
+            TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy) {
+        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics, demoFailurePolicy);
     }
 }
