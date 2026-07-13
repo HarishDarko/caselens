@@ -5,7 +5,7 @@ Verified locally on 2026-07-12 from `feat/production-proof`.
 | Area | Evidence |
 | --- | --- |
 | Backend | 112 tests passed; 0 failures, errors, or skips; PostgreSQL and LocalStack Testcontainers included |
-| Frontend | 10 Vitest tests passed; lint, typecheck, and production build passed |
+| Frontend | 11 Vitest tests passed; lint, typecheck, and production build passed |
 | Browser | 2 Playwright journeys passed; 2 project-specific skips are intentional |
 | Local API | Neon migrations V1-V5 applied; a LocalStack SQS round-trip persisted a result in Neon |
 | Providers | Live Groq returned an `AI_VALIDATED` result with model `openai/gpt-oss-20b`; provider adapter tests cover Groq, Gemini, and deterministic mode |

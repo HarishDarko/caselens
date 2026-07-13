@@ -13,7 +13,7 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function mockBackend() {
+function mockBackend(options: { syntheticFailure?: boolean } = {}) {
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
     if (input === undefined) return response({})
     const url = String(input)
@@ -27,8 +27,10 @@ function mockBackend() {
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
     if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 220, failureRate: 0, providerUsage: [], recentEvents: [{ resultId: 'result-1', createdAt: '2026-07-11T09:14:02Z', latencyMs: 184, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', evaluated: true, corrected: false }] })
-    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 1, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [], providers: [] })
-    if (url.includes('/api/operations/failures')) return response({ content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 })
+    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 1, retryableFailures: options.syntheticFailure ? 1 : 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: options.syntheticFailure ? 1 : 0, recent: [], providers: [] })
+    if (url.includes('/api/operations/failures')) return response(options.syntheticFailure
+      ? { content: [{ id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-retry-1', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }], page: 0, size: 50, totalElements: 1, totalPages: 1 }
+      : { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 })
     throw new Error(`Unhandled test URL: ${url}`)
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -152,4 +154,19 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
   await waitFor(() => expect(screen.getByText('Provider failures')).toBeInTheDocument())
   expect(screen.getByText('Completed jobs')).toBeInTheDocument()
   expect(screen.getByText('1', { selector: '.ops-value' })).toBeInTheDocument()
+})
+
+test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
+  mockBackend({ syntheticFailure: true })
+  render(<MemoryRouter><App /></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Recovery required' })).toBeInTheDocument())
+  expect(screen.getByText('A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Retry case' })).toBeInTheDocument()
+  expect(screen.queryByText(/Provider degraded/)).not.toBeInTheDocument()
 })
