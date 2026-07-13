@@ -16,6 +16,20 @@ final class LambdaSecrets {
             "CASELENS_DEMO_PASSCODE", "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER",
             "CASELENS_WEB_ORIGINS", "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_ENDPOINT",
             "GROQ_API_KEY", "GROQ_MODEL", "GROQ_ENDPOINT");
+    private static final Map<String, String> SPRING_PROPERTY_KEYS = Map.ofEntries(
+            Map.entry("SPRING_DATASOURCE_URL", "spring.datasource.url"),
+            Map.entry("SPRING_DATASOURCE_USERNAME", "spring.datasource.username"),
+            Map.entry("SPRING_DATASOURCE_PASSWORD", "spring.datasource.password"),
+            Map.entry("CASELENS_DEMO_PASSCODE", "caselens.demo-passcode"),
+            Map.entry("CASELENS_SESSION_SECRET", "caselens.session-secret"),
+            Map.entry("CASELENS_AI_PROVIDER", "caselens.ai-provider"),
+            Map.entry("CASELENS_WEB_ORIGINS", "caselens.web.origins"),
+            Map.entry("GEMINI_API_KEY", "caselens.gemini.api-key"),
+            Map.entry("GEMINI_MODEL", "caselens.gemini.model"),
+            Map.entry("GEMINI_ENDPOINT", "caselens.gemini.endpoint"),
+            Map.entry("GROQ_API_KEY", "caselens.groq.api-key"),
+            Map.entry("GROQ_MODEL", "caselens.groq.model"),
+            Map.entry("GROQ_ENDPOINT", "caselens.groq.endpoint"));
 
     private LambdaSecrets() {}
 
@@ -38,7 +52,10 @@ final class LambdaSecrets {
         try {
             Map<String, String> values = mapper.readValue(secret, new TypeReference<>() {});
             values.forEach((key, value) -> {
-                if (ALLOWED_KEYS.contains(key) && value != null && !value.isBlank()) System.setProperty(key, value);
+                if (ALLOWED_KEYS.contains(key) && value != null && !value.isBlank()) {
+                    System.setProperty(key, value);
+                    System.setProperty(SPRING_PROPERTY_KEYS.get(key), value);
+                }
             });
         } catch (IOException exception) {
             throw new IllegalStateException("Configured runtime secret must be a JSON object", exception);

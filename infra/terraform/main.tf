@@ -122,7 +122,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     cloudfront_default_certificate = var.acm_certificate_arn == null
     acm_certificate_arn            = var.acm_certificate_arn
     ssl_support_method             = var.acm_certificate_arn == null ? null : "sni-only"
-    minimum_protocol_version       = "TLSv1.2_2021"
+    minimum_protocol_version       = var.acm_certificate_arn == null ? "TLSv1" : "TLSv1.2_2021"
   }
 
   custom_error_response {
@@ -281,6 +281,7 @@ resource "aws_lambda_function" "api" {
       CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
+      MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -306,6 +307,7 @@ resource "aws_lambda_function" "worker" {
       CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
+      MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }
@@ -331,6 +333,7 @@ resource "aws_lambda_function" "relay" {
       CASELENS_RUNTIME_DATABASE               = "neon-postgresql"
       CASELENS_RUNTIME_QUEUE                  = "amazon-sqs"
       CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED = "true"
+      MANAGEMENT_HEALTH_DISKSPACE_ENABLED     = "false"
     }, length(var.web_origins) > 0 ? { CASELENS_WEB_ORIGINS = join(",", var.web_origins) } : {})
   }
 }

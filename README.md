@@ -11,6 +11,8 @@ PostgreSQL, publishes work through SQS, and uses Groq for the reviewed demo
 path. A deterministic provider keeps automated tests and offline development
 repeatable. A separate Gemini adapter remains available.
 
+Live demo: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net)
+
 ## Prerequisites
 
 - Java 21 (newer installed JDKs must compile with the configured Java 21 target)
@@ -127,7 +129,7 @@ embeddings, Kubernetes, real OCPP traffic, real payment processing, or a live
 helpdesk integration. The EV-charging examples are company-neutral synthetic
 fixtures.
 
-## Deployment preparation
+## AWS deployment
 
 Terraform under `infra/terraform` provisions the private frontend bucket,
 CloudFront access control, SQS/DLQ, Secrets Manager placeholder, Lambda roles,
@@ -135,10 +137,11 @@ CloudWatch alarms, API Gateway, and optional Java 21 Lambda compute. GitHub
 Actions validates the backend, frontend, Terraform, containers, and security
 checks, and contains an OIDC-based publish path.
 
-No application resources are created by the local commands above. The AWS
-bootstrap state bucket and protected destroy role exist, Neon is the selected
-managed PostgreSQL service, and the application Terraform plan is ready for a
-separate approved deployment.
+The live demo runs in AWS `ca-central-1` with CloudFront and a private S3
+origin, API Gateway, three Java 21 Lambdas, SQS/DLQ, EventBridge, CloudWatch,
+Secrets Manager, and Neon PostgreSQL. Terraform state is held in a separate
+private, versioned S3 bucket. The protected manual destroy workflow preserves
+that state bucket while removing the application stack.
 
 See [docs/architecture.md](docs/architecture.md),
 [docs/security-hardening.md](docs/security-hardening.md),

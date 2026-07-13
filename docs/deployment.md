@@ -1,4 +1,7 @@
-# Deployment preparation
+# AWS deployment
+
+The CaseLens demo is deployed in AWS `ca-central-1`. The reviewer URL is
+[https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
 
 ## What is ready
 
@@ -30,9 +33,9 @@ Verified on 2026-07-12 from `feat/production-proof`:
 - Backend regression, frontend unit, lint, typecheck, build, and Playwright
   checks passed; see `docs/verification.md` for the current counts.
 
-## Required external setup
+## Deployment configuration
 
-Before a production apply, configure all of the following:
+The deployed environment uses the following configuration:
 
 1. AWS account and `ca-central-1` region bootstrap.
 2. GitHub Actions OIDC provider and a repository/branch-scoped deploy role.
@@ -72,8 +75,10 @@ Before a production apply, configure all of the following:
    versions, while S3 versioning preserves rollback targets. Compute remains
    disabled by default until Neon connectivity and the secret are verified.
 
-No cloud resource has been created by this deployment task. The first cloud
-mutation should be a reviewed Terraform plan followed by explicit approval.
+The base plan added 26 resources with no updates or deletions. The compute plan
+added 13 resources, updated one CloudFront setting, and deleted nothing. Final
+Terraform verification reported no pending changes. The public health check and
+an authenticated synthetic Groq/SQS journey passed after deployment.
 
 ## Terraform state and teardown
 

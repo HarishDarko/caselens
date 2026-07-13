@@ -1,7 +1,7 @@
 # Three-minute reviewer walkthrough
 
-1. Open the local or deployed reviewer URL. The page is labelled as a demo and
-   contains synthetic records only.
+1. Open [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
+   The page is labelled as a demo and contains synthetic records only.
 2. Enter the shared demo passcode and open the isolated workspace.
 3. In **Ticket inbox**, scan the seeded queue. Use **Load
    charger-offline-site-wide** to create a fresh synthetic case.
