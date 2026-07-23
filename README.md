@@ -179,8 +179,10 @@ npm run dev
 ```
 
 The backend helpers load the root `.env` file into their process before
-invoking Maven. Backend tests use an in-memory test profile and do not require
-PostgreSQL, LocalStack, or Docker.
+invoking Maven. Most backend tests use the in-memory test profile. The complete
+backend test command also runs PostgreSQL Testcontainers integration tests and
+therefore requires Docker. The LocalStack integration test skips when Docker is
+unavailable.
 
 The complete local verification also includes:
 

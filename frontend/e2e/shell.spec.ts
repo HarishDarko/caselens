@@ -46,7 +46,7 @@ test('completes the reviewer journey from queue to measured views', async ({ pag
   await page.getByRole('button', { name: 'Mark urgency high' }).click()
   await page.getByLabel('Review note').fill('The synthetic outage affects multiple drivers.')
   await page.getByRole('button', { name: 'Save correction' }).click()
-  await expect(page.getByRole('status')).toHaveText('Correction recorded in backend')
+  await expect(page.getByRole('status')).toContainText('Correction saved. Evaluation metrics updated.')
 
   await page.getByRole('button', { name: 'Evaluation' }).click()
   await expect(page.getByRole('heading', { name: 'Evaluation signal' })).toBeVisible()

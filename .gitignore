@@ -17,6 +17,7 @@ test-results/
 .playwright-cli/
 .superpowers/
 .codex-remote-attachments/
+tmp/
 
 # Local-only agent and continuation material
 AGENTS.md

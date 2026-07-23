@@ -44,6 +44,17 @@ test('renders the honest CaseLens demo shell', () => {
   render(<MemoryRouter><App /></MemoryRouter>)
   expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
   expect(screen.getByText('Demo environment')).toBeInTheDocument()
+  expect(screen.getByText(/backed by the CaseLens API/i)).toBeInTheDocument()
+})
+
+test('explains a possible serverless cold start while opening the workspace', () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
+  render(<MemoryRouter><App /></MemoryRouter>)
+
+  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+
+  expect(screen.getByRole('status')).toHaveTextContent('First access may take up to 20 seconds while serverless services resume.')
 })
 
 test('opens the reviewer workspace from the shared passcode screen', async () => {
@@ -93,7 +104,7 @@ test('loads a synthetic scenario into the inbox and records reviewer feedback', 
   fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
   fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The synthetic case indicates higher customer impact.' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
-  await waitFor(() => expect(screen.getByText('Correction recorded in backend')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Correction saved. Evaluation metrics updated.'))
 })
 
 test('requires a reviewer note before saving a correction', async () => {
