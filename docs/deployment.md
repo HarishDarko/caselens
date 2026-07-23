@@ -49,7 +49,8 @@ Verified on 2026-07-12 from `feat/production-proof`:
 The deployed environment uses the following configuration:
 
 1. AWS account and `ca-central-1` region bootstrap.
-2. GitHub Actions OIDC provider and a repository/branch-scoped deploy role.
+2. GitHub Actions OIDC provider and a deploy role scoped to this repository's
+   protected `production` environment.
 3. Repository variable `CASELENS_API_BASE_URL` for the frontend publish job.
 4. Terraform `web_origins` containing the deployed CloudFront/custom origin.
 5. A Neon PostgreSQL project in the selected region/plan, with TLS enabled,
@@ -76,6 +77,8 @@ The deployed environment uses the following configuration:
 7. The repository variable `CASELENS_ARTIFACT_BUCKET` for the CI publication
    job, alongside the existing frontend bucket, CloudFront distribution, API
    base URL, and AWS region variables.
+   The deploy role can read the exact versioned artifact it publishes, allowing
+   Lambda updates to pin an immutable S3 object version.
    Set `CASELENS_LAMBDA_DEPLOY_ENABLED` to `true` only after the Lambda
    functions exist, and set `CASELENS_LAMBDA_FUNCTIONS` to their exact comma-
    separated names. The manual workflow then updates each function to the

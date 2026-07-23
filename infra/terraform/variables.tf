@@ -19,9 +19,9 @@ variable "github_repository" {
   default     = "HarishDarko/caselens"
 }
 
-variable "github_branch" {
+variable "github_environment" {
   type    = string
-  default = "feat/production-proof"
+  default = "production"
 }
 
 variable "domain_aliases" {
