@@ -10,7 +10,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
 
 @SpringBootTest(properties = {
-    "CASELENS_DEMO_PASSCODE=reviewer",
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
     "CASELENS_TRIAGE_QUEUE_URL=http://localhost:4566/000000000000/caselens-triage",
     "CASELENS_QUEUE_ENABLED=true",

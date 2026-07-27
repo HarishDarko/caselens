@@ -21,7 +21,6 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
-    "CASELENS_DEMO_PASSCODE=reviewer",
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
     "CASELENS_TRIAGE_QUEUE_URL=http://localhost/unused",
     "CASELENS_QUEUE_ENABLED=false",
@@ -77,7 +76,7 @@ class TriageApiIntegrationTest {
 
     private String session() throws Exception {
         String body = mvc.perform(post("/api/demo/session").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"passcode\":\"reviewer\"}"))
+                        )
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("token").asText();
     }

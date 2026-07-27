@@ -13,14 +13,13 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueReques
 final class LambdaSecrets {
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD",
-            "CASELENS_DEMO_PASSCODE", "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER",
+            "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER",
             "CASELENS_WEB_ORIGINS", "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_ENDPOINT",
             "GROQ_API_KEY", "GROQ_MODEL", "GROQ_ENDPOINT");
     private static final Map<String, String> SPRING_PROPERTY_KEYS = Map.ofEntries(
             Map.entry("SPRING_DATASOURCE_URL", "spring.datasource.url"),
             Map.entry("SPRING_DATASOURCE_USERNAME", "spring.datasource.username"),
             Map.entry("SPRING_DATASOURCE_PASSWORD", "spring.datasource.password"),
-            Map.entry("CASELENS_DEMO_PASSCODE", "caselens.demo-passcode"),
             Map.entry("CASELENS_SESSION_SECRET", "caselens.session-secret"),
             Map.entry("CASELENS_AI_PROVIDER", "caselens.ai-provider"),
             Map.entry("CASELENS_WEB_ORIGINS", "caselens.web.origins"),

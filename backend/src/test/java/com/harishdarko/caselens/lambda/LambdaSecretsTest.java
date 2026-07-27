@@ -15,9 +15,9 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 class LambdaSecretsTest {
     private static final String[] SYSTEM_KEYS = {
             "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD",
-            "CASELENS_DEMO_PASSCODE", "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER", "GROQ_API_KEY",
+            "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER", "GROQ_API_KEY",
             "spring.datasource.url", "spring.datasource.username", "spring.datasource.password",
-            "caselens.demo-passcode", "caselens.session-secret", "caselens.ai-provider", "caselens.groq.api-key"
+            "caselens.session-secret", "caselens.ai-provider", "caselens.groq.api-key"
     };
 
     @AfterEach
@@ -33,7 +33,6 @@ class LambdaSecretsTest {
                         {"SPRING_DATASOURCE_URL":"jdbc:postgresql://neon.example/caselens",
                          "SPRING_DATASOURCE_USERNAME":"case_user",
                          "SPRING_DATASOURCE_PASSWORD":"secret-password",
-                         "CASELENS_DEMO_PASSCODE":"reviewer",
                          "CASELENS_SESSION_SECRET":"session-secret",
                          "CASELENS_AI_PROVIDER":"groq",
                          "GROQ_API_KEY":"provider-secret",
@@ -49,6 +48,9 @@ class LambdaSecretsTest {
         assertThat(System.getProperty("caselens.ai-provider")).isEqualTo("groq");
         assertThat(System.getProperty("caselens.groq.api-key")).isEqualTo("provider-secret");
         assertThat(System.getProperty("RAW_PROVIDER_RESPONSE")).isNull();
+        assertThat(LambdaSecrets.allowedKeys()).doesNotContain("CASELENS_DEMO_PASSCODE");
+        assertThat(System.getProperty("CASELENS_DEMO_PASSCODE")).isNull();
+        assertThat(System.getProperty("caselens.demo-passcode")).isNull();
         assertThat(LambdaSecrets.allowedKeys()).contains("GROQ_API_KEY");
     }
 }
