@@ -65,7 +65,6 @@ The deployed environment uses the following configuration:
      "SPRING_DATASOURCE_URL": "jdbc:postgresql://<neon-host>/<database>?sslmode=require",
      "SPRING_DATASOURCE_USERNAME": "<neon-role>",
      "SPRING_DATASOURCE_PASSWORD": "<neon-password>",
-     "CASELENS_DEMO_PASSCODE": "<local-generated-passcode>",
      "CASELENS_SESSION_SECRET": "<long-random-secret>",
      "CASELENS_AI_PROVIDER": "groq",
      "GROQ_API_KEY": "<groq-key>"
@@ -74,6 +73,11 @@ The deployed environment uses the following configuration:
 
    Never put real values in Git, task reports, screenshots, or chat. The Lambda
    runtime loads only an explicit allowlist from this secret.
+
+   `POST /api/demo/session` is anonymous: it creates an isolated 24-hour
+   workspace and returns a bearer token signed with `CASELENS_SESSION_SECRET`.
+   Every non-session API remains protected by that signed token and is scoped
+   to its workspace.
 7. The repository variable `CASELENS_ARTIFACT_BUCKET` for the CI publication
    job, alongside the existing frontend bucket, CloudFront distribution, API
    base URL, and AWS region variables.

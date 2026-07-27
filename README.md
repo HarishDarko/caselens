@@ -15,8 +15,9 @@ Live demo: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudf
 
 ## Review the live system
 
-Use the demo passcode supplied with the review invitation. Each login creates
-an isolated, expiring workspace containing synthetic records only.
+Open the live demo and select **Launch live demo**. CaseLens creates an
+isolated, 24-hour workspace containing synthetic records only. No account is
+required.
 
 1. Load **charger-offline-site-wide** from the ticket inbox.
 2. Open the case and inspect its deterministic priority, exact evidence,
@@ -28,8 +29,14 @@ an isolated, expiring workspace containing synthetic records only.
 5. Run the controlled retry scenario and use **Operations** to inspect and
    recover its bounded synthetic failure.
 
-The first login or triage request can take several seconds when Lambda or Neon
-has scaled down. Later requests normally use warm infrastructure.
+The first launch or triage request can take several seconds when Lambda or
+Neon has scaled down. Later requests normally use warm infrastructure.
+
+## Product tour
+
+Verified screenshots of the inbox, explainable triage result, processing trace,
+evaluation metrics, and failure-recovery view will be added after the public
+deployment is verified.
 
 ## Technical overview
 
@@ -121,9 +128,9 @@ npx vite preview --host 0.0.0.0 --port 4173
 Stop local dependencies with `./scripts/dev-down.ps1` on Windows or
 `./scripts/dev-down.sh` on macOS/Linux.
 
-Open [http://localhost:4173/](http://localhost:4173/) and use the local demo
-passcode from `.env` (the supplied example uses `reviewer`). The backend is
-available at `http://localhost:8080`; its health endpoint is
+Open [http://localhost:4173/](http://localhost:4173/) and select **Launch live
+demo** to create an isolated local workspace. No account is required. The
+backend is available at `http://localhost:8080`; its health endpoint is
 `http://localhost:8080/actuator/health`.
 
 The local UI supports:
