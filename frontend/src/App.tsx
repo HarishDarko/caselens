@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createCaseLensApi, type ApiTicket, type EvaluationSummary, type FailurePage, type OperationsOverview, type RuntimeSummary, type TriageProcessing, type TriageResult } from './api'
 
 type View = 'inbox' | 'evaluation' | 'operations'
@@ -30,9 +30,7 @@ function applyApiTriage(ticket: Ticket, result: TriageResult, job: TriageProcess
   return { ...ticket, category: result.category, urgency, priority: result.priorityScore, reliabilitySignal: result.reliabilitySignal, slaRisk: result.slaRisk, summary: result.summary, rationale: result.explanation, evidence: result.evidence.map((item) => typeof item === 'string' ? item : `“${item.quote}” — ${item.meaning}`), actions: result.recommendedActions, suggestedReply: result.suggestedReply, policy: result.policyIds.length ? `Policy IDs: ${result.policyIds.join(', ')}` : 'No policy IDs returned.', triageResultId: result.id, decisionSource: result.decisionSource, triageStatus: 'COMPLETED', latencyMs, jobId: job.id, eventId: job.eventId, attemptCount: job.attemptCount, attempts: job.attempts, provider, modelVersion: result.modelVersion, timeline: [...ticket.timeline.filter((event) => event.kind === 'received'), { label: `Triage decision: ${result.category.toLowerCase().replaceAll('_', ' ')}`, time: new Date(result.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), kind: 'decision' }, { label: 'Human review pending', time: 'now', kind: 'review' }] }
 }
 
-function Landing({ onOpen, busy, error }: { onOpen: (passcode: string) => void; busy: boolean; error: string | null }) {
-  const [passcode, setPasscode] = useState('')
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (passcode.trim() && !busy) onOpen(passcode.trim()) }
+function Landing({ onOpen, busy, error }: { onOpen: () => void; busy: boolean; error: string | null }) {
   return (
     <main className="landing-shell">
       <div className="landing-grid" aria-hidden="true" />
@@ -43,13 +41,12 @@ function Landing({ onOpen, busy, error }: { onOpen: (passcode: string) => void; 
         <h1 id="caselens-title">CaseLens</h1>
         <p className="landing-claim">Turn a messy case into a defensible next step.</p>
         <p className="landing-summary">CaseLens makes support-ticket triage explainable: see the signal, inspect the evidence, and keep a human in control of the correction.</p>
-        <form className="access-card" onSubmit={submit}>
-          <div><p className="eyebrow">Shared review space</p><h2>Open the working demo</h2><p className="muted">The passcode opens an isolated workspace backed by the CaseLens API. No customer or production systems are connected.</p></div>
-          <label htmlFor="demo-passcode">Shared demo passcode</label>
-          <div className="access-row"><input id="demo-passcode" value={passcode} onChange={(event) => setPasscode(event.target.value)} placeholder="reviewer" autoComplete="off" /><button type="submit" disabled={!passcode.trim() || busy}>{busy ? 'Opening workspace…' : 'Open reviewer workspace'}</button></div>
-          {busy && <p className="access-status" role="status" aria-live="polite"><span className="status-dot" aria-hidden="true" />Connecting to the CaseLens API. First access may take up to 20 seconds while serverless services resume.</p>}
+        <div className="access-card">
+          <div><p className="eyebrow">Public reviewer demo</p><h2>Open an isolated workspace</h2><p className="muted">Launch a temporary workspace containing synthetic support cases. No account is required, and no customer or production systems are connected.</p></div>
+          <button type="button" onClick={onOpen} disabled={busy}>{busy ? 'Creating isolated workspace...' : 'Launch live demo'}</button>
+          {busy && <p className="access-status" role="status" aria-live="polite"><span className="status-dot" aria-hidden="true" />Creating an isolated workspace, connecting to the CaseLens API, and loading synthetic fixtures. First access may take up to 20 seconds while serverless services resume.</p>}
           {error && <p className="error-banner" role="alert">{error}</p>}
-        </form>
+        </div>
         <div className="honesty-row"><span className="status-dot" /><span>Integrated API</span><span className="divider" /><span>Reserved fixtures only</span></div>
       </section>
       <aside className="landing-aside" aria-label="CaseLens product promise"><p className="aside-index">01 / 03</p><p className="aside-quote">“The useful answer is the one a reviewer can explain five minutes later.”</p><div className="aside-rule" /><dl><div><dt>Signal</dt><dd>What changed?</dd></div><div><dt>Evidence</dt><dd>Why believe it?</dd></div><div><dt>Control</dt><dd>Who decides next?</dd></div></dl></aside>
@@ -96,9 +93,9 @@ function App() {
     return () => window.clearInterval(interval)
   }, [api, sessionOpen, view])
 
-  async function openWorkspace(passcode: string) {
+  async function openWorkspace() {
     setBusy(true); setError(null)
-    try { const session = await api.createSession(passcode); api.setToken(session.token); await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime); setSelectedTicketId(null); setView('inbox'); setSessionOpen(true) }
+    try { const session = await api.createSession(); api.setToken(session.token); await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime); setSelectedTicketId(null); setView('inbox'); setSessionOpen(true) }
     catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not open the demo workspace.') } finally { setBusy(false) }
   }
 

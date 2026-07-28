@@ -20,7 +20,6 @@ caselens:
     environment: ${CASELENS_RUNTIME_ENVIRONMENT:local-review}
     database: ${CASELENS_RUNTIME_DATABASE:postgresql}
     queue: ${CASELENS_RUNTIME_QUEUE:localstack-sqs}
-  demo-passcode: ${CASELENS_DEMO_PASSCODE}
   demo:
     failure-scenarios-enabled: ${CASELENS_DEMO_FAILURE_SCENARIOS_ENABLED:false}
   session-secret: ${CASELENS_SESSION_SECRET}

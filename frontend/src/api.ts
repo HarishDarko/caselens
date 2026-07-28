@@ -176,8 +176,8 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
   }
 
   return {
-    createSession: (passcode) => request<{ token: string; expiresAt: string }>('/api/demo/session', {
-      method: 'POST', body: JSON.stringify({ passcode }),
+    createSession: () => request<{ token: string; expiresAt: string }>('/api/demo/session', {
+      method: 'POST',
     }),
     setToken: (value) => { token = value },
     resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
@@ -197,7 +197,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
 }
 
 export type CaseLensApi = {
-  createSession: (passcode: string) => Promise<{ token: string; expiresAt: string }>
+  createSession: () => Promise<{ token: string; expiresAt: string }>
   setToken: (token: string) => void
   resetDemo: () => Promise<{ seeded: number }>
   getRuntimeSummary: () => Promise<RuntimeSummary>

@@ -10,12 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
-    "CASELENS_DEMO_PASSCODE=reviewer",
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
     "CASELENS_TRIAGE_QUEUE_URL=http://localhost/unused",
     "CASELENS_QUEUE_ENABLED=false",
@@ -35,13 +33,12 @@ class RateLimitApiIntegrationTest {
 
     @Test
     void returnsRetryableProblemDetailsWhenTheSessionBudgetIsExceeded() throws Exception {
-        String request = "{\"passcode\":\"reviewer\"}";
         for (int attempt = 0; attempt < 2; attempt++) {
-            mvc.perform(post("/api/demo/session").contentType(MediaType.APPLICATION_JSON).content(request))
+            mvc.perform(post("/api/demo/session"))
                     .andExpect(status().isOk());
         }
 
-        mvc.perform(post("/api/demo/session").contentType(MediaType.APPLICATION_JSON).content(request))
+        mvc.perform(post("/api/demo/session"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().string("Retry-After", "60"))
                 .andExpect(jsonPath("$.title").value("Too many requests"));
@@ -49,22 +46,18 @@ class RateLimitApiIntegrationTest {
 
     @Test
     void usesTheForwardedClientAddressForGatewaySessionLimits() throws Exception {
-        String request = "{\"passcode\":\"reviewer\"}";
         for (int attempt = 0; attempt < 2; attempt++) {
             mvc.perform(post("/api/demo/session")
-                            .header("X-CaseLens-Client-Ip", "198.51.100.10")
-                            .contentType(MediaType.APPLICATION_JSON).content(request))
+                            .header("X-CaseLens-Client-Ip", "198.51.100.10"))
                     .andExpect(status().isOk());
         }
 
         mvc.perform(post("/api/demo/session")
-                        .header("X-CaseLens-Client-Ip", "198.51.100.10")
-                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                        .header("X-CaseLens-Client-Ip", "198.51.100.10"))
                 .andExpect(status().isTooManyRequests());
 
         mvc.perform(post("/api/demo/session")
-                        .header("X-CaseLens-Client-Ip", "198.51.100.11")
-                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                        .header("X-CaseLens-Client-Ip", "198.51.100.11"))
                 .andExpect(status().isOk());
     }
 
@@ -76,8 +69,7 @@ class RateLimitApiIntegrationTest {
 
     @Test
     void limitsOtherMutatingDemoActionsByWorkspace() throws Exception {
-        String body = mvc.perform(post("/api/demo/session")
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"passcode\":\"reviewer\"}"))
+        String body = mvc.perform(post("/api/demo/session"))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         String token = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).get("token").asText();
 

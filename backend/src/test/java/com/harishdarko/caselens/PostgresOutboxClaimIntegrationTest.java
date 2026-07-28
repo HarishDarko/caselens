@@ -24,7 +24,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
 @SpringBootTest(properties = {
-    "CASELENS_DEMO_PASSCODE=reviewer",
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
     "CASELENS_TRIAGE_QUEUE_URL=http://localhost/unused",
     "CASELENS_QUEUE_ENABLED=false",

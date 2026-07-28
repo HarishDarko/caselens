@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -44,24 +44,25 @@ test('renders the honest CaseLens demo shell', () => {
   render(<MemoryRouter><App /></MemoryRouter>)
   expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
   expect(screen.getByText('Demo environment')).toBeInTheDocument()
-  expect(screen.getByText(/backed by the CaseLens API/i)).toBeInTheDocument()
+  expect(screen.getByText(/No account is required/i)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled()
+  expect(screen.queryByLabelText(/passcode|password/i)).not.toBeInTheDocument()
 })
 
 test('explains a possible serverless cold start while opening the workspace', () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
 
+  expect(screen.getByRole('button', { name: 'Creating isolated workspace...' })).toBeDisabled()
   expect(screen.getByRole('status')).toHaveTextContent('First access may take up to 20 seconds while serverless services resume.')
 })
 
-test('opens the reviewer workspace from the shared passcode screen', async () => {
+test('opens an isolated reviewer workspace from the public launch screen', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   expect(screen.getByText('Isolated demo workspace')).toBeInTheDocument()
@@ -75,8 +76,7 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
   const fetchMock = mockBackend()
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
 
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST' }))
@@ -85,8 +85,7 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
 
 test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: /Load charger-offline-site-wide/i }))
@@ -109,8 +108,7 @@ test('loads a synthetic scenario into the inbox and records reviewer feedback', 
 
 test('requires a reviewer note before saving a correction', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
@@ -122,8 +120,7 @@ test('requires a reviewer note before saving a correction', async () => {
 test('launches the fixed synthetic retry demonstration', async () => {
   const fetchMock = mockBackend()
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   expect(screen.getByText('Controlled retry demonstration')).toBeInTheDocument()
@@ -137,8 +134,7 @@ test('launches the fixed synthetic retry demonstration', async () => {
 
 test('shows measured evaluation and operational failure views', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
@@ -151,8 +147,7 @@ test('shows measured evaluation and operational failure views', async () => {
 
 test('surfaces persisted evaluation activity and operations telemetry', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
@@ -170,8 +165,7 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
   mockBackend({ syntheticFailure: true })
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.change(screen.getByLabelText('Shared demo passcode'), { target: { value: 'reviewer' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Open reviewer workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))

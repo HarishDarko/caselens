@@ -1,6 +1,5 @@
 package com.harishdarko.caselens.common;
 
-import com.harishdarko.caselens.demo.InvalidPasscodeException;
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -13,11 +12,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 class ApiExceptionHandler {
-    @ExceptionHandler(InvalidPasscodeException.class)
-    ResponseEntity<ProblemDetail> unauthorized() {
-        return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", "The passcode was not accepted");
-    }
-
     @ExceptionHandler(TicketNotFoundException.class)
     ResponseEntity<ProblemDetail> ticketNotFound() {
         return problem(HttpStatus.NOT_FOUND, "Not found", "Ticket not found");

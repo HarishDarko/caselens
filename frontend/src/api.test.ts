@@ -8,14 +8,12 @@ describe('CaseLens API client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }), { status: 200 }))
     const api = createCaseLensApi('http://localhost:8080', fetcher)
 
-    await expect(api.createSession('reviewer')).resolves.toEqual({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
+    await expect(api.createSession()).resolves.toEqual({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     api.setToken('demo-token')
     await api.listTickets()
 
-    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://localhost:8080/api/demo/session', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ passcode: 'reviewer' }),
-    }))
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'http://localhost:8080/api/demo/session', expect.objectContaining({ method: 'POST' }))
+    expect(fetcher.mock.calls[0]?.[1]).not.toHaveProperty('body')
     const secondRequest = fetcher.mock.calls[1]?.[1]
     expect(fetcher.mock.calls[1]?.[0]).toBe('http://localhost:8080/api/tickets?page=0&size=50')
     expect(new Headers(secondRequest?.headers).get('Authorization')).toBe('Bearer demo-token')

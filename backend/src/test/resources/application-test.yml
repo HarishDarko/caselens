@@ -11,6 +11,5 @@ spring:
       ddl-auto: none
 
 caselens:
-  demo-passcode: reviewer
   session-secret: test-session-secret-that-is-at-least-thirty-two-bytes
   triage-queue-url: http://localhost/unused
