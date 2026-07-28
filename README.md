@@ -34,9 +34,40 @@ Neon has scaled down. Later requests normally use warm infrastructure.
 
 ## Product tour
 
-Verified screenshots of the inbox, explainable triage result, processing trace,
-evaluation metrics, and failure-recovery view will be added after the public
-deployment is verified.
+### Isolated review queue
+
+![CaseLens ticket inbox with synthetic scenarios and deployed runtime services](docs/images/product-tour/01-inbox-overview.png)
+
+Each launch creates a temporary workspace with synthetic tickets, scenario
+controls, and the deployed runtime services visible in the console.
+
+### Evidence-grounded triage
+
+![CaseLens triage explanation with exact evidence and recommended actions](docs/images/product-tour/02-triage-explanation.png)
+
+The result keeps the category, urgency, reliability signal, explanation, exact
+ticket evidence, recommended actions, and policy guardrail together.
+
+### Durable processing trace
+
+![CaseLens durable processing trace from outbox commit through Groq validation](docs/images/product-tour/03-processing-trace.png)
+
+The application exposes the persisted outbox, SQS, worker, model-validation,
+decision-source, and attempt states behind the recommendation.
+
+### Human correction and evaluation
+
+![CaseLens evaluation view with persisted correction and provider metrics](docs/images/product-tour/04-evaluation.png)
+
+Reviewer corrections remain separate from the original model result and update
+agreement, correction, latency, provider-usage, and activity metrics.
+
+### Recoverable failure handling
+
+![CaseLens Operations view with a retryable synthetic provider timeout](docs/images/product-tour/05-operations-recovery.png)
+
+The controlled retry scenario records a synthetic timeout and surfaces its queue
+state, processing evidence, provider telemetry, and reviewer recovery action.
 
 ## Technical overview
 
