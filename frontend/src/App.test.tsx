@@ -65,6 +65,8 @@ test('opens an isolated reviewer workspace from the public launch screen', async
   fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  expect(screen.getByText('HD', { selector: '.avatar' })).toBeInTheDocument()
+  expect(screen.queryByText('HV', { selector: '.avatar' })).not.toBeInTheDocument()
   expect(screen.getByText('Isolated demo workspace')).toBeInTheDocument()
   expect(screen.getByText('Local review')).toBeInTheDocument()
   expect(screen.getByText('Neon PostgreSQL')).toBeInTheDocument()
