@@ -11,7 +11,9 @@ PostgreSQL, publishes work through SQS, and uses Groq for the reviewed demo
 path. A deterministic provider keeps automated tests and offline development
 repeatable. A separate Gemini adapter remains available.
 
-Live demo: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net)
+Live demo: [https://caselens.harishdarko.com](https://caselens.harishdarko.com)
+
+Fallback URL: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net)
 
 ## Review the live system
 
@@ -30,7 +32,9 @@ required.
    recover its bounded synthetic failure.
 
 The first launch or triage request can take several seconds when Lambda or
-Neon has scaled down. Later requests normally use warm infrastructure.
+Neon has scaled down. Later requests normally use warm infrastructure. The
+public domain uses DNS-only Cloudflare records in front of the existing
+CloudFront distribution.
 
 ## Product tour
 
