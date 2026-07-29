@@ -11,7 +11,7 @@ which keeps routine verification repeatable.
 - S3 and CloudFront for the private static frontend;
 - API Gateway and Java 21 Lambda for the API surface;
 - SQS and a DLQ for asynchronous triage;
-- EventBridge for relay recovery;
+- EventBridge for a 30-minute outbox recovery sweep;
 - CloudWatch logs and alarms;
 - Secrets Manager for runtime values;
 - Neon managed PostgreSQL.
@@ -36,3 +36,11 @@ Terraform keeps compute disabled by default for new environments.
 The repository intentionally does not claim a precise monthly total. The
 managed database, traffic, model usage, AWS account pricing, and retention
 choices determine that number.
+
+## Idle compute trade-off
+
+Immediate publication after the transaction commits is the normal queue path.
+The scheduled relay is deliberately a 30-minute recovery check, not a frequent
+poller. A previous once-per-minute check kept Neon active and exhausted its free
+compute allowance by denying the database its five-minute idle window. The
+observed exhaustion was not caused by reviewer traffic or storage growth.

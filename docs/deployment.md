@@ -1,7 +1,13 @@
 # AWS deployment
 
-The CaseLens demo is deployed in AWS `ca-central-1`. The reviewer URL is
+The CaseLens demo is deployed in AWS `ca-central-1`. The primary reviewer URL
+is [https://caselens.harishdarko.com](https://caselens.harishdarko.com). The
+CloudFront distribution remains available as a fallback at
 [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
+
+Cloudflare provides a DNS-only CNAME to the existing CloudFront distribution;
+it is not acting as a proxy. The CloudFront custom-domain certificate is issued
+by ACM in `us-east-1`, which is the required certificate region for CloudFront.
 
 ## What is ready
 
@@ -30,6 +36,9 @@ The CaseLens demo is deployed in AWS `ca-central-1`. The reviewer URL is
   worker resolves its Spring dependencies when Lambda constructs the handler,
   so the initialized application is captured in the SnapStart snapshot instead
   of being built during the first queue delivery.
+- Immediate outbox publication remains the normal path after the database
+  transaction commits. EventBridge is only a 30-minute recovery sweep for
+  unpublished outbox rows; it is not the primary delivery mechanism.
 
 ## Local readiness evidence
 
@@ -118,6 +127,15 @@ taking 28-40 seconds in live measurements. Worker version 6 initializes Spring
 before its snapshot and is reached through the pinned worker alias. Its first
 real synthetic Groq journey completed in 7.27 seconds end to end; the next
 journey completed in 2.69 seconds. Both were `AI_VALIDATED` in one attempt.
+
+## Neon compute guardrail
+
+The original once-per-minute recovery schedule prevented Neon from reaching its
+five-minute idle window, exhausting the free compute allowance. This was not
+caused by visitor traffic or database storage growth. The recovery cadence is
+now 30 minutes, leaving the immediate publisher responsible for normal outbox
+delivery and allowing an idle demo database to scale down. No Neon plan upgrade
+is required by this change.
 
 ## Terraform state and teardown
 

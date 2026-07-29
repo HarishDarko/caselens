@@ -1,7 +1,9 @@
 # Three-minute reviewer walkthrough
 
-1. Open [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
+1. Open [https://caselens.harishdarko.com](https://caselens.harishdarko.com).
    The page is labelled as a demo and contains synthetic records only.
+   The CloudFront URL remains a fallback if the custom domain is unavailable:
+   [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
 2. Select **Launch live demo**. CaseLens creates an isolated, 24-hour
    workspace containing synthetic records only. No account is required.
 3. In **Ticket inbox**, scan the seeded queue. Use **Load

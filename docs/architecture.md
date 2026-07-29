@@ -23,6 +23,11 @@ requests, feedback, evaluation, and operational recovery. The queue worker
 owns processing and idempotent job claims. PostgreSQL is the durable source of
 truth; SQS is delivery infrastructure, not the system of record.
 
+The API normally publishes an identifier-only outbox event immediately after
+its transaction commits. EventBridge runs a 30-minute recovery sweep for rows
+that were not published, so recovery does not keep the demo database active
+when no reviewer is using it.
+
 The reviewer console keeps the operational views evidence-backed. Ticket
 detail renders the persisted outbox event, queue job, worker attempts, model,
 decision source, and processing latency. The

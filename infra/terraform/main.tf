@@ -412,7 +412,7 @@ resource "aws_lambda_event_source_mapping" "worker" {
 resource "aws_cloudwatch_event_rule" "relay_schedule" {
   count               = var.deploy_compute ? 1 : 0
   name                = "${local.name}-relay-schedule"
-  schedule_expression = "rate(1 minute)"
+  schedule_expression = "rate(30 minutes)"
 
 }
 
