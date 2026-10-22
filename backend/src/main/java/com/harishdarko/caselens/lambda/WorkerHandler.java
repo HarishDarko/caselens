@@ -1,7 +1,5 @@
 package com.harishdarko.caselens.lambda;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.harishdarko.caselens.triage.QueueMessageCodec;
@@ -15,6 +13,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 public final class WorkerHandler implements RequestStreamHandler {
     private final ObjectMapper mapper;
