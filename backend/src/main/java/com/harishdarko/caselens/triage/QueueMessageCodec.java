@@ -1,12 +1,11 @@
 package com.harishdarko.caselens.triage;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Set;
 import java.util.UUID;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 public class QueueMessageCodec {
     private static final Set<String> ALLOWED_FIELDS = Set.of(
@@ -22,9 +21,7 @@ public class QueueMessageCodec {
         try {
             JsonNode root = mapper.readTree(payload);
             if (root == null || !root.isObject()) throw new IllegalArgumentException("Queue payload must be an object");
-            Iterator<String> fields = root.fieldNames();
-            while (fields.hasNext()) {
-                String field = fields.next();
+            for (String field : root.propertyNames()) {
                 if (!ALLOWED_FIELDS.contains(field)) {
                     throw new IllegalArgumentException("Unexpected queue payload field: " + field);
                 }
@@ -32,7 +29,7 @@ public class QueueMessageCodec {
             return new QueueMessage(requiredUuid(root, "eventId"), requiredUuid(root, "workspaceId"),
                     requiredUuid(root, "ticketId"), requiredText(root, "correlationId"),
                     requiredInt(root, "schemaVersion"));
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new IllegalArgumentException("Queue payload is not valid JSON", exception);
         }
     }

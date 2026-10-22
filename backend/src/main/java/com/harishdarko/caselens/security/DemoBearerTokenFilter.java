@@ -1,6 +1,5 @@
 package com.harishdarko.caselens.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.demo.DemoPrincipal;
 import com.harishdarko.caselens.demo.DemoTokenService;
 import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
@@ -15,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
 
 final class DemoBearerTokenFilter extends OncePerRequestFilter {
     private final DemoTokenService tokens;

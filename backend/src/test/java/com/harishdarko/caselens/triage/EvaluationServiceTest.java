@@ -3,7 +3,6 @@ package com.harishdarko.caselens.triage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketRepository;
@@ -16,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 class EvaluationServiceTest {

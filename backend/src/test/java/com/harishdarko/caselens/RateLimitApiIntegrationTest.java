@@ -8,8 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -71,7 +71,7 @@ class RateLimitApiIntegrationTest {
     void limitsOtherMutatingDemoActionsByWorkspace() throws Exception {
         String body = mvc.perform(post("/api/demo/session"))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-        String token = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).get("token").asText();
+        String token = new tools.jackson.databind.ObjectMapper().readTree(body).get("token").asText();
 
         mvc.perform(post("/api/demo/scenarios/charger-offline-site-wide")
                         .header("Authorization", "Bearer " + token))

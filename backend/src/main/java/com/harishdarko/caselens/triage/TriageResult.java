@@ -1,7 +1,5 @@
 package com.harishdarko.caselens.triage;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -11,6 +9,8 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Entity
 @Table(name = "triage_result")
@@ -71,7 +71,7 @@ public class TriageResult {
 
     private String json(ObjectMapper mapper, Object value) {
         try { return mapper.writeValueAsString(value); }
-        catch (JsonProcessingException exception) { throw new IllegalArgumentException("Could not serialize triage result", exception); }
+        catch (JacksonException exception) { throw new IllegalArgumentException("Could not serialize triage result", exception); }
     }
 
     public UUID getId() { return id; }

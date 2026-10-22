@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.localstack.LocalStackContainer;
 import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -24,12 +24,12 @@ class LocalStackSqsIntegrationTest {
     @Container
     static final LocalStackContainer LOCALSTACK = new LocalStackContainer(
             DockerImageName.parse("localstack/localstack:4.6"))
-            .withServices(LocalStackContainer.Service.SQS);
+            .withServices("sqs");
 
     @Test
     void movesTheFifthUnacknowledgedReceiveToTheConfiguredDlq() throws Exception {
         try (SqsClient client = SqsClient.builder()
-                .endpointOverride(LOCALSTACK.getEndpointOverride(LocalStackContainer.Service.SQS))
+                .endpointOverride(LOCALSTACK.getEndpoint())
                 .region(Region.of("ca-central-1"))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .build()) {

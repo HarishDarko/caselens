@@ -6,8 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.demo.DemoPrincipal;
 import com.harishdarko.caselens.demo.DemoTokenService;
 import com.harishdarko.caselens.ticket.Ticket;
@@ -16,25 +14,27 @@ import com.harishdarko.caselens.triage.Category;
 import com.harishdarko.caselens.triage.DecisionSource;
 import com.harishdarko.caselens.triage.EvaluationGroundTruth;
 import com.harishdarko.caselens.triage.EvaluationGroundTruthRepository;
+import com.harishdarko.caselens.triage.ReliabilitySignal;
+import com.harishdarko.caselens.triage.Sentiment;
+import com.harishdarko.caselens.triage.SlaRisk;
 import com.harishdarko.caselens.triage.TriageDecision;
 import com.harishdarko.caselens.triage.TriageJob;
 import com.harishdarko.caselens.triage.TriageJobRepository;
 import com.harishdarko.caselens.triage.TriageResult;
 import com.harishdarko.caselens.triage.TriageResultRepository;
-import com.harishdarko.caselens.triage.ReliabilitySignal;
-import com.harishdarko.caselens.triage.Sentiment;
-import com.harishdarko.caselens.triage.SlaRisk;
 import com.harishdarko.caselens.triage.Urgency;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(properties = {
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
