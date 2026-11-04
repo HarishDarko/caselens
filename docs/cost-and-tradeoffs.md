@@ -44,3 +44,18 @@ The scheduled relay is deliberately a 30-minute recovery check, not a frequent
 poller. A previous once-per-minute check kept Neon active and exhausted its free
 compute allowance by denying the database its five-minute idle window. The
 observed exhaustion was not caused by reviewer traffic or storage growth.
+
+## SnapStart snapshot expiry
+
+Lambda deletes a Java SnapStart snapshot after 14 days without an invocation.
+On 2026-11-04 the worker had been idle that long: the first triage request
+waited for a 25-second initialization and an SQS redelivery, and completed
+about 85 seconds after it was requested, while the review screen stopped
+waiting after 10 seconds. Two changes cover this:
+
+- A weekly EventBridge rule calls the API and worker live aliases with no-op
+  payloads (an empty SQS batch and a health check), so neither snapshot expires.
+  The worker call does not touch the database; the API health check wakes Neon
+  for a few seconds once a week.
+- The review screen waits up to two minutes for a triage result, backs off
+  while waiting, and explains the delay instead of reporting an error.

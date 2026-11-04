@@ -13,7 +13,8 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function mockBackend(options: { syntheticFailure?: boolean } = {}) {
+function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number } = {}) {
+  let pendingPolls = options.pendingProcessingPolls ?? 0
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
     if (input === undefined) return response({})
     const url = String(input)
@@ -23,6 +24,7 @@ function mockBackend(options: { syntheticFailure?: boolean } = {}) {
     if (url.includes('/api/demo/scenarios/provider-retry-demo')) return response({ ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }, 201)
     if (url.includes('/api/demo/scenarios/')) return response({ ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide' }, 201)
     if (url.includes('/api/tickets?page=')) return response({ content: [apiTicket], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    if (url.includes('/processing') && pendingPolls > 0) { pendingPolls -= 1; return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, result: null }) }
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
@@ -106,6 +108,27 @@ test('loads a synthetic scenario into the inbox and records reviewer feedback', 
   fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The synthetic case indicates higher customer impact.' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Correction saved. Evaluation metrics updated.'))
+})
+
+test('keeps waiting through a slow worker start and explains the delay', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    mockBackend({ pendingProcessingPolls: 60 })
+    render(<MemoryRouter><App /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+    await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(screen.getByText(/Starting the triage worker/)).toBeInTheDocument()
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Starting the triage worker/)).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 test('requires a reviewer note before saving a correction', async () => {
