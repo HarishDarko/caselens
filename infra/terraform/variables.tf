@@ -91,6 +91,18 @@ variable "worker_live_version" {
   }
 }
 
+variable "relay_live_version" {
+  description = "Published, SnapStart-optimized relay version run by the recovery schedule; omit only during initial bootstrap."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (!var.deploy_compute || var.bootstrap_live_aliases
+    || (var.relay_live_version != null && can(regex("^[1-9][0-9]*$", var.relay_live_version))))
+    error_message = "relay_live_version must be a positive published version unless bootstrap_live_aliases is explicitly enabled."
+  }
+}
+
 variable "api_lambda_s3_key" {
   type    = string
   default = "artifacts/caselens-lambda.jar"
