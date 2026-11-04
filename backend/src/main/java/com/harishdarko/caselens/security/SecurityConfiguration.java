@@ -1,28 +1,28 @@
 package com.harishdarko.caselens.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.demo.DemoTokenService;
 import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
 import jakarta.servlet.http.HttpServletResponse;
-import java.util.Map;
-import java.util.Arrays;
-import java.util.List;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import tools.jackson.databind.ObjectMapper;
 
 @Configuration
 class SecurityConfiguration {

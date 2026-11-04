@@ -1,6 +1,5 @@
 package com.harishdarko.caselens.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.common.SensitiveDataSanitizer;
 import com.harishdarko.caselens.demo.DemoPrincipal;
 import jakarta.servlet.FilterChain;
@@ -15,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
 
 final class DemoRateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(DemoRateLimitFilter.class);

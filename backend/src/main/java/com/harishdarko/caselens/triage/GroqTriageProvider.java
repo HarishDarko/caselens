@@ -1,9 +1,5 @@
 package com.harishdarko.caselens.triage;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -14,6 +10,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.IntSupplier;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 public final class GroqTriageProvider implements TriageProvider {
     private static final String PROMPT_VERSION = "triage-v1";
@@ -124,7 +125,7 @@ public final class GroqTriageProvider implements TriageProvider {
         root.set("response_format", responseFormat());
         try {
             return mapper.writeValueAsString(root);
-        } catch (IOException exception) {
+        } catch (JacksonException exception) {
             throw new ProviderCallException("Groq provider request could not be encoded", "REQUEST_ENCODING", exception);
         }
     }

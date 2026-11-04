@@ -1,13 +1,14 @@
 package com.harishdarko.caselens.demo;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 public final class ScenarioCatalog {
     private final Map<String, DemoScenario> scenarios;
@@ -20,7 +21,7 @@ public final class ScenarioCatalog {
         try (InputStream input = Thread.currentThread().getContextClassLoader().getResourceAsStream(path)) {
             if (input == null) throw new IllegalStateException("Scenario catalog not found");
             return new ScenarioCatalog(new ObjectMapper().readValue(input, new TypeReference<>() {}));
-        } catch (IOException exception) {
+        } catch (IOException | JacksonException exception) {
             throw new IllegalStateException("Scenario catalog could not be loaded", exception);
         }
     }

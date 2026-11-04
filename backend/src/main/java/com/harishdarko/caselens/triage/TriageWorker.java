@@ -1,13 +1,13 @@
 package com.harishdarko.caselens.triage;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.ticket.Ticket;
+import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
-import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.ObjectMapper;
 
 public class TriageWorker {
     private static final Logger log = LoggerFactory.getLogger(TriageWorker.class);
