@@ -432,6 +432,51 @@ resource "aws_lambda_permission" "relay_schedule" {
   source_arn    = aws_cloudwatch_event_rule.relay_schedule[0].arn
 }
 
+# Lambda deletes a Java SnapStart snapshot after 14 days without an invocation, and the next call
+# then fails while a new snapshot is built. A weekly no-op call keeps both live aliases warm.
+resource "aws_cloudwatch_event_rule" "snapshot_keepalive" {
+  count               = var.deploy_compute ? 1 : 0
+  name                = "${local.name}-snapshot-keepalive"
+  description         = "Keeps the SnapStart snapshots of the API and worker live aliases from expiring."
+  schedule_expression = "rate(7 days)"
+}
+
+resource "aws_cloudwatch_event_target" "worker_keepalive" {
+  count     = var.deploy_compute ? 1 : 0
+  rule      = aws_cloudwatch_event_rule.snapshot_keepalive[0].name
+  target_id = "worker-keepalive"
+  arn       = aws_lambda_alias.worker[0].arn
+  input     = jsonencode({ Records = [] })
+}
+
+resource "aws_cloudwatch_event_target" "api_keepalive" {
+  count     = var.deploy_compute ? 1 : 0
+  rule      = aws_cloudwatch_event_rule.snapshot_keepalive[0].name
+  target_id = "api-keepalive"
+  arn       = aws_lambda_alias.api[0].arn
+  input     = jsonencode({ rawPath = "/actuator/health", requestContext = { http = { method = "GET" } } })
+}
+
+resource "aws_lambda_permission" "worker_keepalive" {
+  count         = var.deploy_compute ? 1 : 0
+  statement_id  = "AllowSnapshotKeepalive"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.worker[0].function_name
+  qualifier     = aws_lambda_alias.worker[0].name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.snapshot_keepalive[0].arn
+}
+
+resource "aws_lambda_permission" "api_keepalive" {
+  count         = var.deploy_compute ? 1 : 0
+  statement_id  = "AllowSnapshotKeepalive"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api[0].function_name
+  qualifier     = aws_lambda_alias.api[0].name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.snapshot_keepalive[0].arn
+}
+
 resource "aws_cloudwatch_metric_alarm" "queue_depth" {
   alarm_name          = "${local.name}-queue-depth"
   alarm_description   = "Triage work is waiting beyond the normal demo baseline."
