@@ -46,13 +46,13 @@ function Landing({ onOpen, busy, error }: { onOpen: () => void; busy: boolean; e
         <p className="environment-note">synthetic data · reviewer console</p>
         <h1 id="caselens-title">CaseLens</h1>
         <p className="landing-claim">Turn a messy case into a defensible next step.</p>
-        <p className="landing-summary">CaseLens makes support-ticket triage explainable: see the signal, inspect the evidence, and keep a human in control of the correction.</p>
         <div className="access-card">
           <div><p className="eyebrow">Public reviewer demo</p><h2>Open an isolated workspace</h2><p className="muted">Launch a temporary workspace containing synthetic support cases. No account is required, and no customer or production systems are connected.</p></div>
           <button type="button" onClick={onOpen} disabled={busy}>{busy ? 'Creating isolated workspace...' : 'Launch live demo'}</button>
           {busy && <p className="access-status" role="status" aria-live="polite"><span className="status-dot" aria-hidden="true" />Creating an isolated workspace, connecting to the CaseLens API, and loading synthetic fixtures. First access may take up to 20 seconds while serverless services resume.</p>}
           {error && <p className="error-banner" role="alert">{error}</p>}
         </div>
+        <p className="landing-summary">CaseLens makes support-ticket triage explainable: see the signal, inspect the evidence, and keep a human in control of the correction.</p>
         <div className="honesty-row"><span className="status-dot" /><span>Integrated API</span><span className="divider" /><span>Reserved fixtures only</span></div>
       </section>
       <aside className="landing-aside" aria-label="CaseLens product promise"><p className="aside-index">01 / 03</p><p className="aside-quote">“The useful answer is the one a reviewer can explain five minutes later.”</p><div className="aside-rule" /><dl><div><dt>Signal</dt><dd>What changed?</dd></div><div><dt>Evidence</dt><dd>Why believe it?</dd></div><div><dt>Control</dt><dd>Who decides next?</dd></div></dl></aside>
@@ -79,7 +79,8 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const selectedTicket = useMemo(() => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null, [selectedTicketId, tickets])
 
-  useEffect(() => { if (selectedTicketId) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.detail-column .back-button')?.focus()) }, [selectedTicketId])
+  useEffect(() => { if (selectedTicketId) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.detail-column .back-button')?.focus({ preventScroll: true })) }, [selectedTicketId])
+  useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen, selectedTicketId])
   useEffect(() => {
     if (!sessionOpen || (view !== 'evaluation' && view !== 'operations')) return
     const refresh = async () => {
