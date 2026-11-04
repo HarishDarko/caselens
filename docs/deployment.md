@@ -36,6 +36,10 @@ by ACM in `us-east-1`, which is the required certificate region for CloudFront.
   worker resolves its Spring dependencies when Lambda constructs the handler,
   so the initialized application is captured in the SnapStart snapshot instead
   of being built during the first queue delivery.
+- The 30-minute recovery schedule invokes a third pinned `live` alias for the
+  relay. Like the worker, the relay starts Spring when Lambda constructs the
+  handler, so each sweep restores from the snapshot instead of starting the
+  application inside the request.
 - Immediate outbox publication remains the normal path after the database
   transaction commits. EventBridge is only a 30-minute recovery sweep for
   unpublished outbox rows; it is not the primary delivery mechanism.
@@ -98,10 +102,11 @@ The deployed environment uses the following configuration:
    versioned object; leaving the flag unset safely publishes only the artifact.
 8. For the first compute deployment only, run a reviewed plan with
    `deploy_compute=true`, the artifact bucket, and
-   `bootstrap_live_aliases=true` while leaving both live-version inputs unset.
+   `bootstrap_live_aliases=true` while leaving all three live-version inputs unset.
    Terraform creates the functions and bootstraps each alias from the version
    created in that apply. Leave bootstrap mode disabled for every later release
-   or rollback, and set `api_live_version` and `worker_live_version` explicitly
+   or rollback, and set `api_live_version`, `worker_live_version` and
+   `relay_live_version` explicitly
    after AWS reports SnapStart optimization as `On`. The explicit CI runtime-
    update step owns subsequent code
    versions, while S3 versioning preserves rollback targets. Compute remains

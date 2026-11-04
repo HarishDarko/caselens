@@ -357,6 +357,16 @@ resource "aws_lambda_function" "relay" {
   }
 }
 
+# The schedule calls a published SnapStart version through this alias. Calling the function unqualified
+# ran $LATEST, which has no snapshot, so every sweep spent its whole timeout starting Spring.
+resource "aws_lambda_alias" "relay" {
+  count            = var.deploy_compute ? 1 : 0
+  name             = "live"
+  description      = "SnapStart-optimized relay version used by the recovery schedule"
+  function_name    = aws_lambda_function.relay[0].function_name
+  function_version = coalesce(var.relay_live_version, aws_lambda_function.relay[0].version)
+}
+
 resource "aws_apigatewayv2_api" "api" {
   count         = var.deploy_compute ? 1 : 0
   name          = "${local.name}-api"
@@ -420,7 +430,7 @@ resource "aws_cloudwatch_event_target" "relay" {
   count     = var.deploy_compute ? 1 : 0
   rule      = aws_cloudwatch_event_rule.relay_schedule[0].name
   target_id = "relay"
-  arn       = aws_lambda_function.relay[0].arn
+  arn       = aws_lambda_alias.relay[0].arn
 }
 
 resource "aws_lambda_permission" "relay_schedule" {
@@ -428,6 +438,7 @@ resource "aws_lambda_permission" "relay_schedule" {
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.relay[0].function_name
+  qualifier     = aws_lambda_alias.relay[0].name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.relay_schedule[0].arn
 }

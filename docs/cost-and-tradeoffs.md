@@ -45,6 +45,20 @@ poller. A previous once-per-minute check kept Neon active and exhausted its free
 compute allowance by denying the database its five-minute idle window. The
 observed exhaustion was not caused by reviewer traffic or storage growth.
 
+## Relay cold start
+
+Until 2026-11-04 the schedule invoked the relay function unqualified, which runs
+`$LATEST`. SnapStart only applies to published versions, and the handler also
+started Spring inside the request, so each sweep spent its whole 30-second
+timeout starting the application. In the 24 hours before the fix, 75 of 104
+relay attempts (EventBridge retries included) timed out, and almost all of the
+rest took more than 25 seconds. Normal triage was not affected, because the API publishes to SQS
+straight after the commit. The relay now starts Spring when Lambda constructs
+the handler, and the schedule calls a pinned `live` alias of a SnapStart
+version, so a sweep restores in about a second instead of starting Spring. The
+30-minute schedule keeps its snapshot from expiring, so the weekly keep-alive
+does not need to call it.
+
 ## SnapStart snapshot expiry
 
 Lambda deletes a Java SnapStart snapshot after 14 days without an invocation.

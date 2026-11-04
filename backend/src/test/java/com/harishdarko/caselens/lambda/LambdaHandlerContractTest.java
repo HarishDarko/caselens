@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
+import com.harishdarko.caselens.triage.OutboxRelay;
 import com.harishdarko.caselens.triage.QueueMessageCodec;
 import com.harishdarko.caselens.triage.TriageWorker;
 import com.harishdarko.caselens.triage.WorkerResult;
@@ -79,6 +80,40 @@ class LambdaHandlerContractTest {
 
         assertThat(mapperLoaded).isTrue();
         assertThat(workerLoaded).isTrue();
+    }
+
+    @Test
+    void relayBootstrapsSpringDependenciesWhenLambdaConstructsTheHandler() {
+        AtomicBoolean mapperLoaded = new AtomicBoolean();
+        AtomicBoolean relayLoaded = new AtomicBoolean();
+
+        new RelayHandler(
+                () -> {
+                    mapperLoaded.set(true);
+                    return new ObjectMapper();
+                },
+                () -> {
+                    relayLoaded.set(true);
+                    return mock(OutboxRelay.class);
+                });
+
+        assertThat(mapperLoaded).isTrue();
+        assertThat(relayLoaded).isTrue();
+    }
+
+    @Test
+    void relayPublishesOneBatchAndReportsTheCount() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        OutboxRelay relay = mock(OutboxRelay.class);
+        when(relay.publishBatch(RelayHandler.BATCH_SIZE)).thenReturn(3);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        new RelayHandler(() -> mapper, () -> relay)
+                .handleRequest(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)), output, null);
+
+        JsonNode response = mapper.readTree(output.toByteArray());
+        assertThat(response.path("published").asInt()).isEqualTo(3);
+        assertThat(response.path("status").asText()).isEqualTo("OK");
     }
 
     @Test
