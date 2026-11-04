@@ -2,8 +2,6 @@ package com.harishdarko.caselens.lambda;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -15,6 +13,8 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Supplier;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 public final class ApiHandler implements RequestStreamHandler {
     private final ApiTransport transport;
@@ -58,7 +58,7 @@ public final class ApiHandler implements RequestStreamHandler {
     private static Map<String, String> forwardedHeaders(JsonNode event) {
         Map<String, String> headers = new LinkedHashMap<>();
         JsonNode source = event.get("headers");
-        if (source != null && source.isObject()) source.fields().forEachRemaining(entry -> {
+        if (source != null && source.isObject()) source.properties().forEach(entry -> {
             if (!SetHeaders.SKIPPED.contains(entry.getKey().toLowerCase())) {
                 headers.put(entry.getKey(), entry.getValue().asText());
             }

@@ -1,14 +1,14 @@
 package com.harishdarko.caselens.lambda;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.CaseLensApplication;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.server.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
+import tools.jackson.databind.ObjectMapper;
 
 final class LambdaSpringContext {
     private static volatile ConfigurableApplicationContext context;

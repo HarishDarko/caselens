@@ -1,6 +1,5 @@
 package com.harishdarko.caselens.lambda;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 import com.harishdarko.caselens.triage.OutboxRelay;
@@ -9,6 +8,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import tools.jackson.databind.ObjectMapper;
 
 public final class RelayHandler implements RequestStreamHandler {
     @Override

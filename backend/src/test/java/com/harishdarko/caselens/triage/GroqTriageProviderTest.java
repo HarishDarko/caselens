@@ -3,10 +3,9 @@ package com.harishdarko.caselens.triage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.harishdarko.caselens.ticket.TicketChannel;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import com.harishdarko.caselens.ticket.TicketChannel;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -17,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class GroqTriageProviderTest {
     private HttpServer server;

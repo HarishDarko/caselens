@@ -1,11 +1,20 @@
 spring:
   autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
   application:
     name: caselens
   datasource:
     url: ${SPRING_DATASOURCE_URL}
     username: ${SPRING_DATASOURCE_USERNAME}
+    hikari:
+      # Neon serverless tuning: hold zero idle connections so Neon can scale
+      # to zero between demo visits. Every new physical connection resets
+      # Neon's 5-minute idle timer, so a full idle pool keeps compute awake.
+      minimum-idle: 0
+      maximum-pool-size: 4
+      idle-timeout: 60000
+      max-lifetime: 600000
+      keepalive-time: 0
     password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     open-in-view: false
@@ -34,8 +43,8 @@ caselens:
     triage-per-minute: ${CASELENS_RATE_LIMIT_TRIAGE_PER_MINUTE:30}
     mutation-per-minute: ${CASELENS_RATE_LIMIT_MUTATION_PER_MINUTE:${CASELENS_RATE_LIMIT_DEFAULT_PER_MINUTE:30}}
   cleanup:
-    initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:3600000}
-    fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:3600000}
+    initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:21600000}
+    fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:21600000}
   gemini:
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-3.5-flash}

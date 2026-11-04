@@ -1,14 +1,12 @@
 package com.harishdarko.caselens.triage;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.harishdarko.caselens.demo.DemoPrincipal;
-import java.io.IOException;
+import jakarta.servlet.http.HttpServletResponse;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,7 +14,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api/tickets")
@@ -79,7 +79,7 @@ public class TriageController {
                         result.getSuggestedReply(), result.getReliabilitySignal(), mapper.readTree(result.getWarningsJson()),
                         result.getPriorityScore(), mapper.readTree(result.getAppliedRulesJson()), result.getDecisionSource(),
                         result.getModelVersion(), result.getPromptVersion(), result.getCreatedAt());
-            } catch (IOException exception) {
+            } catch (JacksonException exception) {
                 throw new IllegalStateException("Stored triage result is not readable", exception);
             }
         }

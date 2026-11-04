@@ -3,11 +3,11 @@ package com.harishdarko.caselens.triage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class TriageFeedbackTest {
     private static final Instant NOW = Instant.parse("2026-07-11T15:00:00Z");

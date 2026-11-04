@@ -1,14 +1,14 @@
 package com.harishdarko.caselens.lambda;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 final class LambdaSecrets {
     private static final Set<String> ALLOWED_KEYS = Set.of(
@@ -56,7 +56,7 @@ final class LambdaSecrets {
                     System.setProperty(SPRING_PROPERTY_KEYS.get(key), value);
                 }
             });
-        } catch (IOException exception) {
+        } catch (JacksonException exception) {
             throw new IllegalStateException("Configured runtime secret must be a JSON object", exception);
         }
     }

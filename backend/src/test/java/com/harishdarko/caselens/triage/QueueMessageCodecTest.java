@@ -3,9 +3,9 @@ package com.harishdarko.caselens.triage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class QueueMessageCodecTest {
     private final QueueMessageCodec codec = new QueueMessageCodec(new ObjectMapper());
