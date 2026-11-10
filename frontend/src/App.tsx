@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createCaseLensApi, type ApiTicket, type EvaluationSummary, type FailurePage, type Industry, type OperationsOverview, type RuntimeSummary, type SessionOptions, type TriageProcessing, type TriageResult } from './api'
+import bundledSessionOptions from './industries.json'
+import { ApiError, createCaseLensApi, type ApiTicket, type EvaluationSummary, type FailurePage, type Industry, type OperationsOverview, type RuntimeSummary, type SessionOptions, type TriageProcessing, type TriageResult } from './api'
 
 type View = 'inbox' | 'evaluation' | 'operations'
 type Urgency = 'low' | 'medium' | 'high' | 'critical'
@@ -18,7 +19,36 @@ const LIVE_REFRESH_MS = 5_000
 const LIVE_IDLE_MS = 10 * 60_000
 type LiveState = 'loading' | 'live' | 'paused' | 'failed'
 const SLOW_TRIAGE_NOTICE_MS = 8_000
-function triagePollDelay(elapsedMs: number) { return elapsedMs < 10_000 ? 250 : elapsedMs < 30_000 ? 1_000 : 2_000 }
+// A triage takes about 4 to 6 seconds, and the API allows 5 requests a second for all visitors together, so check
+// once a second (every 2 seconds after 30 seconds). Checking four times a second only used up that shared budget.
+function triagePollDelay(elapsedMs: number) { return elapsedMs < 30_000 ? 1_000 : 2_000 }
+
+// What the visitor reads while a ticket is triaged, for each state the job can be in.
+const TRIAGE_STAGE_TEXT = {
+  SENDING: 'Sending the ticket to the triage queue.',
+  QUEUED: 'Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.',
+  PROCESSING: 'The AI model is reading the ticket. This usually takes a few seconds.',
+  RETRYABLE_FAILURE: 'The AI model did not answer. The worker tries again by itself in about a minute.',
+} as const
+const TRIAGE_FAILED_TEXT = 'This ticket could not be triaged. Open Operations to retry it.'
+const RETRY_DEMO_STOPPED_TEXT = 'The retry demo stopped this triage on purpose. Open Operations to retry it.'
+const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the ticket again in a minute to see the result.'
+
+/** A sentence written for the visitor, shown as it is. */
+class PlainError extends Error {}
+
+// Error text for visitors: never a status code, "Failed to fetch" or a server detail.
+function plainError(cause: unknown, fallback: string): string {
+  if (cause instanceof PlainError) return cause.message
+  if (cause instanceof TypeError) return 'Could not reach the CaseLens service. Check your connection and try again.'
+  if (cause instanceof ApiError) {
+    if (cause.status === 401) return 'Your demo session has ended. Close the demo and open a new one.'
+    if (cause.status === 404) return 'That item is no longer in this demo workspace. Close the demo and open a new one.'
+    if (cause.status === 429) return 'The demo is busy right now. Wait a few seconds and try again.'
+    if (cause.status >= 500) return 'The CaseLens service had a problem. Try again in a few seconds.'
+  }
+  return fallback
+}
 
 function formatUrgency(urgency: Urgency | null) { return urgency ? urgency.charAt(0).toUpperCase() + urgency.slice(1) : 'Pending' }
 
@@ -41,16 +71,17 @@ function applyApiTriage(ticket: Ticket, result: TriageResult, job: TriageProcess
   return { ...ticket, category: result.category, urgency, priority: result.priorityScore, reliabilitySignal: result.reliabilitySignal, slaRisk: result.slaRisk, summary: result.summary, rationale: result.explanation, evidence: result.evidence.map((item) => typeof item === 'string' ? item : `“${item.quote}” — ${item.meaning}`), actions: result.recommendedActions, suggestedReply: result.suggestedReply, policy: result.policyIds.length ? `Policy IDs: ${result.policyIds.join(', ')}` : 'No policy IDs returned.', triageResultId: result.id, decisionSource: result.decisionSource, triageStatus: 'COMPLETED', latencyMs, jobId: job.id, eventId: job.eventId, attemptCount: job.attemptCount, attempts: job.attempts, provider, modelVersion: result.modelVersion, timeline: [...ticket.timeline.filter((event) => event.kind === 'received'), { label: `Triage decision: ${result.category.toLowerCase().replaceAll('_', ' ')}`, time: new Date(result.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), kind: 'decision' }, { label: 'Human review pending', time: 'now', kind: 'review' }] }
 }
 
-type IndustryChoice = { industries: Industry[] | null; failed: boolean; selected: string | null; onSelect: (id: string) => void }
+type IndustryChoice = { industries: Industry[]; selected: string; onSelect: (id: string) => void }
 
-// The default industry, and its first ticket, for when the industry list does not load (for example while a deploy
-// is half done, or when the API is busy). The server makes a workspace without an industry an EV charging one.
+// The industry list ships in the bundle (a backend test keeps it equal to GET /api/demo/session), so the picker and
+// the launch button work at first paint, before a cold API answers.
+const BUNDLED_SESSION_OPTIONS: SessionOptions = bundledSessionOptions
+// The default industry, and its first ticket, for a workspace whose industry is not in the list.
+// The server makes a workspace without an industry an EV charging one.
 const DEFAULT_INDUSTRY = 'ev-charging'
 const DEFAULT_FEATURED_SCENARIO = { key: 'charger-offline-site-wide', label: 'Every charger at the demo site appears offline' }
 
-function IndustryPicker({ industries, failed, selected, onSelect, busy }: IndustryChoice & { busy: boolean }) {
-  if (failed) return <p className="industry-note" aria-live="polite">The list of industries did not load. The demo opens with EV charging tickets.</p>
-  if (!industries) return <p className="industry-note" aria-live="polite">Loading the list of industries... The first visit can take up to 20 seconds while the service starts.</p>
+function IndustryPicker({ industries, selected, onSelect, busy }: IndustryChoice & { busy: boolean }) {
   return (
     <fieldset className="industry-picker" disabled={busy}>
       <legend>Choose an industry</legend>
@@ -61,7 +92,7 @@ function IndustryPicker({ industries, failed, selected, onSelect, busy }: Indust
 }
 
 function Landing({ onOpen, busy, error, choice }: { onOpen: () => void; busy: boolean; error: string | null; choice: IndustryChoice }) {
-  const selectedName = choice.industries?.find((industry) => industry.id === choice.selected)?.name
+  const selectedName = choice.industries.find((industry) => industry.id === choice.selected)?.name
   return (
     <main className="landing-shell">
       <div className="landing-grid" aria-hidden="true" />
@@ -74,7 +105,7 @@ function Landing({ onOpen, busy, error, choice }: { onOpen: () => void; busy: bo
         <div className="access-card">
           <div><p className="eyebrow">Public reviewer demo</p><h2>Open an isolated workspace</h2><p className="muted">Launch a temporary workspace containing synthetic support cases. No account is required, and no customer or production systems are connected.</p></div>
           <IndustryPicker {...choice} busy={busy} />
-          <button type="button" onClick={onOpen} disabled={busy || (!choice.industries && !choice.failed)}>{busy ? 'Creating isolated workspace...' : 'Launch live demo'}</button>
+          <button type="button" onClick={onOpen} disabled={busy}>{busy ? 'Creating isolated workspace...' : 'Launch live demo'}</button>
           {busy && <p className="access-status" role="status" aria-live="polite"><span className="status-dot" aria-hidden="true" />Creating an isolated workspace, connecting to the CaseLens API, and loading {selectedName ? `${selectedName} demo tickets` : 'synthetic fixtures'}. First access may take up to 20 seconds while serverless services resume.</p>}
           {error && <p className="error-banner" role="alert">{error}</p>}
         </div>
@@ -103,15 +134,15 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [sessionOptions, setSessionOptions] = useState<SessionOptions | null>(null)
-  const [optionsFailed, setOptionsFailed] = useState(false)
-  const [industryId, setIndustryId] = useState<string | null>(null)
+  const [sessionOptions, setSessionOptions] = useState<SessionOptions>(BUNDLED_SESSION_OPTIONS)
+  const [industryId, setIndustryId] = useState<string>(BUNDLED_SESSION_OPTIONS.defaultIndustry)
+  const [triageStage, setTriageStage] = useState<TriageStage>(null)
   const [workspaceIndustryId, setWorkspaceIndustryId] = useState<string | null>(null)
   const [liveState, setLiveState] = useState<LiveState>('loading')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const resumeLiveRef = useRef<(() => void) | null>(null)
   // The industry list may arrive after the workspace opens; without an id the workspace is the default industry.
-  const workspaceIndustry = useMemo(() => sessionOptions?.industries.find((industry) => industry.id === (workspaceIndustryId ?? sessionOptions.defaultIndustry)) ?? null, [sessionOptions, workspaceIndustryId])
+  const workspaceIndustry = useMemo(() => sessionOptions.industries.find((industry) => industry.id === (workspaceIndustryId ?? sessionOptions.defaultIndustry)) ?? null, [sessionOptions, workspaceIndustryId])
   const featuredScenario = workspaceIndustry?.featuredScenario ?? ((workspaceIndustryId ?? DEFAULT_INDUSTRY) === DEFAULT_INDUSTRY ? DEFAULT_FEATURED_SCENARIO : null)
   const selectedTicket = useMemo(() => tickets.find((ticket) => ticket.id === selectedTicketId) ?? null, [selectedTicketId, tickets])
 
@@ -119,12 +150,13 @@ function App() {
   useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen, selectedTicketId])
   useEffect(() => {
     let active = true
+    // Runs in the background: it wakes the API and its database before the visitor clicks, and replaces the bundled
+    // list if this API serves a different one (for example during a deploy). If it fails, the bundled list stays.
     api.getSessionOptions().then((options) => {
-      if (!active) return
-      if (!options?.industries?.length) { setOptionsFailed(true); return }
-      setSessionOptions(options)
-      setIndustryId((current) => current ?? options.defaultIndustry)
-    }).catch(() => { if (active) setOptionsFailed(true) })
+      if (!active || !options?.industries?.length) return
+      setSessionOptions((current) => JSON.stringify(current) === JSON.stringify(options) ? current : options)
+      setIndustryId((current) => options.industries.some((industry) => industry.id === current) ? current : options.defaultIndustry)
+    }).catch(() => undefined)
     return () => { active = false }
   }, [api])
   useEffect(() => {
@@ -191,51 +223,74 @@ function App() {
 
   async function openWorkspace() {
     setBusy(true); setError(null)
-    try { const session = await api.createSession(industryId ?? undefined); api.setToken(session.token); setWorkspaceIndustryId(session.industry ?? industryId); await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime); setSelectedTicketId(null); setView('inbox'); setSessionOpen(true) }
-    catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not open the demo workspace.') } finally { setBusy(false) }
+    try { const session = await api.createSession(industryId); api.setToken(session.token); setWorkspaceIndustryId(session.industry ?? industryId); await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime); setSelectedTicketId(null); setView('inbox'); setSessionOpen(true) }
+    catch (cause: unknown) { setError(plainError(cause, 'Could not open the demo workspace. Try again in a few seconds.')) } finally { setBusy(false) }
   }
 
   async function hydrateTriage(ticket: Ticket) {
     if (!ticket.backendId || ticket.triageResultId || busyTicketId === ticket.backendId) return
-    setBusyTicketId(ticket.backendId); setError(null)
-    try { await api.requestTriage(ticket.backendId); const startedAt = Date.now(); while (Date.now() - startedAt < TRIAGE_WAIT_MS) { const processing = await api.getProcessing(ticket.backendId); if (processing.result) { const provider = runtime ? runtimeLabels.aiProvider[runtime.aiProvider] : 'Configured provider'; setTickets((current) => current.map((item) => item.backendId === ticket.backendId ? applyApiTriage(item, processing.result as TriageResult, processing.job, provider) : item)); return } if (processing.job.status === 'RETRYABLE_FAILURE' || processing.job.status === 'TERMINAL_FAILURE') throw new Error(`Triage stopped with ${processing.job.status.toLowerCase().replaceAll('_', ' ')}.`); const elapsed = Date.now() - startedAt; if (elapsed > SLOW_TRIAGE_NOTICE_MS) setNotice('Starting the triage worker. The first run after a quiet period can take up to a minute.'); await new Promise((resolve) => window.setTimeout(resolve, triagePollDelay(elapsed))) } throw new Error('Triage is still running. Open the ticket again in a minute to see the result.') }
-    catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not triage this ticket.') } finally { setBusyTicketId(null); setNotice(null) }
+    const ticketId = ticket.backendId
+    setBusyTicketId(ticketId); setError(null); setTriageStage({ ticketId, text: TRIAGE_STAGE_TEXT.SENDING })
+    try {
+      await api.requestTriage(ticketId)
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < TRIAGE_WAIT_MS) {
+        const processing = await api.getProcessing(ticketId)
+        if (processing.result) {
+          const provider = runtime ? runtimeLabels.aiProvider[runtime.aiProvider] : 'Configured provider'
+          setTickets((current) => current.map((item) => item.backendId === ticketId ? applyApiTriage(item, processing.result as TriageResult, processing.job, provider) : item))
+          return
+        }
+        const { status, lastErrorCode } = processing.job
+        if (status === 'TERMINAL_FAILURE') throw new PlainError(TRIAGE_FAILED_TEXT)
+        if (status === 'RETRYABLE_FAILURE' && lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT') throw new PlainError(RETRY_DEMO_STOPPED_TEXT)
+        // A real provider failure is retried by the queue on its own, so keep waiting and say so.
+        const text = TRIAGE_STAGE_TEXT[status === 'COMPLETED' ? 'PROCESSING' : status]
+        setTriageStage({ ticketId, text })
+        const elapsed = Date.now() - startedAt
+        if (elapsed > SLOW_TRIAGE_NOTICE_MS) setNotice(text)
+        await new Promise((resolve) => window.setTimeout(resolve, triagePollDelay(elapsed)))
+      }
+      throw new PlainError(TRIAGE_STILL_RUNNING_TEXT)
+    }
+    catch (cause: unknown) { setError(plainError(cause, 'Could not triage this ticket. Try again in a few seconds.')) } finally { setBusyTicketId(null); setNotice(null); setTriageStage(null) }
   }
   function selectTicket(ticketId: string) { setSelectedTicketId(ticketId); setDraftUrgency(null); setFeedbackNote(''); setFeedbackSaved(false); const ticket = tickets.find((item) => item.id === ticketId); if (ticket) void hydrateTriage(ticket) }
   async function loadScenario(scenarioKey: string) {
     setBusy(true); setError(null)
     try { const scenario = mapApiTicket(await api.createScenario(scenarioKey)); setTickets((current) => current.some((ticket) => ticket.backendId === scenario.backendId) ? current : [...current, scenario]); setSelectedTicketId(scenario.id); setDraftUrgency(null); setFeedbackNote(''); setFeedbackSaved(false); setView('inbox'); await hydrateTriage(scenario) }
-    catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not load the scenario.') } finally { setBusy(false) }
+    catch (cause: unknown) { setError(plainError(cause, 'Could not load the scenario. Try again in a few seconds.')) } finally { setBusy(false) }
   }
   async function saveFeedback() {
     if (!selectedTicket?.backendId || !selectedTicket.triageResultId || !draftUrgency || draftUrgency === selectedTicket.urgency || !feedbackNote.trim()) return
     setBusy(true); setError(null)
     try { await api.submitFeedback(selectedTicket.backendId, { triageResultId: selectedTicket.triageResultId, category: selectedTicket.category, urgency: draftUrgency.toUpperCase(), slaRisk: selectedTicket.slaRisk.toUpperCase(), note: feedbackNote.trim() }); setTickets((current) => current.map((ticket) => ticket.id === selectedTicket.id ? { ...ticket, urgency: draftUrgency } : ticket)); setFeedbackSaved(true); setEvaluation(await api.getEvaluation()) }
-    catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not save reviewer feedback.') } finally { setBusy(false) }
+    catch (cause: unknown) { setError(plainError(cause, 'Could not save the correction. Try again in a few seconds.')) } finally { setBusy(false) }
   }
-  async function retryFailure() { const failure = failures?.content[0]; if (!failure) return; setBusy(true); setError(null); try { await api.retryFailure(failure.id); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(), api.listFailures()]); setOperationsOverview(overview); setFailures(failurePage) } catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not retry the failed case.') } finally { setBusy(false) } }
+  async function retryFailure() { const failure = failures?.content[0]; if (!failure) return; setBusy(true); setError(null); try { await api.retryFailure(failure.id); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(), api.listFailures()]); setOperationsOverview(overview); setFailures(failurePage) } catch (cause: unknown) { setError(plainError(cause, 'Could not retry the failed case. Try again in a few seconds.')) } finally { setBusy(false) } }
 
-  if (!sessionOpen) return <Landing onOpen={openWorkspace} busy={busy} error={error} choice={{ industries: sessionOptions?.industries ?? null, failed: optionsFailed, selected: industryId, onSelect: setIndustryId }} />
-  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={() => setSessionOpen(false)}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && <p className="notice-banner workspace-error" role="status">{notice}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || Boolean(busyTicketId)} featuredScenario={featuredScenario} onLoadScenario={loadScenario} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={setDraftUrgency} onFeedbackNote={setFeedbackNote} onSaveFeedback={saveFeedback} />}{(view === 'evaluation' || view === 'operations') && <LiveStatus state={liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
+  if (!sessionOpen) return <Landing onOpen={openWorkspace} busy={busy} error={error} choice={{ industries: sessionOptions.industries, selected: industryId, onSelect: setIndustryId }} />
+  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={() => setSessionOpen(false)}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && <p className="notice-banner workspace-error" role="status">{notice}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || Boolean(busyTicketId)} featuredScenario={featuredScenario} triageStage={triageStage} onLoadScenario={loadScenario} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={setDraftUrgency} onFeedbackNote={setFeedbackNote} onSaveFeedback={saveFeedback} />}{(view === 'evaluation' || view === 'operations') && <LiveStatus state={liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
 }
 
-type InboxViewProps = { tickets: Ticket[]; selectedTicket: Ticket | null; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; featuredScenario: Industry['featuredScenario'] | null; onLoadScenario: (scenarioKey: string) => void; onSelectTicket: (ticketId: string) => void; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }
-function InboxView({ tickets, selectedTicket, draftUrgency, feedbackNote, feedbackSaved, busy, featuredScenario, onLoadScenario, onSelectTicket, onBack, onDraftUrgency, onFeedbackNote, onSaveFeedback }: InboxViewProps) {
-  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">Human review queue</p><h1>Ticket inbox</h1><p className="page-intro">Prioritized cases with the evidence behind each recommendation.</p></div><div className="heading-meta"><span className="metric-label">Queue health</span><strong><span className="status-dot" />{busy ? 'Processing' : 'Stable'}</strong><span className="metric-detail">{tickets.length} synthetic cases</span></div></div><div className={selectedTicket ? 'inbox-layout with-detail' : 'inbox-layout'}><section className="queue-column" aria-labelledby="queue-heading"><div className="section-bar"><div><h2 id="queue-heading">Needs review</h2><span className="muted">Sorted by priority and SLA risk</span></div><span className="count-pill">{tickets.length}</span></div><div className="scenario-card">{featuredScenario ? <><div><span className="scenario-kicker">Try a scenario</span><strong>{featuredScenario.label}</strong><span className="muted">Create a demo ticket and send it through the real queue worker.</span></div><button className="secondary-button" onClick={() => void onLoadScenario(featuredScenario.key)} disabled={busy}>{featuredScenario.key === DEFAULT_FEATURED_SCENARIO.key ? `Load ${featuredScenario.key}` : `Load ticket: ${featuredScenario.label}`}</button></> : <div><span className="scenario-kicker">Try a scenario</span><span className="muted">The demo scenarios did not load. The tickets in the queue still work.</span></div>}<div className="scenario-divider" /><div><span className="scenario-kicker">Failure handling</span><strong>Controlled retry demonstration</strong><span className="muted">Records one synthetic provider timeout, then exposes the job in Operations for a reviewer retry.</span></div><button className="secondary-button retry-demo-button" onClick={() => void onLoadScenario('provider-retry-demo')} disabled={busy}>Run controlled retry demo</button></div><div className="ticket-list">{tickets.map((ticket) => <TicketRow key={`${ticket.id}-${ticket.backendId ?? 'fixture'}`} ticket={ticket} selected={ticket.id === selectedTicket?.id} onSelect={onSelectTicket} />)}</div></section>{selectedTicket && <TicketDetail ticket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy} onBack={onBack} onDraftUrgency={onDraftUrgency} onFeedbackNote={onFeedbackNote} onSaveFeedback={onSaveFeedback} />}</div></div>
+type TriageStage = { ticketId: string; text: string } | null
+type InboxViewProps = { tickets: Ticket[]; selectedTicket: Ticket | null; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; featuredScenario: Industry['featuredScenario'] | null; triageStage: TriageStage; onLoadScenario: (scenarioKey: string) => void; onSelectTicket: (ticketId: string) => void; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }
+function InboxView({ tickets, selectedTicket, draftUrgency, feedbackNote, feedbackSaved, busy, featuredScenario, triageStage, onLoadScenario, onSelectTicket, onBack, onDraftUrgency, onFeedbackNote, onSaveFeedback }: InboxViewProps) {
+  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">Human review queue</p><h1>Ticket inbox</h1><p className="page-intro">Prioritized cases with the evidence behind each recommendation.</p></div><div className="heading-meta"><span className="metric-label">Queue health</span><strong><span className="status-dot" />{busy ? 'Processing' : 'Stable'}</strong><span className="metric-detail">{tickets.length} synthetic cases</span></div></div><div className={selectedTicket ? 'inbox-layout with-detail' : 'inbox-layout'}><section className="queue-column" aria-labelledby="queue-heading"><div className="section-bar"><div><h2 id="queue-heading">Needs review</h2><span className="muted">Sorted by priority and SLA risk</span></div><span className="count-pill">{tickets.length}</span></div><div className="scenario-card">{featuredScenario ? <><div><span className="scenario-kicker">Try a scenario</span><strong>{featuredScenario.label}</strong><span className="muted">Create a demo ticket and send it through the real queue worker.</span></div><button className="secondary-button" onClick={() => void onLoadScenario(featuredScenario.key)} disabled={busy}>{featuredScenario.key === DEFAULT_FEATURED_SCENARIO.key ? `Load ${featuredScenario.key}` : `Load ticket: ${featuredScenario.label}`}</button></> : <div><span className="scenario-kicker">Try a scenario</span><span className="muted">The demo scenarios did not load. The tickets in the queue still work.</span></div>}<div className="scenario-divider" /><div><span className="scenario-kicker">Failure handling</span><strong>Controlled retry demonstration</strong><span className="muted">Records one synthetic provider timeout, then exposes the job in Operations for a reviewer retry.</span></div><button className="secondary-button retry-demo-button" onClick={() => void onLoadScenario('provider-retry-demo')} disabled={busy}>Run controlled retry demo</button></div><div className="ticket-list">{tickets.map((ticket) => <TicketRow key={`${ticket.id}-${ticket.backendId ?? 'fixture'}`} ticket={ticket} selected={ticket.id === selectedTicket?.id} onSelect={onSelectTicket} />)}</div></section>{selectedTicket && <TicketDetail ticket={selectedTicket} stage={triageStage?.ticketId === selectedTicket.backendId ? triageStage.text : null} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy} onBack={onBack} onDraftUrgency={onDraftUrgency} onFeedbackNote={onFeedbackNote} onSaveFeedback={onSaveFeedback} />}</div></div>
 }
 
 function TicketRow({ ticket, selected, onSelect }: { ticket: Ticket; selected: boolean; onSelect: (ticketId: string) => void }) {
   return <article className={selected ? 'ticket-row selected' : 'ticket-row'}><div className="ticket-row-top"><span className="ticket-id">{ticket.id}</span><span className={ticket.urgency ? `urgency urgency-${ticket.urgency}` : 'urgency urgency-pending'}>{formatUrgency(ticket.urgency)}</span></div><h3>{ticket.subject}</h3><p>{ticket.summary}</p><div className="ticket-row-bottom"><span>{ticket.category}</span><span className="sla-indicator"><span className="status-dot" />{ticket.slaRisk}</span></div><button className="review-link" onClick={() => onSelect(ticket.id)}>Review {ticket.id} <span>→</span></button></article>
 }
 
-function TicketDetail({ ticket, draftUrgency, feedbackNote, feedbackSaved, busy, onBack, onDraftUrgency, onFeedbackNote, onSaveFeedback }: { ticket: Ticket; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }) {
+function TicketDetail({ ticket, stage, draftUrgency, feedbackNote, feedbackSaved, busy, onBack, onDraftUrgency, onFeedbackNote, onSaveFeedback }: { ticket: Ticket; stage: string | null; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }) {
   const displayedUrgency = draftUrgency ?? ticket.urgency
   return (
     <section className="detail-column" aria-labelledby="detail-heading">
       <button className="back-button" onClick={onBack}>← Back to queue</button>
       <div className="detail-heading"><div><span className="ticket-id">{ticket.id}</span><h2 id="detail-heading">Why this ticket is here</h2></div><span className={`urgency urgency-${displayedUrgency}`}>{formatUrgency(displayedUrgency)} urgency</span></div>
       <div className="detail-subject"><h3>{ticket.subject}</h3><p>{ticket.message}</p></div>
-      <div className="explain-card"><div className="explain-header"><div><span className="eyebrow">Triage explanation</span><h3>{ticket.category}</h3></div><div className="confidence"><strong>{ticket.reliabilitySignal ?? 'Pending'}</strong><span>reliability</span></div></div><p className="lead-copy">{busy && !ticket.triageResultId ? 'The local worker is processing this ticket…' : ticket.rationale}</p><div className="evidence-list"><span className="eyebrow">Evidence used</span>{ticket.evidence.length ? ticket.evidence.map((item) => <div className="evidence-item" key={item}><span className="evidence-mark">+</span><span>{item}</span></div>) : <p className="muted">Evidence will appear after triage completes.</p>}</div></div>
+      <div className="explain-card"><div className="explain-header"><div><span className="eyebrow">Triage explanation</span><h3>{ticket.category}</h3></div><div className="confidence"><strong>{ticket.reliabilitySignal ?? 'Pending'}</strong><span>reliability</span></div></div><p className="lead-copy">{!ticket.triageResultId && (stage ?? (busy ? TRIAGE_STAGE_TEXT.SENDING : null)) || ticket.rationale}</p><div className="evidence-list"><span className="eyebrow">Evidence used</span>{ticket.evidence.length ? ticket.evidence.map((item) => <div className="evidence-item" key={item}><span className="evidence-mark">+</span><span>{item}</span></div>) : <p className="muted">Evidence will appear after triage completes.</p>}</div></div>
       <div className="detail-grid"><section className="detail-card"><span className="eyebrow">Recommended next steps</span><ol className="action-list">{ticket.actions.map((action) => <li key={action}>{action}</li>)}</ol></section><section className="detail-card"><span className="eyebrow">Guardrail</span><p className="guardrail-copy">{ticket.policy}</p><span className="source-line">Source: {ticket.source}</span></section></div>
       {ticket.jobId && <section className="processing-card"><div className="section-bar"><div><span className="eyebrow">Persisted backend evidence</span><h3>Durable processing trace</h3></div><span className="activity-chip">{ticket.attemptCount} attempt{ticket.attemptCount === 1 ? '' : 's'}</span></div><dl className="processing-identifiers"><div><dt>Event</dt><dd><code title={ticket.eventId ?? undefined}>{ticket.eventId}</code></dd></div><div><dt>Job</dt><dd><code title={ticket.jobId}>{ticket.jobId}</code></dd></div><div><dt>Model</dt><dd>{ticket.modelVersion}</dd></div><div><dt>Decision</dt><dd>{ticket.decisionSource}</dd></div></dl><ol className="processing-stages"><li><span>01</span><div><strong>Outbox committed</strong><small>Ticket and triage event entered durable storage together.</small></div></li><li><span>02</span><div><strong>Queue accepted</strong><small>Worker job references the persisted outbox event.</small></div></li><li><span>03</span><div><strong>Worker completed</strong><small>{ticket.attempts.length ? `${ticket.attempts.length} persisted attempt record${ticket.attempts.length === 1 ? '' : 's'}.` : 'Completion recorded on the job.'}</small></div></li><li><span>04</span><div><strong>{ticket.decisionSource === 'AI_VALIDATED' ? `${ticket.provider} validated` : 'Rules fallback selected'}</strong><small>{ticket.decisionSource === 'AI_VALIDATED' ? 'Structured output passed evidence and policy validation.' : 'Deterministic rules produced the safe result.'}</small></div></li></ol></section>}
       <section className="timeline-card"><div className="section-bar"><div><span className="eyebrow">Decision trace</span><h3>What happened</h3></div><span className="latency">{ticket.latencyMs === null ? '—' : `${ticket.latencyMs} ms`}</span></div><div className="timeline">{ticket.timeline.map((event) => <div className="timeline-event" key={`${event.label}-${event.time}`}><span className={`timeline-marker ${event.kind}`} /><div><strong>{event.label}</strong><span>{event.time}</span></div></div>)}</div></section>

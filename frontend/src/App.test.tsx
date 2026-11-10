@@ -21,19 +21,35 @@ const sessionOptions = {
   ],
 }
 
-function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number; laterEvaluation?: () => Promise<Response> } = {}) {
+type PollStep = 'QUEUED' | 'PROCESSING' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE' | 'SYNTHETIC_FAILURE' | 429
+type BackendOptions = { syntheticFailure?: boolean; pendingProcessingPolls?: number; pollSteps?: PollStep[]; industriesStatus?: number; sessionStatuses?: number[]; laterEvaluation?: () => Promise<Response> }
+
+function pendingJob(status: string, lastErrorCode: string | null = null) {
+  return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status, attemptCount: status === 'QUEUED' ? 0 : 1, startedAt: null, completedAt: null, lastErrorCode, attempts: [] }, result: null })
+}
+
+function mockBackend(options: BackendOptions = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
+  const pollSteps = [...(options.pollSteps ?? [])]
+  const sessionStatuses = [...(options.sessionStatuses ?? [])]
   let evaluationCalls = 0
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
     if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesStatus ? response({ detail: 'Unavailable' }, options.industriesStatus) : response(sessionOptions)
+    if (url.endsWith('/api/demo/session') && sessionStatuses.length) return response({ detail: 'Request failed with status 429' }, sessionStatuses.shift())
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
     if (url.includes('/api/demo/scenarios/provider-retry-demo')) return response({ ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }, 201)
     if (url.includes('/api/demo/scenarios/')) return response({ ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide' }, 201)
     if (url.includes('/api/tickets?page=')) return response({ content: [apiTicket], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    if (url.includes('/processing') && pollSteps.length) {
+      const step = pollSteps.shift()
+      if (step === 429) return new Response('', { status: 429 })
+      if (step === 'SYNTHETIC_FAILURE') return pendingJob('RETRYABLE_FAILURE', 'SYNTHETIC_PROVIDER_TIMEOUT')
+      return pendingJob(String(step), step === 'RETRYABLE_FAILURE' || step === 'TERMINAL_FAILURE' ? 'PROVIDER_TIMEOUT' : null)
+    }
     if (url.includes('/processing') && pendingPolls > 0) { pendingPolls -= 1; return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, result: null }) }
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
@@ -125,22 +141,37 @@ test('still opens an EV charging workspace when the industry list does not load'
   const fetchMock = mockBackend({ industriesStatus: 503 })
   render(<App />)
 
-  expect(await screen.findByText('The list of industries did not load. The demo opens with EV charging tickets.')).toBeInTheDocument()
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.anything()))
+  expect(screen.getByRole('radio', { name: /EV charging/ })).toBeChecked()
   await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
-  expect(sessionCall?.[1]).not.toHaveProperty('body')
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
   expect(screen.getByText('Every charger at the demo site appears offline')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Load charger-offline-site-wide' })).toBeEnabled()
 })
 
-test('keeps the launch button off while the industry list loads', () => {
-  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
+test('lets the visitor pick and launch at once, before a cold API answers the industry list', async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
+    ? new Promise<Response>(() => undefined) : new Promise<Response>(() => undefined))
+  vi.stubGlobal('fetch', fetchMock)
   render(<App />)
 
-  expect(screen.getByText(/Loading the list of industries/)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled()
+  expect(screen.getByRole('radio', { name: /EV charging/ })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'saas-support' }) })))
+  expect(screen.queryByText(/Loading the list of industries/)).not.toBeInTheDocument()
+})
+
+test('uses the list from the API when it differs from the bundled one', async () => {
+  render(<App />)
+
+  expect(screen.getAllByText('9 demo tickets').length).toBe(3)
+  await waitFor(() => expect(screen.getAllByText('1 demo tickets').length).toBe(3))
 })
 
 test('gives the full EV journey when the API does not know the industry list yet (405 during a deploy)', async () => {
@@ -181,22 +212,105 @@ test('loads a synthetic scenario into the inbox and records reviewer feedback', 
 test('keeps waiting through a slow worker start and explains the delay', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {
-    mockBackend({ pendingProcessingPolls: 60 })
+    mockBackend({ pendingProcessingPolls: 40 })
     render(<App />)
     await launch()
     await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
     await vi.advanceTimersByTimeAsync(12_000)
-    expect(screen.getByText(/Starting the triage worker/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.')
 
-    await vi.advanceTimersByTimeAsync(30_000)
+    await vi.advanceTimersByTimeAsync(60_000)
     await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Starting the triage worker/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Waiting for the triage worker/)).not.toBeInTheDocument()
   } finally {
     vi.useRealTimers()
   }
+})
+
+async function openTicketWithFakeTimers(backend: BackendOptions) {
+  const fetchMock = mockBackend(backend)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  return fetchMock
+}
+
+test('checks the triage status once a second, not four times', async () => {
+  const fetchMock = await openTicketWithFakeTimers({ pendingProcessingPolls: 100 })
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+  expect(calls(fetchMock, '/processing')).toBeLessThanOrEqual(6)
+})
+
+test('says in plain words what the worker is doing, and never "local worker"', async () => {
+  await openTicketWithFakeTimers({ pollSteps: ['QUEUED', 'QUEUED', 'PROCESSING', 'PROCESSING'] })
+  await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+  expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.')
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+  expect(document.querySelector('.lead-copy')).toHaveTextContent('The AI model is reading the ticket. This usually takes a few seconds.')
+  expect(screen.queryByText(/local worker/i)).not.toBeInTheDocument()
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+})
+
+test('keeps waiting when one status check is throttled', async () => {
+  await openTicketWithFakeTimers({ pollSteps: ['QUEUED', 429] })
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+
+  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('keeps waiting while the worker retries a provider that did not answer', async () => {
+  await openTicketWithFakeTimers({ pollSteps: ['PROCESSING', 'RETRYABLE_FAILURE', 'RETRYABLE_FAILURE'] })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_500) })
+  expect(document.querySelector('.lead-copy')).toHaveTextContent('The AI model did not answer. The worker tries again by itself in about a minute.')
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('says where to go when triage fails', async () => {
+  await openTicketWithFakeTimers({ pollSteps: ['TERMINAL_FAILURE'] })
+  await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.'))
+  expect(screen.queryByText(/terminal failure/i)).not.toBeInTheDocument()
+})
+
+test('explains the controlled retry demo stop in plain words', async () => {
+  await openTicketWithFakeTimers({ pollSteps: ['SYNTHETIC_FAILURE'] })
+  await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The retry demo stopped this triage on purpose. Open Operations to retry it.'))
+  expect(screen.queryByText(/retryable failure/i)).not.toBeInTheDocument()
+})
+
+test('says the demo is busy instead of showing a status code', async () => {
+  mockBackend({ sessionStatuses: [429, 429] })
+  render(<App />)
+  await launch()
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The demo is busy right now. Wait a few seconds and try again.'), { timeout: 4_000 })
+  expect(screen.queryByText(/status 429/)).not.toBeInTheDocument()
+})
+
+test('says plainly when the service cannot be reached', async () => {
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
+    ? Promise.resolve(response(sessionOptions)) : Promise.reject(new TypeError('Failed to fetch'))))
+  render(<App />)
+  await launch()
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not reach the CaseLens service. Check your connection and try again.'))
+  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
 })
 
 test('requires a reviewer note before saving a correction', async () => {
@@ -386,6 +500,7 @@ test('ignores a late answer for a view the reviewer has already left', async () 
 test('says in plain words when the latest numbers could not load', async () => {
   await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Request failed with status 503' }, 503)) })
 
-  expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.')
+  // The client tries a GET once more after a 503 (1 second later), so the failed state comes after that try.
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.'), { timeout: 3_000 })
   expect(screen.queryByText(/status 503/)).not.toBeInTheDocument()
 })
