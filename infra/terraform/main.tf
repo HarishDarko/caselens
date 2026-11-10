@@ -1,5 +1,7 @@
 locals {
   name = "${var.project_name}-${var.environment}"
+  # The page calls only its own origin and the API, so the CSP names exactly those (it used to allow every https host).
+  csp_connect_src = var.deploy_compute ? "'self' ${aws_apigatewayv2_api.api[0].api_endpoint}" : "'self'"
 }
 
 resource "aws_s3_bucket" "frontend" {
@@ -69,7 +71,7 @@ resource "aws_cloudfront_response_headers_policy" "frontend_security" {
 
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; connect-src 'self' https:; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      content_security_policy = "default-src 'self'; connect-src ${local.csp_connect_src}; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
       override                = true
     }
     content_type_options { override = true }
@@ -90,6 +92,12 @@ resource "aws_cloudfront_response_headers_policy" "frontend_security" {
   }
 }
 
+# AWS managed policy: Brotli and gzip, no query string or cookies in the cache key, and the origin's Cache-Control
+# is honoured (the deploy sets a one-year immutable header on hashed assets and no-cache on index.html).
+data "aws_cloudfront_cache_policy" "caching_optimized" {
+  name = "Managed-CachingOptimized"
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
@@ -107,11 +115,8 @@ resource "aws_cloudfront_distribution" "frontend" {
     target_origin_id           = aws_s3_bucket.frontend.id
     viewer_protocol_policy     = "redirect-to-https"
     compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.frontend_security.id
-    forwarded_values {
-      query_string = true
-      cookies { forward = "none" }
-    }
   }
 
   restrictions {
@@ -125,11 +130,8 @@ resource "aws_cloudfront_distribution" "frontend" {
     minimum_protocol_version       = var.acm_certificate_arn == null ? "TLSv1" : "TLSv1.2_2021"
   }
 
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
+  # No custom error response: a missing file is a real 404. Serving index.html with status 200 for a missing script
+  # made the browser refuse it (nosniff), so a page left open across a deploy went blank. The app has no client routes.
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
@@ -142,6 +144,14 @@ resource "aws_s3_bucket_policy" "frontend" {
       Principal = { Service = "cloudfront.amazonaws.com" }
       Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn } }
+      }, {
+      # With ListBucket, S3 answers 404 (not 403) for a missing key, so CloudFront passes a real 404 to the browser.
+      Sid       = "AllowCloudFrontList"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:ListBucket"
+      Resource  = aws_s3_bucket.frontend.arn
       Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn } }
     }]
   })
@@ -389,6 +399,14 @@ resource "aws_apigatewayv2_route" "default" {
   target    = "integrations/${aws_apigatewayv2_integration.api[0].id}"
 }
 
+# One line per API request (route, status, latency), so throttled 429s and errors can be counted per route.
+# No IP address is logged.
+resource "aws_cloudwatch_log_group" "api_access" {
+  count             = var.deploy_compute ? 1 : 0
+  name              = "/aws/apigateway/${local.name}-api-access"
+  retention_in_days = 7
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   count       = var.deploy_compute ? 1 : 0
   api_id      = aws_apigatewayv2_api.api[0].id
@@ -398,6 +416,18 @@ resource "aws_apigatewayv2_stage" "default" {
     route_key              = "$default"
     throttling_burst_limit = 10
     throttling_rate_limit  = 5
+  }
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access[0].arn
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      requestTime      = "$context.requestTime"
+      method           = "$context.httpMethod"
+      path             = "$context.path"
+      status           = "$context.status"
+      responseLatency  = "$context.responseLatency"
+      integrationError = "$context.integrationErrorMessage"
+    })
   }
 }
 
