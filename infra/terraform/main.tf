@@ -234,7 +234,7 @@ resource "aws_iam_role_policy" "github_deploy" {
       { Effect = "Allow", Action = ["s3:PutObject", "s3:DeleteObject", "s3:GetObject"], Resource = "${aws_s3_bucket.frontend.arn}/*" },
       { Effect = "Allow", Action = ["s3:PutObject", "s3:DeleteObject", "s3:GetObject", "s3:GetObjectVersion"], Resource = "${aws_s3_bucket.artifacts.arn}/*" },
       { Effect = "Allow", Action = ["lambda:GetFunction", "lambda:UpdateFunctionCode", "lambda:PublishVersion"], Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${local.name}-*" },
-      { Effect = "Allow", Action = ["cloudfront:CreateInvalidation"], Resource = aws_cloudfront_distribution.frontend.arn }
+      { Effect = "Allow", Action = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"], Resource = aws_cloudfront_distribution.frontend.arn }
     ]
   })
 }

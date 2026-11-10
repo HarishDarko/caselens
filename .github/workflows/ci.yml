@@ -257,8 +257,14 @@ jobs:
               --s3-object-version "$version" \
               --publish
           done
-      - name: Invalidate CloudFront
-        run: aws cloudfront create-invalidation --distribution-id "${{ vars.CASELENS_CLOUDFRONT_DISTRIBUTION_ID }}" --paths '/*'
+      - name: Invalidate CloudFront and wait for it
+        env:
+          DISTRIBUTION_ID: ${{ vars.CASELENS_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          id="$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths '/*' --query Invalidation.Id --output text)"
+          test -n "$id" && test "$id" != "None"
+          echo "Invalidation $id created; waiting until it completes, so the check below sees the new files."
+          aws cloudfront wait invalidation-completed --distribution-id "$DISTRIBUTION_ID" --id "$id"
       - name: Check that the site and the API answer
         env:
           CASELENS_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
@@ -268,7 +274,9 @@ jobs:
           curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 -o /dev/null \
             -w "API GET /api/demo/session: %{http_code} in %{time_total}s\n" "${CASELENS_API_BASE_URL%/}/api/demo/session"
           site="${CASELENS_SITE_URL%/}"
-          script="$(cd artifact/dist/assets && ls -- *.js | head -n 1)"
+          # The entry script that the new index.html loads (a build can emit more than one .js file).
+          script="$(grep -o 'src="/assets/[^"]*\.js"' artifact/dist/index.html | head -n 1 | sed 's|^src="/assets/||; s|"$||')"
+          test -n "$script"
           for attempt in $(seq 1 12); do
             if curl -fsS --max-time 15 "$site/" | grep -q "$script"; then echo "The site serves the new page ($script)."; break; fi
             if [ "$attempt" = 12 ]; then echo "The site does not serve the new index.html after 2 minutes."; exit 1; fi
