@@ -39,7 +39,7 @@ test('completes the reviewer journey from queue to measured views', async ({ pag
   await page.getByRole('button', { name: 'Launch live demo' }).click()
 
   await expect(page.getByRole('heading', { name: 'Ticket inbox' })).toBeVisible()
-  await page.getByRole('button', { name: 'Load charger-offline-site-wide' }).click()
+  await page.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }).click()
   await expect(page.getByText('Every charger at the demo site appears offline').first()).toBeVisible()
   await page.getByRole('article').filter({ hasText: 'Every charger at the demo site appears offline' }).getByRole('button', { name: /Review CL-/ }).click()
   await expect(page.getByRole('heading', { name: 'Why this ticket is here' })).toBeVisible()
@@ -70,7 +70,7 @@ test('keeps the access and queue flow usable on a phone viewport', async ({ page
   await expect(page.getByRole('button', { name: 'Evaluation' })).toBeVisible()
   const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
   expect(hasHorizontalOverflow).toBe(false)
-  await page.getByRole('button', { name: 'Load charger-offline-site-wide' }).click()
+  await page.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }).click()
   await expect(page.getByRole('heading', { name: 'Why this ticket is here' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Needs review' })).toBeHidden()
   await page.getByRole('button', { name: '← Back to queue' }).click()

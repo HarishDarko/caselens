@@ -33,6 +33,16 @@ describe('CaseLens API client', () => {
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/demo/session', expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'saas-support' }) }))
   })
 
+  it('asks the API to seed the workspace in the same call when the page opens one', async () => {
+    const opened = { token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z', industry: 'ev-charging', tickets: [], runtime: { environment: 'AWS_DEMO', database: 'NEON_POSTGRESQL', queue: 'AMAZON_SQS', aiProvider: 'GROQ' } }
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(opened), { status: 200 }))
+    const api = createCaseLensApi('', fetcher)
+
+    await expect(api.createSession('ev-charging', true)).resolves.toEqual(opened)
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/demo/session?seed=true', expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'ev-charging' }) }))
+  })
+
   it('tries once more after a 429, waiting as long as Retry-After says', async () => {
     vi.useFakeTimers()
     try {
