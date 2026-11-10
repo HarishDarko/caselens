@@ -6,6 +6,8 @@ import java.util.Locale;
 import java.util.Objects;
 
 public final class PriorityScorer {
+    private final PackRules pack = PackRules.evCharging();
+
     public PriorityResult score(PriorityContext context) {
         Objects.requireNonNull(context);
         List<RuleApplication> rules = new ArrayList<>();
@@ -22,23 +24,13 @@ public final class PriorityScorer {
         };
 
         String text = context.normalizedText().toLowerCase(Locale.ROOT);
-        if (containsAny(text, "payment captured", "duplicate charge", "charged twice", "refund")) {
-            score += apply(rules, "PAYMENT_IMPACT", 10, "Payment, duplicate charge, or refund impact detected");
-        }
-        if (containsAny(text, "session blocked", "charging session blocked", "did not start", "never started",
-                "no session", "authorization blocked", "authorization rejected")) {
-            score += apply(rules, "SERVICE_BLOCKED", 10, "Charging or account authorization is blocked");
-        }
-        if (containsAny(text, "site-wide", "multiple users", "multiple drivers", "outage", "safety")) {
-            score += apply(rules, "BROAD_IMPACT", 15, "Broad service scope, outage, or safety impact detected");
-        }
+        score += indicator(rules, text, "PAYMENT_IMPACT", 10);
+        score += indicator(rules, text, "SERVICE_BLOCKED", 10);
+        score += indicator(rules, text, "BROAD_IMPACT", 15);
         if (context.repeatContactCount() >= 2) {
             score += apply(rules, "REPEAT_CONTACT", 10, "Customer contacted support at least twice");
         }
-        if (context.category() == Category.GENERAL
-                && containsAny(text, "thanks", "thank you", "everything works", "feature request")) {
-            score += apply(rules, "POSITIVE_GENERAL_REQUEST", -10, "Positive general or feature-only request");
-        }
+        if (context.category() == Category.GENERAL) score += indicator(rules, text, "POSITIVE_GENERAL_REQUEST", -10);
         return new PriorityResult(Math.max(0, Math.min(100, score)), rules);
     }
 
@@ -47,8 +39,8 @@ public final class PriorityScorer {
         return points;
     }
 
-    private boolean containsAny(String text, String... indicators) {
-        for (String indicator : indicators) if (text.contains(indicator)) return true;
-        return false;
+    private int indicator(List<RuleApplication> rules, String text, String code, int points) {
+        PackRules.PriorityIndicator indicator = pack.priority(code);
+        return PackRules.containsAny(text, indicator.terms()) ? apply(rules, code, points, indicator.explanation()) : 0;
     }
 }

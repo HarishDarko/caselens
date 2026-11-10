@@ -7,6 +7,7 @@ import java.util.Set;
 
 public final class SemanticValidator {
     private final PolicyCatalog policies;
+    private final PackRules pack = PackRules.evCharging();
 
     public SemanticValidator(PolicyCatalog policies) {
         this.policies = Objects.requireNonNull(policies, "Policy catalog is required");
@@ -36,27 +37,9 @@ public final class SemanticValidator {
     }
 
     private boolean supportsDecision(ProviderTriageResult result, String evidenceText) {
-        boolean categorySupported = switch (result.category()) {
-            case BILLING -> containsAny(evidenceText, "payment", "charge", "billing", "refund", "receipt");
-            case CHARGING_SESSION -> containsAny(evidenceText, "session", "charging", "start", "blocked");
-            case CHARGER_HARDWARE -> containsAny(evidenceText, "charger", "connector", "hardware", "fault");
-            case CONNECTIVITY -> containsAny(evidenceText, "heartbeat", "network", "offline", "connectivity", "last-seen");
-            case ACCOUNT_ACCESS -> containsAny(evidenceText, "account", "authorization", "rfid", "login");
-            case REFUND -> containsAny(evidenceText, "refund", "charge", "payment");
-            case GENERAL -> containsAny(evidenceText, "question", "feature", "suggestion", "works", "help");
-        };
-        boolean urgencySupported = switch (result.urgency()) {
-            case LOW -> containsAny(evidenceText, "question", "feature", "thanks", "works");
-            case MEDIUM -> containsAny(evidenceText, "issue", "problem", "delay", "error");
-            case HIGH -> containsAny(evidenceText, "blocked", "never", "failed", "outage", "captured", "unable", "did not");
-            case CRITICAL -> containsAny(evidenceText, "safety", "fire", "smoke", "site-wide", "outage", "multiple");
-        };
+        boolean categorySupported = pack.evidenceSupports(result.category(), evidenceText);
+        boolean urgencySupported = pack.evidenceSupports(result.urgency(), evidenceText);
         return categorySupported && urgencySupported;
-    }
-
-    private boolean containsAny(String text, String... terms) {
-        for (String term : terms) if (text.contains(term)) return true;
-        return false;
     }
 
     static String normalize(String value) {

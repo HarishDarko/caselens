@@ -1,0 +1,79 @@
+{
+  "id": "ev-charging",
+  "rules": {
+    "category": [
+      { "value": "BILLING", "terms": ["refund", "charged", "payment", "billing", "receipt"] },
+      { "value": "ACCOUNT_ACCESS", "terms": ["authorization", "rfid", "account", "login", "sign in"] },
+      { "value": "CONNECTIVITY", "terms": ["heartbeat", "network", "offline", "connectivity", "last-seen"] },
+      { "value": "CHARGER_HARDWARE", "terms": ["connector", "charger", "hardware", "plug"] },
+      { "value": "CHARGING_SESSION", "terms": ["session", "charging", "charge did not", "never started"] },
+      { "value": "GENERAL", "terms": ["feature", "suggestion", "how do", "question"] }
+    ],
+    "urgency": [
+      { "value": "CRITICAL", "terms": ["safety", "fire", "smoke", "site-wide", "outage", "multiple users"] },
+      { "value": "HIGH", "terms": ["blocked", "never started", "did not start", "charged twice", "payment captured"] }
+    ],
+    "slaRisk": [
+      { "value": "HIGH", "terms": ["site-wide", "outage", "multiple users", "payment captured", "blocked"] }
+    ],
+    "sentiment": [
+      { "value": "ANGRY", "terms": ["furious", "angry", "unacceptable", "again", "still not"] },
+      { "value": "NEGATIVE", "terms": ["failed", "cannot", "can't", "unable", "error", "never"] },
+      { "value": "POSITIVE", "terms": ["thanks", "thank you", "works well"] }
+    ],
+    "policies": [
+      { "id": "PAYMENT_CAPTURE_NO_SESSION",
+        "allOf": [["payment", "charged"], ["no session", "did not start", "never started", "session blocked"]] },
+      { "id": "DUPLICATE_CHARGE_REVIEW", "allOf": [["charged twice", "duplicate"]] },
+      { "id": "CHARGER_SITE_OUTAGE", "allOf": [["site-wide", "outage", "multiple users"]] },
+      { "id": "CONNECTOR_FAULT", "category": "CHARGER_HARDWARE", "allOf": [["connector", "fault"]] },
+      { "id": "OCPP_CONNECTIVITY", "category": "CONNECTIVITY", "allOf": [] },
+      { "id": "ACCOUNT_AUTHORIZATION", "category": "ACCOUNT_ACCESS", "allOf": [] }
+    ],
+    "actions": {
+      "BILLING": ["Verify payment and session state", "Collect a transaction reference for billing review"],
+      "CHARGER_HARDWARE": ["Isolate the connector fault", "Check alternate connector availability"],
+      "CONNECTIVITY": ["Check heartbeat and last-seen timestamp", "Verify the network path"],
+      "ACCOUNT_ACCESS": ["Verify account or RFID authorization state", "Do not request secrets"],
+      "CHARGING_SESSION": ["Verify the session lifecycle state", "Check whether another connector is available"],
+      "REFUND": ["Verify the captured payment state", "Escalate for refund review after confirmation"],
+      "GENERAL": ["Clarify the requested outcome", "Respond with the next supported step"]
+    }
+  },
+  "evidenceSupport": {
+    "category": {
+      "BILLING": ["payment", "charge", "billing", "refund", "receipt"],
+      "CHARGING_SESSION": ["session", "charging", "start", "blocked"],
+      "CHARGER_HARDWARE": ["charger", "connector", "hardware", "fault"],
+      "CONNECTIVITY": ["heartbeat", "network", "offline", "connectivity", "last-seen"],
+      "ACCOUNT_ACCESS": ["account", "authorization", "rfid", "login"],
+      "REFUND": ["refund", "charge", "payment"],
+      "GENERAL": ["question", "feature", "suggestion", "works", "help"]
+    },
+    "urgency": {
+      "LOW": ["question", "feature", "thanks", "works"],
+      "MEDIUM": ["issue", "problem", "delay", "error"],
+      "HIGH": ["blocked", "never", "failed", "outage", "captured", "unable", "did not"],
+      "CRITICAL": ["safety", "fire", "smoke", "site-wide", "outage", "multiple"]
+    }
+  },
+  "priority": {
+    "PAYMENT_IMPACT": {
+      "explanation": "Payment, duplicate charge, or refund impact detected",
+      "terms": ["payment captured", "duplicate charge", "charged twice", "refund"]
+    },
+    "SERVICE_BLOCKED": {
+      "explanation": "Charging or account authorization is blocked",
+      "terms": ["session blocked", "charging session blocked", "did not start", "never started", "no session",
+        "authorization blocked", "authorization rejected"]
+    },
+    "BROAD_IMPACT": {
+      "explanation": "Broad service scope, outage, or safety impact detected",
+      "terms": ["site-wide", "multiple users", "multiple drivers", "outage", "safety"]
+    },
+    "POSITIVE_GENERAL_REQUEST": {
+      "explanation": "Positive general or feature-only request",
+      "terms": ["thanks", "thank you", "everything works", "feature request"]
+    }
+  }
+}
