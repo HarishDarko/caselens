@@ -40,14 +40,14 @@ class EvaluationServiceTest {
         job.claim(CREATED.plusMillis(100));
         job.complete(FINISHED);
         TriageFeedback correction = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketId, result.getId(),
-                Category.CHARGING_SESSION, Urgency.HIGH, null, "Escalation confirmed", "demo-reviewer", FINISHED);
+                Category.of("CHARGING_SESSION"), Urgency.HIGH, null, "Escalation confirmed", "demo-reviewer", FINISHED);
 
         when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(result));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
         when(tickets.findByWorkspaceIdAndIdIn(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(ticket));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(correction));
         when(groundTruth.findAll()).thenReturn(List.of(new EvaluationGroundTruth("synthetic-session",
-                Category.CHARGING_SESSION, Urgency.HIGH)));
+                Category.of("CHARGING_SESSION"), Urgency.HIGH)));
         when(invocations.findByTicketIds(List.of(ticketId))).thenReturn(List.of(ModelInvocation.from(
                 new ModelInvocationRecord(ticketId, "mock", "mock-v1", "triage-v1", CREATED, CREATED.plusMillis(50),
                         50, "SUCCESS", null, 120L, 40L))));
@@ -214,7 +214,7 @@ class EvaluationServiceTest {
 
     private TriageResult resultAt(UUID workspaceId, UUID ticketId, DecisionSource source, Instant createdAt) {
         TriageResult result = TriageResult.from(UUID.randomUUID(), workspaceId,
-                new TriageDecision(ticketId, Category.CHARGING_SESSION, Urgency.MEDIUM, SlaRisk.MEDIUM,
+                new TriageDecision(ticketId, Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM,
                         Sentiment.NEGATIVE, "Charging session did not start", List.of(), List.of(),
                         "The session did not start.", List.of("Inspect the charger"), "We are reviewing it.",
                         ReliabilitySignal.HIGH, List.of(), 55, List.of(), source, "mock-v1", "triage-v1"),

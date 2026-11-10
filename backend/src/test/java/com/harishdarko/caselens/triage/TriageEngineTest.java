@@ -18,7 +18,7 @@ class TriageEngineTest {
     void fallsBackWithLowReliabilityAndWarningWhenProviderOutputIsInvalid() {
         AtomicReference<ModelInvocationRecord> invocation = new AtomicReference<>();
         TriageProvider invalid = (ignoredRequest, ignoredTicket) -> new ProviderCall(
-                new ProviderTriageResult(Category.CHARGER_HARDWARE, Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                new ProviderTriageResult(Category.of("CHARGER_HARDWARE"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
                         "The provider returned an invalid evidence quote.",
                         java.util.List.of(new EvidenceItem("Invented evidence", "Not in ticket")), java.util.List.of(),
                         "The provider output cannot be trusted because its evidence is not grounded in the ticket.",

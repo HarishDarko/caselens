@@ -19,7 +19,7 @@ class MockTriageProviderTest {
         ProviderCall second = provider.analyze(request, redacted);
 
         assertThat(first).isEqualTo(second);
-        assertThat(first.result().category()).isEqualTo(Category.BILLING);
+        assertThat(first.result().category()).isEqualTo(Category.of("BILLING"));
         assertThat(first.result().evidence()).isNotEmpty();
         assertThat(first.result().policyIds()).contains("PAYMENT_CAPTURE_NO_SESSION");
     }

@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -17,7 +18,7 @@ public class TriageFeedback {
     @Column(name = "workspace_id", nullable = false) private UUID workspaceId;
     @Column(name = "ticket_id", nullable = false) private UUID ticketId;
     @Column(name = "triage_result_id", nullable = false) private UUID originalResultId;
-    @Enumerated(EnumType.STRING) @Column(name = "corrected_category", length = 32) private Category correctedCategory;
+    @Convert(converter = CategoryConverter.class) @Column(name = "corrected_category", length = 32) private Category correctedCategory;
     @Enumerated(EnumType.STRING) @Column(name = "corrected_urgency", length = 16) private Urgency correctedUrgency;
     @Enumerated(EnumType.STRING) @Column(name = "corrected_sla_risk", length = 16) private SlaRisk correctedSlaRisk;
     @Column(nullable = false, length = 500) private String note;
@@ -60,7 +61,7 @@ public class TriageFeedback {
 
     public boolean differsFrom(TriageResult original) {
         Objects.requireNonNull(original);
-        return (correctedCategory != null && correctedCategory != original.getCategory())
+        return (correctedCategory != null && !correctedCategory.equals(original.getCategory()))
                 || (correctedUrgency != null && correctedUrgency != original.getUrgency())
                 || (correctedSlaRisk != null && correctedSlaRisk != original.getSlaRisk());
     }

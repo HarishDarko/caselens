@@ -14,7 +14,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class GeminiTriageProvider implements TriageProvider {
-    private static final String PROMPT_VERSION = "triage-v1";
+    private static final String PROMPT_VERSION = "triage-v2";
     private static final int MAX_RESPONSE_CHARS = 65_536;
     private final URI endpoint;
     private final String apiKey;
@@ -23,16 +23,10 @@ public final class GeminiTriageProvider implements TriageProvider {
     private final ObjectMapper mapper;
     private final Duration requestTimeout;
     private final IntSupplier retryDelayMillis;
-    private final TriageResponseSchema responseSchema;
     private final PromptBuilder promptBuilder = new PromptBuilder(PROMPT_VERSION);
 
     public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
             ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis) {
-        this(endpoint, apiKey, model, client, mapper, requestTimeout, retryDelayMillis, PolicyCatalog.defaultCatalog());
-    }
-
-    public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
-            ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis, PolicyCatalog policyCatalog) {
         this.endpoint = Objects.requireNonNull(endpoint);
         this.apiKey = required(apiKey, "Gemini API key");
         this.model = required(model, "Gemini model");
@@ -40,7 +34,6 @@ public final class GeminiTriageProvider implements TriageProvider {
         this.mapper = Objects.requireNonNull(mapper);
         this.requestTimeout = Objects.requireNonNull(requestTimeout);
         this.retryDelayMillis = Objects.requireNonNull(retryDelayMillis);
-        this.responseSchema = new TriageResponseSchema(this.mapper, policyCatalog);
     }
 
     @Override
@@ -62,7 +55,7 @@ public final class GeminiTriageProvider implements TriageProvider {
         try {
             JsonNode root = mapper.readTree(response.body());
             String output = outputText(root);
-            ProviderTriageResult result = responseSchema.parse(output, model, PROMPT_VERSION);
+            ProviderTriageResult result = new TriageResponseSchema(mapper, request.pack()).parse(output, model, PROMPT_VERSION);
             JsonNode usage = root.path("usage");
             Long inputTokens = usageLong(usage, "total_input_tokens", "input_tokens");
             Long outputTokens = usageLong(usage, "total_output_tokens", "output_tokens");
@@ -120,7 +113,7 @@ public final class GeminiTriageProvider implements TriageProvider {
         ObjectNode responseFormat = root.putObject("response_format");
         responseFormat.put("type", "text");
         responseFormat.put("mime_type", "application/json");
-        responseFormat.set("schema", responseSchema.schema());
+        responseFormat.set("schema", new TriageResponseSchema(mapper, request.pack()).schema());
         try {
             return mapper.writeValueAsString(root);
         } catch (JacksonException exception) {

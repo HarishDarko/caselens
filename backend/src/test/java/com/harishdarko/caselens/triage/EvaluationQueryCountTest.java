@@ -46,7 +46,7 @@ class EvaluationQueryCountTest {
 
     @Test
     void summaryUsesAFixedNumberOfStatementsWhateverTheNumberOfResults() {
-        groundTruth.save(new EvaluationGroundTruth(SCENARIO, Category.CHARGING_SESSION, Urgency.MEDIUM));
+        groundTruth.save(new EvaluationGroundTruth(SCENARIO, Category.of("CHARGING_SESSION"), Urgency.MEDIUM));
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
 
         int[] resultCounts = {9, 27};
@@ -81,7 +81,7 @@ class EvaluationQueryCountTest {
 
     @Test
     void summaryIgnoresATicketThatBelongsToAnotherWorkspace() {
-        groundTruth.save(new EvaluationGroundTruth(SCENARIO, Category.CHARGING_SESSION, Urgency.MEDIUM));
+        groundTruth.save(new EvaluationGroundTruth(SCENARIO, Category.of("CHARGING_SESSION"), Urgency.MEDIUM));
         UUID workspaceId = UUID.randomUUID();
         Ticket foreign = tickets.save(ticket(UUID.randomUUID()));
         saveResult(workspaceId, foreign.getId(), CREATED);
@@ -101,7 +101,7 @@ class EvaluationQueryCountTest {
     private void saveResult(UUID workspaceId, UUID ticketId, Instant at) {
         UUID eventId = UUID.randomUUID();
         results.save(TriageResult.from(eventId, workspaceId, new TriageDecision(ticketId,
-                Category.CHARGING_SESSION, Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
+                Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
                 "Charging did not start", List.of(), List.of(), "The session did not start.",
                 List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.HIGH,
                 List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"), at.plusSeconds(2), objectMapper));

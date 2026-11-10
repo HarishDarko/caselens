@@ -12,17 +12,19 @@ import tools.jackson.databind.node.ObjectNode;
 /** The structured-output schema a model must follow, and the parser for its answer. Shared by the AI providers. */
 final class TriageResponseSchema {
     private final ObjectMapper mapper;
-    private final PolicyCatalog policyCatalog;
+    private final PackRules pack;
 
-    TriageResponseSchema(ObjectMapper mapper, PolicyCatalog policyCatalog) {
+    /** The schema and parser for one industry pack: its categories and policy ids are the only allowed values. */
+    TriageResponseSchema(ObjectMapper mapper, PackRules pack) {
         this.mapper = Objects.requireNonNull(mapper);
-        this.policyCatalog = Objects.requireNonNull(policyCatalog);
+        this.pack = Objects.requireNonNull(pack);
     }
 
     ObjectNode schema() {
         ObjectNode schema = mapper.createObjectNode().put("type", "object").put("additionalProperties", false);
         ObjectNode properties = schema.putObject("properties");
-        enumProperty(properties, "category", Category.values());
+        ArrayNode categories = properties.putObject("category").put("type", "string").putArray("enum");
+        pack.categories().forEach(category -> categories.add(category.name()));
         enumProperty(properties, "urgency", Urgency.values());
         enumProperty(properties, "slaRisk", SlaRisk.values());
         enumProperty(properties, "sentiment", Sentiment.values());
@@ -36,7 +38,7 @@ final class TriageResponseSchema {
         ObjectNode policyIds = properties.putObject("policyIds").put("type", "array").put("maxItems", 3);
         ObjectNode policyId = policyIds.putObject("items").put("type", "string");
         ArrayNode allowedPolicyIds = policyId.putArray("enum");
-        policyCatalog.ids().stream().sorted().forEach(allowedPolicyIds::add);
+        pack.policies().ids().stream().sorted().forEach(allowedPolicyIds::add);
         properties.putObject("explanation").put("type", "string").put("minLength", 30).put("maxLength", 600);
         properties.putObject("recommendedActions").put("type", "array").put("minItems", 1).put("maxItems", 5)
                 .putObject("items").put("type", "string").put("minLength", 3).put("maxLength", 240);
@@ -55,7 +57,7 @@ final class TriageResponseSchema {
             evidence.add(new EvidenceItem(item.path("quote").asText(), item.path("meaning").asText()));
         }
         return new ProviderTriageResult(
-                Category.valueOf(node.path("category").asText()),
+                pack.requireCategory(node.path("category").asText()),
                 Urgency.valueOf(node.path("urgency").asText()),
                 SlaRisk.valueOf(node.path("slaRisk").asText()),
                 Sentiment.valueOf(node.path("sentiment").asText()),

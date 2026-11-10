@@ -95,7 +95,7 @@ class OperationsOverviewServiceTest {
     }
 
     private TriageResult result(UUID eventId, UUID workspaceId, UUID ticketId, DecisionSource source) {
-        return TriageResult.from(eventId, workspaceId, new TriageDecision(ticketId, Category.GENERAL, Urgency.MEDIUM,
+        return TriageResult.from(eventId, workspaceId, new TriageDecision(ticketId, Category.of("GENERAL"), Urgency.MEDIUM,
                 SlaRisk.MEDIUM, Sentiment.NEUTRAL, "A synthetic support request needs review.", List.of(), List.of(),
                 "The request is clear enough for a reviewer to determine the next step.", List.of("Review the request"),
                 "We are reviewing this request now.", ReliabilitySignal.MEDIUM, List.of(), 20, List.of(), source,

@@ -25,6 +25,10 @@ public final class PolicyCatalog {
         return new PolicyCatalog("test", values);
     }
 
+    public static PolicyCatalog of(String version, Map<String, String> guidanceById) {
+        return new PolicyCatalog(version, new LinkedHashMap<>(guidanceById));
+    }
+
     public static PolicyCatalog load(InputStream source) {
         Objects.requireNonNull(source);
         try {

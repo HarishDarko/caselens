@@ -15,6 +15,12 @@ public class DemoWorkspaceAccess {
         this.clock = clock;
     }
 
+    /** The industry pack id of the workspace, or the default industry when the workspace no longer exists. */
+    @Transactional(readOnly = true)
+    public String industryOf(UUID workspaceId) {
+        return workspaces.findById(workspaceId).map(DemoWorkspace::getIndustry).orElse(DemoWorkspace.DEFAULT_INDUSTRY);
+    }
+
     @Transactional(readOnly = true)
     public void requireActive(UUID workspaceId) {
         if (!workspaces.existsByIdAndExpiresAtAfter(workspaceId, clock.instant())) {

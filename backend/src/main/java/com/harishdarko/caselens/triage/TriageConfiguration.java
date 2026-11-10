@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.triage;
 
+import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
 import com.harishdarko.caselens.ticket.TicketRepository;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -23,6 +24,16 @@ public class TriageConfiguration {
     }
 
     @Bean
+    PackCatalog packCatalog() {
+        return PackCatalog.builtIn();
+    }
+
+    @Bean
+    PackResolver packResolver(PackCatalog packs, DemoWorkspaceAccess workspaces) {
+        return workspaceId -> packs.require(workspaces.industryOf(workspaceId));
+    }
+
+    @Bean
     PolicyCatalog policyCatalog() {
         return PolicyCatalog.defaultCatalog();
     }
@@ -43,18 +54,17 @@ public class TriageConfiguration {
             @Value("${caselens.groq.api-key:}") String groqApiKey,
             @Value("${caselens.groq.model:openai/gpt-oss-20b}") String groqModel,
             @Value("${caselens.groq.request-timeout:20s}") Duration groqRequestTimeout,
-            PolicyCatalog policyCatalog,
             ObjectMapper objectMapper) {
         if ("mock".equalsIgnoreCase(provider)) return new MockTriageProvider();
         if ("gemini".equalsIgnoreCase(provider)) {
             HttpClient client = geminiHttpClient(Duration.ofSeconds(2));
             return new GeminiTriageProvider(URI.create(endpoint), apiKey, model, client, objectMapper,
-                    requestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126), policyCatalog);
+                    requestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126));
         }
         if ("groq".equalsIgnoreCase(provider)) {
             HttpClient client = groqHttpClient(Duration.ofSeconds(2));
             return new GroqTriageProvider(URI.create(groqEndpoint), groqApiKey, groqModel, client, objectMapper,
-                    groqRequestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126), policyCatalog);
+                    groqRequestTimeout, () -> ThreadLocalRandom.current().nextInt(25, 126));
         }
         throw new IllegalArgumentException("Unsupported AI provider");
     }
@@ -83,7 +93,7 @@ public class TriageConfiguration {
     @Bean
     TriageWorker triageWorker(TriageJobRepository jobs, TicketRepository tickets, TriageResultRepository results,
             TriageAttemptRepository attempts, TriageEngine engine, ObjectMapper objectMapper, Clock clock,
-            TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy) {
-        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics, demoFailurePolicy);
+            TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy, PackResolver packs) {
+        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics, demoFailurePolicy, packs);
     }
 }

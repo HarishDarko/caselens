@@ -20,6 +20,7 @@ public class TriageWorker {
     private final Clock clock;
     private final TriageMetrics metrics;
     private final DemoFailurePolicy demoFailurePolicy;
+    private final PackResolver packs;
     private final TriageFailureClassifier classifier = new TriageFailureClassifier();
 
     public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
@@ -36,6 +37,14 @@ public class TriageWorker {
     public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
             TriageResultRepository results, TriageAttemptRepository attempts, TriageEngine engine,
             ObjectMapper mapper, Clock clock, TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy) {
+        this(jobs, tickets, results, attempts, engine, mapper, clock, metrics, demoFailurePolicy,
+                workspaceId -> PackRules.evCharging());
+    }
+
+    public TriageWorker(TriageJobRepository jobs, com.harishdarko.caselens.ticket.TicketRepository tickets,
+            TriageResultRepository results, TriageAttemptRepository attempts, TriageEngine engine,
+            ObjectMapper mapper, Clock clock, TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy,
+            PackResolver packs) {
         this.jobs = Objects.requireNonNull(jobs);
         this.tickets = Objects.requireNonNull(tickets);
         this.results = Objects.requireNonNull(results);
@@ -45,6 +54,7 @@ public class TriageWorker {
         this.clock = Objects.requireNonNull(clock);
         this.metrics = Objects.requireNonNull(metrics);
         this.demoFailurePolicy = Objects.requireNonNull(demoFailurePolicy);
+        this.packs = Objects.requireNonNull(packs);
     }
 
     @org.springframework.transaction.annotation.Transactional
@@ -105,7 +115,7 @@ public class TriageWorker {
                 throw new SyntheticDemoRetryException();
             }
             TriageDecision decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
-                    ticket.getChannel(), 0));
+                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())));
             results.save(TriageResult.from(job.getEventId(), job.getWorkspaceId(), decision, clock.instant(), mapper));
             job.complete(clock.instant());
             ticket.completed(clock.instant());

@@ -5,13 +5,19 @@ import java.util.Objects;
 import java.util.UUID;
 
 public record TriageRequest(UUID ticketId, String subject, String message, TicketChannel channel,
-        int repeatContactCount) {
+        int repeatContactCount, PackRules pack) {
     public TriageRequest {
+        Objects.requireNonNull(pack, "Industry pack is required");
         Objects.requireNonNull(ticketId, "Ticket id is required");
         subject = bounded(subject, "Subject", 5, 160);
         message = bounded(message, "Message", 20, 5000);
         Objects.requireNonNull(channel, "Ticket channel is required");
         if (repeatContactCount < 0) throw new IllegalArgumentException("Repeat contact count cannot be negative");
+    }
+
+    /** A request triaged with the default industry pack. */
+    public TriageRequest(UUID ticketId, String subject, String message, TicketChannel channel, int repeatContactCount) {
+        this(ticketId, subject, message, channel, repeatContactCount, PackRules.evCharging());
     }
 
     private static String bounded(String value, String label, int minimum, int maximum) {
