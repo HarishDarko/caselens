@@ -10,7 +10,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.ZipFile;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -31,12 +35,15 @@ class LambdaJarBootIT {
 
     @Test
     void theLambdaJarMigratesAnOlderSchemaBeforeHibernateValidatesIt() throws Exception {
-        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .locations("classpath:db/migration").target("5").load().migrate();
-        assertThat(latestVersion()).isEqualTo("5");
-
         File jar = new File(System.getProperty("caselens.lambda.jar", "target/caselens-lambda.jar"));
         assertThat(jar).isFile();
+        List<Integer> versions = migrationVersions(jar);
+        assertThat(versions).as("the jar must hold at least two migrations for this test").hasSizeGreaterThanOrEqualTo(2);
+        String startVersion = String.valueOf(versions.get(versions.size() - 2));
+        String newestVersion = String.valueOf(versions.get(versions.size() - 1));
+        Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .locations("classpath:db/migration").target(startVersion).load().migrate();
+        assertThat(latestVersion()).as("database prepared at the previous migration").isEqualTo(startVersion);
         Map<String, String> properties = Map.of(
                 "spring.datasource.url", POSTGRES.getJdbcUrl(),
                 "spring.datasource.username", POSTGRES.getUsername(),
@@ -55,7 +62,7 @@ class LambdaJarBootIT {
             Object context = application.getClass().getMethod("run", String[].class).invoke(application, (Object) new String[0]);
             try {
                 assertThat((Boolean) context.getClass().getMethod("isActive").invoke(context)).isTrue();
-                assertThat(latestVersion()).isEqualTo("6");
+                assertThat(latestVersion()).as("the jar's own Flyway applied its newest migration").isEqualTo(newestVersion);
             } finally {
                 context.getClass().getMethod("close").invoke(context);
             }
@@ -63,6 +70,15 @@ class LambdaJarBootIT {
             Thread.currentThread().setContextClassLoader(previous);
             properties.keySet().forEach(System::clearProperty);
             System.clearProperty("spring.profiles.active");
+        }
+    }
+
+    /** The versions of the V&lt;n&gt;__*.sql migrations inside the jar, in ascending order. */
+    private List<Integer> migrationVersions(File jar) throws Exception {
+        Pattern migration = Pattern.compile("db/migration/V(\\d+)__.+\\.sql");
+        try (ZipFile zip = new ZipFile(jar)) {
+            return zip.stream().map(entry -> migration.matcher(entry.getName())).filter(Matcher::matches)
+                    .map(matcher -> Integer.valueOf(matcher.group(1))).sorted().toList();
         }
     }
 
