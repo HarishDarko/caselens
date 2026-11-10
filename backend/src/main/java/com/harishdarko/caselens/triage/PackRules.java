@@ -108,7 +108,7 @@ public final class PackRules {
     }
 
     public String id() { return id; }
-    String name() { return name; }
+    public String name() { return name; }
     PolicyCatalog policies() { return policies; }
 
     /** The categories of this pack, in file order. */

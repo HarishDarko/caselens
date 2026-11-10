@@ -1,0 +1,66 @@
+[
+  {
+    "key": "shop-parcel-never-arrived",
+    "subject": "Parcel shows delivered but never arrived",
+    "message": "Tracking for order 48213 says delivered yesterday at 3 pm, but nothing arrived at my door and the neighbours have not seen it either.",
+    "channel": "EMAIL",
+    "expectedCategory": "DELIVERY",
+    "expectedUrgency": "HIGH"
+  },
+  {
+    "key": "shop-mug-broken",
+    "subject": "Mug arrived broken in the box",
+    "message": "The ceramic mug from order 51877 was broken in the box when I opened it. I would like a replacement, please.",
+    "channel": "WEB",
+    "expectedCategory": "PRODUCT_ISSUE",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "shop-refund-missing",
+    "subject": "Refund not received after my return",
+    "message": "I returned the jacket two weeks ago and your site marks the return as received, but the refund has still not reached my card.",
+    "channel": "CHAT",
+    "expectedCategory": "RETURN_REFUND",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "shop-two-payments",
+    "subject": "Two payments taken for one order",
+    "message": "The checkout page froze, I pressed pay again, and now my bank app shows two payments for the same order 59902.",
+    "channel": "WEB",
+    "expectedCategory": "PAYMENT",
+    "expectedUrgency": "HIGH"
+  },
+  {
+    "key": "shop-change-address",
+    "subject": "Wrong delivery address on a new order",
+    "message": "I just placed order 60142 and noticed it still has my old address. Can you change it before it ships?",
+    "channel": "CHAT",
+    "expectedCategory": "ORDER_STATUS",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "shop-checkout-down",
+    "subject": "Checkout fails for every card",
+    "message": "Every card I try fails at the payment step with an error, and my friend sees the same thing. Is checkout down for everyone?",
+    "channel": "EMAIL",
+    "expectedCategory": "PAYMENT",
+    "expectedUrgency": "CRITICAL"
+  },
+  {
+    "key": "shop-size-question",
+    "subject": "Does the linen shirt run small?",
+    "message": "Thanks for the quick delivery last time. Does the linen shirt run small, or should I order my usual size?",
+    "channel": "WEB",
+    "expectedCategory": "GENERAL",
+    "expectedUrgency": "LOW"
+  },
+  {
+    "key": "shop-cannot-sign-in",
+    "subject": "Cannot sign in to see my orders",
+    "message": "I reset my password twice today and I still cannot sign in to see my orders and invoices.",
+    "channel": "CHAT",
+    "expectedCategory": "ACCOUNT_ACCESS",
+    "expectedUrgency": "MEDIUM"
+  }
+]

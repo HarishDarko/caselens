@@ -12,8 +12,10 @@ import tools.jackson.databind.ObjectMapper;
 
 public final class ScenarioCatalog {
     private final Map<String, DemoScenario> scenarios;
+    private final List<DemoScenario> ordered;
 
     private ScenarioCatalog(List<DemoScenario> scenarios) {
+        this.ordered = List.copyOf(scenarios);
         this.scenarios = scenarios.stream().collect(Collectors.toUnmodifiableMap(DemoScenario::key, Function.identity()));
     }
 
@@ -27,6 +29,9 @@ public final class ScenarioCatalog {
     }
 
     public List<DemoScenario> all() { return List.copyOf(scenarios.values()); }
+
+    /** The scenarios in file order. */
+    public List<DemoScenario> ordered() { return ordered; }
 
     public DemoScenario require(String key) {
         DemoScenario scenario = scenarios.get(key);

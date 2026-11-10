@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.demo;
 
+import com.harishdarko.caselens.triage.PackCatalog;
 import java.time.Clock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,5 +15,8 @@ class DemoConfiguration {
         return new DemoTokenService(secret, clock);
     }
 
-    @Bean ScenarioCatalog scenarioCatalog() { return ScenarioCatalog.fromClasspath("demo/scenarios-v1.json"); }
+    @Bean
+    DemoScenarios demoScenarios(PackCatalog packs, DemoWorkspaceAccess workspaces) {
+        return new DemoScenarios(DemoScenarios.fromClasspath(packs.ids()), workspaces);
+    }
 }

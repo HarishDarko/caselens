@@ -1,0 +1,66 @@
+[
+  {
+    "key": "saas-sso-lockout",
+    "subject": "Whole team locked out after an SSO change",
+    "message": "Since this morning none of our 40 users can sign in. Our admin rotated the SSO certificate in the identity provider and now every login ends on an error page. We are blocked from all work.",
+    "channel": "CHAT",
+    "expectedCategory": "LOGIN_ACCESS",
+    "expectedUrgency": "CRITICAL"
+  },
+  {
+    "key": "saas-mfa-new-phone",
+    "subject": "New phone, two-factor codes no longer arrive",
+    "message": "I replaced my phone and the authenticator app did not move over, so I cannot get the two-factor codes to sign in. Can you reset two-factor for my account?",
+    "channel": "WEB",
+    "expectedCategory": "LOGIN_ACCESS",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "saas-duplicate-invoice",
+    "subject": "Charged twice for the March invoice",
+    "message": "Our card was charged twice for invoice INV-2026-0311 on the same day. Please refund the duplicate charge and confirm which payment you kept.",
+    "channel": "EMAIL",
+    "expectedCategory": "BILLING",
+    "expectedUrgency": "HIGH"
+  },
+  {
+    "key": "saas-dashboard-slow",
+    "subject": "Reports dashboard takes a minute to load",
+    "message": "For the last two days the reports dashboard takes about a minute to load and sometimes ends in a timeout. Other pages open normally.",
+    "channel": "WEB",
+    "expectedCategory": "PERFORMANCE",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "saas-api-outage",
+    "subject": "API returns 503 for every request",
+    "message": "Every call to your REST API has returned 503 for the past 20 minutes, and our checkout integration is down for all customers right now.",
+    "channel": "EMAIL",
+    "expectedCategory": "PERFORMANCE",
+    "expectedUrgency": "CRITICAL"
+  },
+  {
+    "key": "saas-webhook-401",
+    "subject": "Webhooks stopped arriving yesterday",
+    "message": "Our webhook endpoint has not received any events since yesterday afternoon. The delivery log shows failed attempts with a 401 response.",
+    "channel": "CHAT",
+    "expectedCategory": "INTEGRATION",
+    "expectedUrgency": "HIGH"
+  },
+  {
+    "key": "saas-export-and-delete",
+    "subject": "Please export and then delete our data",
+    "message": "We are closing our account at the end of the month. Please export all project data for us, and then delete our workspace and the personal data of our users.",
+    "channel": "EMAIL",
+    "expectedCategory": "DATA_REQUEST",
+    "expectedUrgency": "MEDIUM"
+  },
+  {
+    "key": "saas-custom-field-question",
+    "subject": "How do I add a custom field?",
+    "message": "Thanks for the great tool. How do I add a custom field to the project form? I could not find the option in the settings.",
+    "channel": "WEB",
+    "expectedCategory": "GENERAL",
+    "expectedUrgency": "LOW"
+  }
+]

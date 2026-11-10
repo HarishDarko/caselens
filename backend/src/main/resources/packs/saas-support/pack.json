@@ -1,0 +1,87 @@
+{
+  "id": "saas-support",
+  "name": "SaaS support",
+  "categories": ["LOGIN_ACCESS", "BILLING", "BUG", "PERFORMANCE", "INTEGRATION", "DATA_REQUEST", "GENERAL"],
+  "generalCategory": "GENERAL",
+  "categoryDescriptions": {
+    "LOGIN_ACCESS": "Sign-in, password, single sign-on (SSO) and two-factor problems.",
+    "BILLING": "Invoices, charges, plan changes and refunds.",
+    "BUG": "A feature that does not work as expected or shows an error.",
+    "PERFORMANCE": "The product is slow, timing out or down.",
+    "INTEGRATION": "Problems with the API, webhooks or a connected app.",
+    "DATA_REQUEST": "Requests to export, delete or correct account data.",
+    "GENERAL": "Questions, feedback and anything that fits no other category."
+  },
+  "policyVersion": "saas-v1",
+  "policies": [
+    { "id": "SSO_LOCKOUT", "guidance": "Check the identity provider status and the user's role before changing SSO settings." },
+    { "id": "MFA_RESET", "guidance": "Confirm the request with the account owner before removing two-factor authentication." },
+    { "id": "DUPLICATE_INVOICE", "guidance": "Collect both invoice numbers and escalate to billing; do not promise a refund before review." },
+    { "id": "OUTAGE_INCIDENT", "guidance": "Check the status page and link the ticket to the open incident." },
+    { "id": "WEBHOOK_FAILURE", "guidance": "Ask for the endpoint response code and recent delivery IDs; never ask for secrets or API keys." },
+    { "id": "DATA_DELETION", "guidance": "Log the request and confirm the requester owns the account before anything is deleted." }
+  ],
+  "rules": {
+    "category": [
+      { "value": "DATA_REQUEST", "terms": ["export", "delete our", "personal data", "gdpr", "data request"] },
+      { "value": "BILLING", "terms": ["invoice", "charged", "refund", "billing", "subscription"] },
+      { "value": "PERFORMANCE", "terms": ["503", "outage", "is down", "down for", "timeout", "timing out", "slow", "minute to load"] },
+      { "value": "INTEGRATION", "terms": ["webhook", "api key", "integration", "connected app"] },
+      { "value": "LOGIN_ACCESS", "terms": ["sign in", "login", "log in", "password", "two-factor", "sso"] },
+      { "value": "BUG", "terms": ["error", "bug", "broken", "does not work", "crash"] },
+      { "value": "GENERAL", "terms": ["how do i", "question", "feature request", "suggestion"] }
+    ],
+    "urgency": [
+      { "value": "CRITICAL", "terms": ["all users", "none of our", "whole team", "every call", "down for all"] },
+      { "value": "HIGH", "terms": ["blocked", "charged twice", "not received any", "stopped working"] }
+    ],
+    "slaRisk": [
+      { "value": "HIGH", "terms": ["all users", "none of our", "every call", "down for all", "blocked", "charged twice"] }
+    ],
+    "sentiment": [
+      { "value": "ANGRY", "terms": ["unacceptable", "furious", "again", "still not"] },
+      { "value": "NEGATIVE", "terms": ["cannot", "failed", "error", "not received", "lost"] },
+      { "value": "POSITIVE", "terms": ["thanks", "thank you", "great tool"] }
+    ],
+    "policies": [
+      { "id": "SSO_LOCKOUT", "category": "LOGIN_ACCESS", "allOf": [["sso", "identity provider"]] },
+      { "id": "MFA_RESET", "category": "LOGIN_ACCESS", "allOf": [["two-factor", "authenticator"]] },
+      { "id": "DUPLICATE_INVOICE", "allOf": [["charged twice", "duplicate"]] },
+      { "id": "OUTAGE_INCIDENT", "allOf": [["503", "outage", "down for all", "every call"]] },
+      { "id": "WEBHOOK_FAILURE", "category": "INTEGRATION", "allOf": [["webhook"]] },
+      { "id": "DATA_DELETION", "category": "DATA_REQUEST", "allOf": [["delete"]] }
+    ],
+    "actions": {
+      "LOGIN_ACCESS": ["Check the identity provider and the user's role", "Confirm identity before resetting access"],
+      "BILLING": ["Compare the invoices and the payment record", "Escalate duplicates to billing review"],
+      "BUG": ["Reproduce the problem with the steps given", "Collect the browser and the time of the error"],
+      "PERFORMANCE": ["Check the status page and open incidents", "Collect the affected page or endpoint and the time"],
+      "INTEGRATION": ["Read the delivery log for the endpoint", "Ask for response codes, never for secrets"],
+      "DATA_REQUEST": ["Log the request with its date", "Confirm the requester owns the account"],
+      "GENERAL": ["Clarify the requested outcome", "Respond with the next supported step"]
+    }
+  },
+  "evidenceSupport": {
+    "category": {
+      "LOGIN_ACCESS": ["sign in", "login", "password", "two-factor", "sso"],
+      "BILLING": ["invoice", "charged", "refund"],
+      "BUG": ["error", "bug", "broken"],
+      "PERFORMANCE": ["slow", "timeout", "503", "down", "load"],
+      "INTEGRATION": ["webhook", "api", "integration"],
+      "DATA_REQUEST": ["export", "delete", "data"],
+      "GENERAL": ["question", "how do", "thanks", "feature"]
+    },
+    "urgency": {
+      "LOW": ["question", "how do", "thanks"],
+      "MEDIUM": ["issue", "problem", "slow", "error"],
+      "HIGH": ["blocked", "charged twice", "failed", "stopped", "cannot"],
+      "CRITICAL": ["all users", "none of our", "every", "down for all"]
+    }
+  },
+  "priority": {
+    "PAYMENT_IMPACT": { "explanation": "Billing or refund impact detected", "terms": ["charged twice", "duplicate charge", "refund"] },
+    "SERVICE_BLOCKED": { "explanation": "Users cannot sign in or their work is blocked", "terms": ["blocked", "cannot sign in", "locked out", "none of our"] },
+    "BROAD_IMPACT": { "explanation": "Many users or a whole workspace are affected", "terms": ["all users", "none of our", "whole team", "down for all", "every call"] },
+    "POSITIVE_GENERAL_REQUEST": { "explanation": "Positive general or how-to request", "terms": ["thanks", "thank you", "great tool", "feature request"] }
+  }
+}
