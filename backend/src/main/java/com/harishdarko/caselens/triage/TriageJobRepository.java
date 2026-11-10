@@ -1,5 +1,7 @@
 package com.harishdarko.caselens.triage;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -43,13 +45,26 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
 
     List<TriageJob> findByWorkspaceId(UUID workspaceId);
 
+    /**
+     * How long a claim protects a job. The worker commits its claim before the AI call, so a worker that dies during
+     * the call leaves the job in PROCESSING. The lease is longer than the worker Lambda timeout (60 s), so the first
+     * worker is gone, and shorter than the SQS visibility timeout (90 s), so the redelivered message can take the job.
+     */
+    Duration CLAIM_LEASE = Duration.ofSeconds(75);
+
+    default int claimForProcessing(UUID eventId, Instant now) {
+        return claimForProcessing(eventId, now, now.minus(CLAIM_LEASE));
+    }
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
             UPDATE triage_job
                SET status = 'PROCESSING', attempt_count = attempt_count + 1,
                    started_at = :now, updated_at = :now
              WHERE event_id = :eventId
-               AND status IN ('QUEUED', 'RETRYABLE_FAILURE')
+               AND (status IN ('QUEUED', 'RETRYABLE_FAILURE')
+                    OR (status = 'PROCESSING' AND started_at < :staleBefore))
             """, nativeQuery = true)
-    int claimForProcessing(@Param("eventId") UUID eventId, @Param("now") java.time.Instant now);
+    int claimForProcessing(@Param("eventId") UUID eventId, @Param("now") Instant now,
+            @Param("staleBefore") Instant staleBefore);
 }
