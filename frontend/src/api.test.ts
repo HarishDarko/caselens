@@ -33,6 +33,52 @@ describe('CaseLens API client', () => {
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/demo/session', expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'saas-support' }) }))
   })
 
+  it('tries once more after a 429, waiting as long as Retry-After says', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '2' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ content: [] }), { status: 200 }))
+      const api = createCaseLensApi('', fetcher)
+
+      const pending = api.listTickets()
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+
+      await expect(pending).resolves.toEqual({ content: [] })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tries a GET once more after a 503, but never a POST, and keeps the status on the error', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn().mockImplementation(async () => new Response('', { status: 503 }))
+      const api = createCaseLensApi('', fetcher)
+
+      const get = api.getProcessing('ticket-1').catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(await get).toMatchObject({ status: 503 })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+
+      await expect(api.requestTriage('ticket-1')).rejects.toMatchObject({ status: 503 })
+      expect(fetcher).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not wait out a long rate-limit window', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '60' } }))
+    const api = createCaseLensApi('', fetcher)
+
+    await expect(api.createSession()).rejects.toMatchObject({ status: 429 })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('calls scenario, evaluation, and failure endpoints with the active session', async () => {
     const fetcher = vi.fn().mockImplementation(() => new Response(JSON.stringify({}), { status: 200 }))
     const api = createCaseLensApi('', fetcher)

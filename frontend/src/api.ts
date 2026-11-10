@@ -163,6 +163,27 @@ export type SessionOptions = { defaultIndustry: string; industries: Industry[] }
 
 export type DemoSession = { token: string; expiresAt: string; industry?: string }
 
+/** An error answer from the API. The message is the server's detail; the page shows its own plain sentence. */
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+// One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on a GET.
+// A POST is never sent twice after a 503, because the first one may have run. A long rate-limit window is not waited out.
+const RETRY_DEFAULT_MS = 1_000
+const RETRY_MAX_MS = 5_000
+function retryDelay(response: Response, method: string): number | null {
+  if (response.status !== 429 && !(response.status === 503 && method === 'GET')) return null
+  const header = response.headers.get('Retry-After')
+  const delay = header === null || header.trim() === '' ? RETRY_DEFAULT_MS : Number(header) * 1_000
+  return Number.isFinite(delay) && delay >= 0 && delay <= RETRY_MAX_MS ? delay : null
+}
+
 export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseLensApi {
   let token = ''
 
@@ -170,14 +191,20 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     const headers = new Headers(init.headers)
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     if (token) headers.set('Authorization', `Bearer ${token}`)
-    const response = await fetcher(`${baseUrl.replace(/\/$/, '')}${path}`, { ...init, headers })
+    const url = `${baseUrl.replace(/\/$/, '')}${path}`
+    let response = await fetcher(url, { ...init, headers })
+    const delay = response.ok ? null : retryDelay(response, (init.method ?? 'GET').toUpperCase())
+    if (delay !== null) {
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      response = await fetcher(url, { ...init, headers })
+    }
     if (!response.ok) {
       let detail = `Request failed with status ${response.status}`
       try {
         const problem = await response.json() as { detail?: string }
         if (problem.detail) detail = problem.detail
       } catch { /* Preserve the status-only error when the body is not JSON. */ }
-      throw new Error(detail)
+      throw new ApiError(detail, response.status)
     }
     if (response.status === 204) return undefined as T
     return response.json() as Promise<T>

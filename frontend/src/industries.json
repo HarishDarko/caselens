@@ -1,0 +1,109 @@
+{
+  "defaultIndustry" : "ev-charging",
+  "industries" : [ {
+    "id" : "ev-charging",
+    "name" : "EV charging",
+    "featuredScenario" : {
+      "key" : "charger-offline-site-wide",
+      "label" : "Every charger at the demo site appears offline"
+    },
+    "scenarios" : [ {
+      "key" : "payment-captured-session-not-started",
+      "label" : "Payment accepted but charging did not start"
+    }, {
+      "key" : "charger-offline-site-wide",
+      "label" : "Every charger at the demo site appears offline"
+    }, {
+      "key" : "connector-fault-single-port",
+      "label" : "Connector reports a persistent fault"
+    }, {
+      "key" : "ocpp-heartbeat-timeout",
+      "label" : "OCPP heartbeat timeout after configuration change"
+    }, {
+      "key" : "duplicate-charge-refund",
+      "label" : "Driver sees two charges for one session"
+    }, {
+      "key" : "account-rfid-authorization",
+      "label" : "Registered RFID card is rejected"
+    }, {
+      "key" : "slow-charging-performance",
+      "label" : "Charging power remains below expected rate"
+    }, {
+      "key" : "receipt-request-general",
+      "label" : "Receipt requested for a completed session"
+    }, {
+      "key" : "provider-retry-demo",
+      "label" : "Synthetic provider timeout for retry review"
+    } ]
+  }, {
+    "id" : "e-commerce",
+    "name" : "E-commerce",
+    "featuredScenario" : {
+      "key" : "shop-checkout-down",
+      "label" : "Every card fails at checkout"
+    },
+    "scenarios" : [ {
+      "key" : "shop-parcel-never-arrived",
+      "label" : "Parcel shows delivered but never arrived"
+    }, {
+      "key" : "shop-mug-broken",
+      "label" : "Mug arrived broken in the box"
+    }, {
+      "key" : "shop-refund-missing",
+      "label" : "Refund not received after my return"
+    }, {
+      "key" : "shop-two-payments",
+      "label" : "Two payments taken for one order"
+    }, {
+      "key" : "shop-change-address",
+      "label" : "Wrong delivery address on a new order"
+    }, {
+      "key" : "shop-checkout-down",
+      "label" : "Every card fails at checkout"
+    }, {
+      "key" : "shop-size-question",
+      "label" : "Does the linen shirt run small?"
+    }, {
+      "key" : "shop-cannot-sign-in",
+      "label" : "Cannot sign in to see my orders"
+    }, {
+      "key" : "provider-retry-demo",
+      "label" : "Synthetic provider timeout for retry review"
+    } ]
+  }, {
+    "id" : "saas-support",
+    "name" : "SaaS support",
+    "featuredScenario" : {
+      "key" : "saas-sso-lockout",
+      "label" : "Whole team locked out after an SSO change"
+    },
+    "scenarios" : [ {
+      "key" : "saas-sso-lockout",
+      "label" : "Whole team locked out after an SSO change"
+    }, {
+      "key" : "saas-mfa-new-phone",
+      "label" : "New phone, two-factor codes no longer arrive"
+    }, {
+      "key" : "saas-duplicate-invoice",
+      "label" : "Charged twice for the March invoice"
+    }, {
+      "key" : "saas-dashboard-slow",
+      "label" : "Reports dashboard takes a minute to load"
+    }, {
+      "key" : "saas-api-outage",
+      "label" : "API returns 503 for every request"
+    }, {
+      "key" : "saas-webhook-401",
+      "label" : "Webhook deliveries fail with 401"
+    }, {
+      "key" : "saas-export-and-delete",
+      "label" : "Please export and then delete our data"
+    }, {
+      "key" : "saas-custom-field-question",
+      "label" : "How do I add a custom field?"
+    }, {
+      "key" : "provider-retry-demo",
+      "label" : "Synthetic provider timeout for retry review"
+    } ]
+  } ]
+}

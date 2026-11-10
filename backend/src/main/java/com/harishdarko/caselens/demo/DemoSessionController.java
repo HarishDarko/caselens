@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,16 +20,27 @@ class DemoSessionController {
     private final DemoSessionService sessions;
     private final PackCatalog packs;
     private final DemoScenarios scenarios;
+    private final JdbcOperations jdbc;
 
-    DemoSessionController(DemoSessionService sessions, PackCatalog packs, DemoScenarios scenarios) {
+    DemoSessionController(DemoSessionService sessions, PackCatalog packs, DemoScenarios scenarios, JdbcOperations jdbc) {
         this.sessions = sessions;
         this.packs = packs;
         this.scenarios = scenarios;
+        this.jdbc = jdbc;
     }
 
-    /** What a new demo session can be: the industries, with the demo tickets of each. No token needed. */
+    /**
+     * What a new demo session can be: the industries, with the demo tickets of each. No token needed. The page has the
+     * same list in its bundle and calls this in the background when it loads, so this call is also the warm-up: one
+     * cheap query wakes the database, and the visitor's first click does not wait for it.
+     */
     @GetMapping("/session")
     SessionOptions options() {
+        try {
+            jdbc.queryForObject("select 1", Integer.class);
+        } catch (DataAccessException databaseAsleepOrDown) {
+            // The list does not need the database; the first real request will report a database problem.
+        }
         List<Industry> industries = packs.ids().stream()
                 .map(id -> new Industry(id, packs.require(id).name(), scenario(scenarios.featured(id)),
                         scenarios.forIndustry(id).stream().map(DemoSessionController::scenario).toList()))
