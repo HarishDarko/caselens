@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.triage;
 
+import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
 import com.harishdarko.caselens.ticket.TicketRepository;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -28,8 +29,8 @@ public class TriageConfiguration {
     }
 
     @Bean
-    PackResolver packResolver(PackCatalog packs) {
-        return workspaceId -> packs.defaultPack();
+    PackResolver packResolver(PackCatalog packs, DemoWorkspaceAccess workspaces) {
+        return workspaceId -> packs.require(workspaces.industryOf(workspaceId));
     }
 
     @Bean
