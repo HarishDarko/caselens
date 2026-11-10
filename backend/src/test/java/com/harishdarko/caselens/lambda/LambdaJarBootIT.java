@@ -63,8 +63,10 @@ class LambdaJarBootIT {
             try {
                 assertThat((Boolean) context.getClass().getMethod("isActive").invoke(context)).isTrue();
                 assertThat(latestVersion()).as("the jar's own Flyway applied its newest migration").isEqualTo(newestVersion);
-                assertThat(count("SELECT count(*) FROM evaluation_ground_truth WHERE scenario_key LIKE 'saas-%' OR scenario_key LIKE 'shop-%'"))
-                        .as("expected labels for the SaaS support and e-commerce demo tickets (V7)").isEqualTo(16);
+                List<String> v7Keys = groundTruthKeys(jar, "db/migration/V7__");
+                assertThat(v7Keys).as("scenario keys inserted by V7").isNotEmpty();
+                assertThat(count("SELECT count(*) FROM evaluation_ground_truth WHERE scenario_key IN ('"
+                        + String.join("', '", v7Keys) + "')")).as("V7 expected labels in the database").isEqualTo(v7Keys.size());
             } finally {
                 context.getClass().getMethod("close").invoke(context);
             }
@@ -81,6 +83,18 @@ class LambdaJarBootIT {
         try (ZipFile zip = new ZipFile(jar)) {
             return zip.stream().map(entry -> migration.matcher(entry.getName())).filter(Matcher::matches)
                     .map(matcher -> Integer.valueOf(matcher.group(1))).sorted().toList();
+        }
+    }
+
+    /** The scenario keys a migration in the jar inserts into evaluation_ground_truth. */
+    private List<String> groundTruthKeys(File jar, String migrationPrefix) throws Exception {
+        try (ZipFile zip = new ZipFile(jar)) {
+            var entry = zip.stream().filter(candidate -> candidate.getName().startsWith(migrationPrefix)).findFirst().orElseThrow();
+            String sql = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            Matcher row = Pattern.compile("\\('([^']+)', '[^']+', '[^']+'\\)").matcher(sql);
+            List<String> keys = new java.util.ArrayList<>();
+            while (row.find()) keys.add(row.group(1));
+            return keys;
         }
     }
 

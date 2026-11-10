@@ -17,17 +17,17 @@ const sessionOptions = {
   defaultIndustry: 'ev-charging',
   industries: [
     { id: 'ev-charging', name: 'EV charging', featuredScenario: { key: 'charger-offline-site-wide', label: 'Every charger at the demo site appears offline' }, scenarios: [{ key: 'charger-offline-site-wide', label: 'Every charger at the demo site appears offline' }] },
-    { id: 'e-commerce', name: 'E-commerce', featuredScenario: { key: 'shop-checkout-down', label: 'Checkout fails for every card' }, scenarios: [{ key: 'shop-checkout-down', label: 'Checkout fails for every card' }] },
+    { id: 'e-commerce', name: 'E-commerce', featuredScenario: { key: 'shop-checkout-down', label: 'Every card fails at checkout' }, scenarios: [{ key: 'shop-checkout-down', label: 'Every card fails at checkout' }] },
     { id: 'saas-support', name: 'SaaS support', featuredScenario: { key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }, scenarios: [{ key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }] },
   ],
 }
 
-function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesFail?: boolean } = {}) {
+function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number } = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
-    if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesFail ? response({ detail: 'Unavailable' }, 503) : response(sessionOptions)
+    if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesStatus ? response({ detail: 'Unavailable' }, options.industriesStatus) : response(sessionOptions)
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
@@ -50,22 +50,29 @@ function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPol
 }
 
 beforeEach(() => mockBackend())
+
+// The launch button waits for the industry list, so wait until it is enabled before clicking it.
+async function launch() {
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+}
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-test('renders the honest CaseLens demo shell', () => {
+test('renders the honest CaseLens demo shell', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
   expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
   expect(screen.getByText('Demo environment')).toBeInTheDocument()
   expect(screen.getByText(/No account is required/i)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled())
   expect(screen.queryByLabelText(/passcode|password/i)).not.toBeInTheDocument()
 })
 
-test('explains a possible serverless cold start while opening the workspace', () => {
-  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
+test('explains a possible serverless cold start while opening the workspace', async () => {
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
+    ? Promise.resolve(response(sessionOptions)) : new Promise(() => undefined)))
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
 
   expect(screen.getByRole('button', { name: 'Creating isolated workspace...' })).toBeDisabled()
   expect(screen.getByRole('status')).toHaveTextContent('First access may take up to 20 seconds while serverless services resume.')
@@ -74,7 +81,7 @@ test('explains a possible serverless cold start while opening the workspace', ()
 test('opens an isolated reviewer workspace from the public launch screen', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   expect(screen.getByText('HD', { selector: '.avatar' })).toBeInTheDocument()
@@ -90,7 +97,7 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
   const fetchMock = mockBackend()
   render(<MemoryRouter><App /></MemoryRouter>)
 
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
 
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST' }))
@@ -103,32 +110,53 @@ test('lists the industries and sends the picked industry when the workspace open
 
   expect(await screen.findByRole('radio', { name: /EV charging/ })).toBeChecked()
   fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
   expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
   expect(screen.getByText('Industry: SaaS support')).toBeInTheDocument()
   expect(screen.getByText('Whole team locked out after an SSO change')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Load saas-sso-lockout' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Load ticket: Whole team locked out after an SSO change' })).toBeEnabled()
 })
 
 test('still opens an EV charging workspace when the industry list does not load', async () => {
-  const fetchMock = mockBackend({ industriesFail: true })
+  const fetchMock = mockBackend({ industriesStatus: 503 })
   render(<MemoryRouter><App /></MemoryRouter>)
 
   expect(await screen.findByText('The list of industries did not load. The demo opens with EV charging tickets.')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
   expect(sessionCall?.[1]).not.toHaveProperty('body')
-  expect(screen.getByText('The demo scenarios did not load. The tickets in the queue still work.')).toBeInTheDocument()
+  expect(screen.getByText('Every charger at the demo site appears offline')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Load charger-offline-site-wide' })).toBeEnabled()
+})
+
+test('keeps the launch button off while the industry list loads', () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
+  render(<MemoryRouter><App /></MemoryRouter>)
+
+  expect(screen.getByText(/Loading the list of industries/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeDisabled()
+})
+
+test('gives the full EV journey when the API does not know the industry list yet (405 during a deploy)', async () => {
+  mockBackend({ industriesStatus: 405 })
+  render(<MemoryRouter><App /></MemoryRouter>)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: /Load charger-offline-site-wide/i }))
+
+  await waitFor(() => expect(screen.getAllByText('Every charger at the demo site appears offline').length).toBeGreaterThan(1))
+  expect(screen.getByRole('button', { name: /Review CL-A104/i })).toBeInTheDocument()
 })
 
 test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: /Load charger-offline-site-wide/i }))
@@ -154,7 +182,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
   try {
     mockBackend({ pendingProcessingPolls: 60 })
     render(<MemoryRouter><App /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+    await launch()
     await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
@@ -172,7 +200,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
 
 test('requires a reviewer note before saving a correction', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
@@ -184,7 +212,7 @@ test('requires a reviewer note before saving a correction', async () => {
 test('launches the fixed synthetic retry demonstration', async () => {
   const fetchMock = mockBackend()
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   expect(screen.getByText('Controlled retry demonstration')).toBeInTheDocument()
@@ -198,7 +226,7 @@ test('launches the fixed synthetic retry demonstration', async () => {
 
 test('shows measured evaluation and operational failure views', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
@@ -211,7 +239,7 @@ test('shows measured evaluation and operational failure views', async () => {
 
 test('surfaces persisted evaluation activity and operations telemetry', async () => {
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
@@ -229,7 +257,7 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
   mockBackend({ syntheticFailure: true })
   render(<MemoryRouter><App /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))

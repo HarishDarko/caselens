@@ -65,6 +65,16 @@ class DemoIndustryApiTest {
     }
 
     @Test
+    void anEvWorkspaceRefusesASaasScenario() throws Exception {
+        String token = session("ev-charging");
+
+        mvc.perform(post("/api/demo/scenarios/saas-sso-lockout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/demo/scenarios/charger-offline-site-wide").header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void anUnknownIndustryIsABadRequest() throws Exception {
         mvc.perform(post("/api/demo/session").contentType(MediaType.APPLICATION_JSON).content("{\"industry\":\"banking\"}"))
                 .andExpect(status().isBadRequest());
