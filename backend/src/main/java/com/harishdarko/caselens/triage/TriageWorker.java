@@ -82,6 +82,8 @@ public class TriageWorker {
      * open, then save the outcome. A poll can then see PROCESSING while the provider works, and no database
      * connection is held during the provider call. A worker that dies after the claim leaves the job in PROCESSING
      * until the claim lease ends (TriageJobRepository.CLAIM_LEASE); then the redelivered message takes it again.
+     * A delivery that meets a live claim asks for redelivery instead of being dropped (see claimNotTaken), and the
+     * final writes only land while this worker still owns the claim (see stillOwned).
      */
     private WorkerResult processInternal(QueueMessage message) {
         Claim claim = transactions.execute(status -> claim(message));
@@ -120,8 +122,7 @@ public class TriageWorker {
             return Claim.done(WorkerResult.terminal("INVALID_EVENT"));
         }
         if (jobs.claimForProcessing(message.eventId(), clock.instant()) != 1) {
-            metrics.duplicateDelivery();
-            return Claim.done(WorkerResult.duplicate());
+            return Claim.done(claimNotTaken(message));
         }
         job = jobs.findByEventId(message.eventId()).orElse(null);
         if (job == null) {
@@ -147,7 +148,44 @@ public class TriageWorker {
         return new Claim(job, ticket, attempt, null);
     }
 
+    /**
+     * The claim changed no row. A finished job (COMPLETED or TERMINAL_FAILURE) makes this a duplicate delivery. Any
+     * other state means another worker holds a live claim (or released it a moment ago). Dropping the message then
+     * would leave the job stuck in PROCESSING if that worker dies, so ask SQS to deliver it again: the next delivery
+     * sees the finished job or a lapsed lease. maxReceiveCount bounds the retries.
+     */
+    private WorkerResult claimNotTaken(QueueMessage message) {
+        TriageJobStatus status = jobs.findByEventId(message.eventId()).map(TriageJob::getStatus).orElse(null);
+        if (status == null) {
+            metrics.terminalFailure();
+            return WorkerResult.terminal("INVALID_EVENT");
+        }
+        if (status == TriageJobStatus.COMPLETED || status == TriageJobStatus.TERMINAL_FAILURE) {
+            metrics.duplicateDelivery();
+            return WorkerResult.duplicate();
+        }
+        log.info("triage.claim_held correlationId={} workspaceId={} ticketId={} eventId={} status={}",
+                message.correlationId(), message.workspaceId(), message.ticketId(), message.eventId(), status);
+        return WorkerResult.retry("CLAIM_HELD");
+    }
+
+    /**
+     * The final writes save the job and ticket loaded in the claim transaction. If this worker's lease lapsed and
+     * another worker took the job, those saves would overwrite its newer state, so they only run while the job is
+     * still PROCESSING under the attempt this worker claimed. Otherwise the writes are dropped and the message is
+     * left for redelivery, which then sees the other worker's outcome or a lapsed lease.
+     */
+    private boolean stillOwned(QueueMessage message, Claim claim) {
+        TriageJob job = claim.job();
+        if (jobs.holdClaim(job.getEventId(), job.getAttemptCount(), clock.instant()) == 1) return true;
+        log.warn("triage.claim_lost correlationId={} workspaceId={} ticketId={} jobId={} eventId={} attempt={}",
+                message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId(),
+                job.getAttemptCount());
+        return false;
+    }
+
     private WorkerResult complete(QueueMessage message, Claim claim, TriageDecision decision) {
+        if (!stillOwned(message, claim)) return WorkerResult.retry("CLAIM_LOST");
         TriageJob job = claim.job();
         Ticket ticket = claim.ticket();
         TriageAttempt attempt = claim.attempt();
@@ -169,6 +207,7 @@ public class TriageWorker {
     }
 
     private WorkerResult recordFailure(QueueMessage message, Claim claim, RuntimeException failure) {
+        if (!stillOwned(message, claim)) return WorkerResult.retry("CLAIM_LOST");
         TriageJob job = claim.job();
         Ticket ticket = claim.ticket();
         TriageAttempt attempt = claim.attempt();

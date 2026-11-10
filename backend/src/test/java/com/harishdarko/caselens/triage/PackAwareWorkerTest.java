@@ -42,6 +42,7 @@ class PackAwareWorkerTest {
             return 1;
         });
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.holdClaim(eq(eventId), any(Integer.class), any(Instant.class))).thenReturn(1);
         AtomicReference<UUID> resolvedFor = new AtomicReference<>();
         PackResolver packs = id -> {
             resolvedFor.set(id);
