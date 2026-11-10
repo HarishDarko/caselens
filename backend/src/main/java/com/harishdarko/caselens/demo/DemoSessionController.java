@@ -1,5 +1,7 @@
 package com.harishdarko.caselens.demo;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.harishdarko.caselens.demo.DemoDataController.ScenarioTicketResponse;
 import com.harishdarko.caselens.triage.PackCatalog;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
@@ -12,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -50,14 +53,26 @@ class DemoSessionController {
         return new SessionOptions(DemoWorkspace.DEFAULT_INDUSTRY, industries);
     }
 
-    /** Creates a workspace. The body is optional; without an industry the workspace is EV charging, as before. */
+    /**
+     * Creates a workspace. The body is optional; without an industry the workspace is EV charging, as before. With
+     * {@code seed=true} it also seeds the demo tickets and returns them with the runtime summary, so the page opens a
+     * workspace in one call instead of four steps. Without it the answer is the bare session, as before; an API from
+     * before this change ignores the parameter in the same way, and the page then seeds through /reset.
+     */
     @PostMapping("/session")
-    SessionResponse create(@RequestBody(required = false) SessionRequest request) {
+    SessionResponse create(@RequestBody(required = false) SessionRequest request,
+            @RequestParam(defaultValue = "false") boolean seed) {
         String industry = request == null || request.industry() == null || request.industry().isBlank()
                 ? DemoWorkspace.DEFAULT_INDUSTRY : request.industry();
         if (!packs.ids().contains(industry)) throw new ConstraintViolationException("Unknown industry", Set.of());
-        DemoSessionService.DemoSession session = sessions.create(industry);
-        return new SessionResponse(session.token(), session.expiresAt(), session.industry());
+        if (!seed) {
+            DemoSessionService.DemoSession session = sessions.create(industry);
+            return new SessionResponse(session.token(), session.expiresAt(), session.industry(), null, null);
+        }
+        DemoSessionService.OpenedWorkspace opened = sessions.openSeeded(industry);
+        DemoSessionService.DemoSession session = opened.session();
+        return new SessionResponse(session.token(), session.expiresAt(), session.industry(),
+                opened.tickets().stream().map(ScenarioTicketResponse::from).toList(), opened.runtime());
     }
 
     private static Scenario scenario(DemoScenario scenario) {
@@ -66,7 +81,10 @@ class DemoSessionController {
 
     record SessionRequest(String industry) {}
 
-    record SessionResponse(String token, Instant expiresAt, String industry) {}
+    /** The tickets and runtime are present only for {@code seed=true}, so the bare session is unchanged. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record SessionResponse(String token, Instant expiresAt, String industry, List<ScenarioTicketResponse> tickets,
+            RuntimeSummary runtime) {}
 
     record SessionOptions(String defaultIndustry, List<Industry> industries) {}
 

@@ -161,7 +161,9 @@ export type Industry = { id: string; name: string; featuredScenario: DemoScenari
 
 export type SessionOptions = { defaultIndustry: string; industries: Industry[] }
 
-export type DemoSession = { token: string; expiresAt: string; industry?: string }
+// With seed=true the API seeds the workspace and returns its tickets and runtime summary in the same answer.
+// An API from before that change returns the bare session, without tickets and runtime.
+export type DemoSession = { token: string; expiresAt: string; industry?: string; tickets?: ApiTicket[]; runtime?: RuntimeSummary }
 
 /** An error answer from the API. The message is the server's detail; the page shows its own plain sentence. */
 export class ApiError extends Error {
@@ -212,7 +214,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
 
   return {
     getSessionOptions: () => request<SessionOptions>('/api/demo/session'),
-    createSession: (industry) => request<DemoSession>('/api/demo/session', {
+    createSession: (industry, seed = false) => request<DemoSession>(seed ? '/api/demo/session?seed=true' : '/api/demo/session', {
       method: 'POST', ...(industry ? { body: JSON.stringify({ industry }) } : {}),
     }),
     setToken: (value) => { token = value },
@@ -234,7 +236,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
 
 export type CaseLensApi = {
   getSessionOptions: () => Promise<SessionOptions>
-  createSession: (industry?: string) => Promise<DemoSession>
+  createSession: (industry?: string, seed?: boolean) => Promise<DemoSession>
   setToken: (token: string) => void
   resetDemo: () => Promise<{ seeded: number }>
   getRuntimeSummary: () => Promise<RuntimeSummary>

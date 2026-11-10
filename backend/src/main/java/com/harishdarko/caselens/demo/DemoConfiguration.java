@@ -16,6 +16,15 @@ class DemoConfiguration {
     }
 
     @Bean
+    RuntimeSummary runtimeSummary(
+            @Value("${caselens.runtime.environment:local-review}") String environment,
+            @Value("${caselens.runtime.database:postgresql}") String database,
+            @Value("${caselens.runtime.queue:localstack-sqs}") String queue,
+            @Value("${caselens.ai-provider:mock}") String aiProvider) {
+        return RuntimeSummary.from(environment, database, queue, aiProvider);
+    }
+
+    @Bean
     DemoScenarios demoScenarios(PackCatalog packs, DemoWorkspaceAccess workspaces) {
         return new DemoScenarios(DemoScenarios.fromClasspath(packs.ids()), workspaces);
     }
