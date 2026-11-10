@@ -7,6 +7,10 @@ RUN mvn -B -ntp -DskipTests package
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
+# CVE-2026-109518: the base image still ships apt 3.2.0; take the Ubuntu fix until the base image is rebuilt.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg7.0 \
+    && rm -rf /var/lib/apt/lists/*
 RUN rm -f /usr/bin/pebble \
     && useradd --system --uid 10001 --create-home caselens
 COPY --from=build /workspace/target/caselens-0.0.1-SNAPSHOT.jar /app/caselens.jar
