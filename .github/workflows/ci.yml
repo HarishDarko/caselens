@@ -32,12 +32,11 @@ jobs:
           cache: maven
       - name: Validate macOS and Linux helper scripts
         run: bash -n scripts/dev-up.sh scripts/dev-down.sh scripts/backend-dev.sh scripts/test.sh
-      - name: Run backend tests
+      - name: Run backend tests and boot the Lambda jar
         working-directory: backend
-        run: ./mvnw -B -ntp test
-      - name: Verify Lambda package
-        working-directory: backend
-        run: ./mvnw -B -ntp -Plambda -DskipTests package
+        # One run: unit tests, the shaded Lambda jar, then LambdaJarBootIT, which boots that jar on a database at
+        # the previous schema version and checks that Flyway migrates it before Hibernate validates it.
+        run: ./mvnw -B -ntp -Plambda verify
 
   frontend:
     runs-on: ubuntu-latest
