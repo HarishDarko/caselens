@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createCaseLensApi, type ApiTicket, type EvaluationSummary, type FailurePage, type Industry, type OperationsOverview, type RuntimeSummary, type SessionOptions, type TriageProcessing, type TriageResult } from './api'
 
 type View = 'inbox' | 'evaluation' | 'operations'
@@ -12,6 +12,11 @@ type Ticket = {
 // A worker whose SnapStart snapshot was dropped after 14 idle days rebuilds it before SQS redelivers
 // the job, which took about 90 seconds in production, so wait two minutes and back off while waiting.
 const TRIAGE_WAIT_MS = 120_000
+// Evaluation and Operations refresh every 5 seconds while someone is looking. They pause in a hidden tab and stop
+// after 10 minutes without a click, key press, scroll or touch, so an open tab does not keep the API and Neon awake.
+const LIVE_REFRESH_MS = 5_000
+const LIVE_IDLE_MS = 10 * 60_000
+type LiveState = 'loading' | 'live' | 'paused'
 const SLOW_TRIAGE_NOTICE_MS = 8_000
 function triagePollDelay(elapsedMs: number) { return elapsedMs < 10_000 ? 250 : elapsedMs < 30_000 ? 1_000 : 2_000 }
 
@@ -102,6 +107,9 @@ function App() {
   const [optionsFailed, setOptionsFailed] = useState(false)
   const [industryId, setIndustryId] = useState<string | null>(null)
   const [workspaceIndustryId, setWorkspaceIndustryId] = useState<string | null>(null)
+  const [liveState, setLiveState] = useState<LiveState>('loading')
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const resumeLiveRef = useRef<(() => void) | null>(null)
   // The industry list may arrive after the workspace opens; without an id the workspace is the default industry.
   const workspaceIndustry = useMemo(() => sessionOptions?.industries.find((industry) => industry.id === (workspaceIndustryId ?? sessionOptions.defaultIndustry)) ?? null, [sessionOptions, workspaceIndustryId])
   const featuredScenario = workspaceIndustry?.featuredScenario ?? ((workspaceIndustryId ?? DEFAULT_INDUSTRY) === DEFAULT_INDUSTRY ? DEFAULT_FEATURED_SCENARIO : null)
@@ -121,6 +129,9 @@ function App() {
   }, [api])
   useEffect(() => {
     if (!sessionOpen || (view !== 'evaluation' && view !== 'operations')) return
+    let interval: number | undefined
+    let lastActivity = Date.now()
+    let paused = false
     const refresh = async () => {
       try {
         if (view === 'evaluation') { setEvaluation(await api.getEvaluation()); setError(null) }
@@ -130,13 +141,39 @@ function App() {
           setFailures(failurePage)
           setError(null)
         }
+        setLastUpdated(new Date())
       } catch (cause: unknown) {
         setError(cause instanceof Error ? cause.message : 'Could not refresh the workspace.')
       }
     }
-    void refresh()
-    const interval = window.setInterval(() => void refresh(), 5000)
-    return () => window.clearInterval(interval)
+    const stop = () => { if (interval !== undefined) { window.clearInterval(interval); interval = undefined } }
+    const tick = () => {
+      if (Date.now() - lastActivity >= LIVE_IDLE_MS) { stop(); paused = true; setLiveState('paused'); return }
+      void refresh()
+    }
+    const resume = () => {
+      lastActivity = Date.now()
+      if (document.visibilityState === 'hidden' || interval !== undefined) return
+      paused = false
+      setLiveState('live')
+      void refresh()
+      interval = window.setInterval(tick, LIVE_REFRESH_MS)
+    }
+    const onVisibility = () => { if (document.visibilityState === 'hidden') stop(); else if (!paused) resume() }
+    const onActivity = () => { lastActivity = Date.now(); if (paused) resume() }
+    resumeLiveRef.current = resume
+    setLiveState('loading')
+    setLastUpdated(null)
+    resume()
+    document.addEventListener('visibilitychange', onVisibility)
+    const activityEvents = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const
+    activityEvents.forEach((name) => window.addEventListener(name, onActivity, { passive: true }))
+    return () => {
+      stop()
+      resumeLiveRef.current = null
+      document.removeEventListener('visibilitychange', onVisibility)
+      activityEvents.forEach((name) => window.removeEventListener(name, onActivity))
+    }
   }, [api, sessionOpen, view])
 
   async function openWorkspace() {
@@ -166,7 +203,7 @@ function App() {
   async function retryFailure() { const failure = failures?.content[0]; if (!failure) return; setBusy(true); setError(null); try { await api.retryFailure(failure.id); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(), api.listFailures()]); setOperationsOverview(overview); setFailures(failurePage) } catch (cause: unknown) { setError(cause instanceof Error ? cause.message : 'Could not retry the failed case.') } finally { setBusy(false) } }
 
   if (!sessionOpen) return <Landing onOpen={openWorkspace} busy={busy} error={error} choice={{ industries: sessionOptions?.industries ?? null, failed: optionsFailed, selected: industryId, onSelect: setIndustryId }} />
-  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={() => setSessionOpen(false)}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && <p className="notice-banner workspace-error" role="status">{notice}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || Boolean(busyTicketId)} featuredScenario={featuredScenario} onLoadScenario={loadScenario} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={setDraftUrgency} onFeedbackNote={setFeedbackNote} onSaveFeedback={saveFeedback} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
+  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={() => setSessionOpen(false)}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && <p className="notice-banner workspace-error" role="status">{notice}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || Boolean(busyTicketId)} featuredScenario={featuredScenario} onLoadScenario={loadScenario} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={setDraftUrgency} onFeedbackNote={setFeedbackNote} onSaveFeedback={saveFeedback} />}{(view === 'evaluation' || view === 'operations') && <LiveStatus state={liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
 }
 
 type InboxViewProps = { tickets: Ticket[]; selectedTicket: Ticket | null; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; featuredScenario: Industry['featuredScenario'] | null; onLoadScenario: (scenarioKey: string) => void; onSelectTicket: (ticketId: string) => void; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }
@@ -198,8 +235,15 @@ function formatEventTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function LiveStatus({ state, lastUpdated, onRefresh }: { state: LiveState; lastUpdated: Date | null; onRefresh: () => void }) {
+  const time = lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : null
+  if (state === 'paused') return <p className="live-status paused" role="status">Live updates are paused because there was no activity for 10 minutes.{time ? ` Last updated at ${time}.` : ''} <button type="button" className="text-button" onClick={onRefresh}>Refresh now</button></p>
+  if (!time) return <p className="live-status" role="status">Loading the latest numbers for this workspace. The first load can take up to 20 seconds while the service starts.</p>
+  return <p className="live-status" role="status">Live: updates every 5 seconds while this tab is open. Last updated at {time}.</p>
+}
+
 function EvaluationView({ evaluation }: { evaluation: EvaluationSummary | null }) {
-  if (!evaluation) return <div className="page-content narrow-page"><div className="page-heading"><div><p className="eyebrow">Measured quality</p><h1>Evaluation signal</h1><p className="page-intro">Loading persisted evaluation data from this workspace…</p></div></div></div>
+  if (!evaluation) return <div className="page-content narrow-page"><div className="page-heading"><div><p className="eyebrow">Measured quality</p><h1>Evaluation signal</h1><p className="page-intro">Loading the evaluation numbers for this workspace...</p></div></div></div>
   const percent = (value: number | undefined) => value === undefined ? '—' : `${Math.round(value * 100)}%`
   const events = evaluation?.recentEvents ?? []
   const providers = evaluation?.providerUsage ?? []
@@ -211,7 +255,7 @@ function MetricCard({ label, value, detail, tone }: { label: string; value: stri
 function OpsMetric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: string }) { return <article className={`ops-card tone-${tone}`}><span className="eyebrow">{label}</span><strong className="ops-value">{value}</strong><p>{detail}</p></article> }
 
 function OperationsView({ overview, failures, busy, onRetry }: { overview: OperationsOverview | null; failures: FailurePage | null; busy: boolean; onRetry: () => void }) {
-  if (!overview) return <div className="page-content narrow-page"><div className="page-heading"><div><p className="eyebrow">Reliability view</p><h1>Operations</h1><p className="page-intro">Loading persisted queue and provider telemetry…</p></div></div></div>
+  if (!overview) return <div className="page-content narrow-page"><div className="page-heading"><div><p className="eyebrow">Reliability view</p><h1>Operations</h1><p className="page-intro">Loading the queue and AI provider status for this workspace...</p></div></div></div>
   const count = failures?.totalElements ?? 0
   const queue = overview?.queue
   const operations = overview.recent ?? []

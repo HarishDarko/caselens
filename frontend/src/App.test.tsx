@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -265,4 +265,80 @@ test('labels a controlled synthetic timeout as reviewer recovery rather than pro
   expect(screen.getByText('A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Retry case' })).toBeInTheDocument()
   expect(screen.queryByText(/Provider degraded/)).not.toBeInTheDocument()
+})
+
+// Live refresh: the tab can be hidden, and a visitor can walk away. Timers and Date are faked only after the
+// workspace is open, so the waits above still use real time.
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+async function advance(ms: number) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+}
+
+function calls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  return fetchMock.mock.calls.filter(([url]) => String(url).endsWith(path)).length
+}
+
+async function openView(name: 'Evaluation' | 'Operations') {
+  const fetchMock = mockBackend()
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  fireEvent.click(screen.getByRole('button', { name }))
+  await advance(0)
+  return fetchMock
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+  delete (document as { visibilityState?: string }).visibilityState
+})
+
+test('refreshes Evaluation every 5 seconds only while the tab is visible', async () => {
+  const fetchMock = await openView('Evaluation')
+  const start = calls(fetchMock, '/api/evaluation')
+
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation') - start).toBe(12)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+
+  setVisibility('hidden')
+  const hidden = calls(fetchMock, '/api/evaluation')
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(hidden)
+
+  setVisibility('visible')
+  await advance(0)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(hidden + 1)
+})
+
+test('makes no Operations requests from a hidden tab', async () => {
+  const fetchMock = await openView('Operations')
+  setVisibility('hidden')
+  const overview = calls(fetchMock, '/api/operations/overview')
+  const failures = calls(fetchMock, '/api/operations/failures?page=0&size=50')
+
+  await advance(10 * 60_000)
+
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(overview)
+  expect(calls(fetchMock, '/api/operations/failures?page=0&size=50')).toBe(failures)
+})
+
+test('stops refreshing after 10 minutes without activity, says so, and resumes on request', async () => {
+  const fetchMock = await openView('Evaluation')
+
+  await advance(10 * 60_000 + 5_000)
+  expect(screen.getByRole('status')).toHaveTextContent('Live updates are paused because there was no activity for 10 minutes.')
+  const paused = calls(fetchMock, '/api/evaluation')
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(paused)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh now' }))
+  await advance(0)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(paused + 1)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
 })
