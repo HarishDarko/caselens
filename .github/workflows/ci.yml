@@ -3,7 +3,7 @@ name: CaseLens CI
 on:
   pull_request:
   push:
-    branches: [feat/production-proof, main]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,17 +15,21 @@ env:
   TRIVY_VERSION: 0.70.0
   TRIVY_SHA256: 8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9
 
+# A new push to a pull request cancels its older run. Runs on main are never cancelled: a push to main used to
+# cancel a running deploy dispatch halfway (they shared this group). Push and dispatch runs now have their own groups.
 concurrency:
-  group: caselens-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: caselens-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Actions are pinned to full commit SHAs (the comment is the tag they were resolved from on 2026-11-10), so a moved
+# tag cannot change what runs, including in the deploy job that gets AWS credentials.
 jobs:
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '21'
@@ -37,13 +41,21 @@ jobs:
         # One run: unit tests, the shaded Lambda jar, then LambdaJarBootIT, which boots that jar on a database at
         # the previous schema version and checks that Flyway migrates it before Hibernate validates it.
         run: ./mvnw -B -ntp -Plambda verify
+      - name: Keep the tested Lambda jar for the deploy
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: caselens-lambda-jar
+          path: backend/target/caselens-lambda.jar
+          if-no-files-found: error
+          retention-days: 7
 
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -62,17 +74,35 @@ jobs:
         run: npm run build
       - name: Install Chromium
         working-directory: frontend
+        # An apt mirror once hung this step for 19 minutes; fail fast so a plain rerun can fix it.
+        timeout-minutes: 8
         run: npx playwright install --with-deps chromium
       - name: Browser journey
         working-directory: frontend
         run: npx playwright test --project=chromium
+      - name: Build the deploy bundle with the API address
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
+        run: |
+          test -n "$VITE_API_BASE_URL"
+          npm run build
+      - name: Keep the deploy bundle for the deploy
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: caselens-frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 7
 
   terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.11.2
       - name: Terraform format check
@@ -95,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Trivy from its GitHub release
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
@@ -103,7 +133,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/trivy-bin" && tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP/trivy-bin" trivy
           echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
       - name: Scan repository filesystem
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           skip-setup-trivy: 'true'
           scan-type: fs
@@ -114,16 +144,17 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [backend, frontend]
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Only the backend image is scanned. The frontend nginx image was built here but never scanned or deployed
+      # (production serves the frontend from S3 and CloudFront); docker-compose still builds it for local review.
       - name: Build backend image
         run: docker build --tag caselens-backend:${{ github.sha }} -f backend/Dockerfile .
-      - name: Build frontend image
-        run: docker build --tag caselens-frontend:${{ github.sha }} -f frontend/Dockerfile .
       - name: Install Trivy from its GitHub release
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/trivy.tar.gz" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
@@ -131,7 +162,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/trivy-bin" && tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP/trivy-bin" trivy
           echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           skip-setup-trivy: 'true'
           image-ref: caselens-backend:${{ github.sha }}
@@ -143,44 +174,67 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: [backend, frontend, terraform, security, container]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: production
+    # One production deploy at a time, and never cancelled halfway: a cancelled deploy could leave a new frontend
+    # in front of an old API. A second dispatch waits for the first one to finish.
+    concurrency:
+      group: caselens-production-deploy
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # The deploy ships what the earlier jobs built after their tests passed: the Lambda jar that LambdaJarBootIT
+      # booted, and the bundle built in the job that ran the unit and browser tests. Nothing is rebuilt here.
+      - name: Download the tested Lambda jar
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          node-version: 22
-      - uses: actions/setup-java@v4
+          name: caselens-lambda-jar
+          path: artifact/backend
+      - name: Download the deploy bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      - name: Build static frontend
-        working-directory: frontend
-        env:
-          VITE_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
-        run: npm ci && npm run build
-      - name: Require the deployed API base URL
-        env:
-          CASELENS_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
-        run: test -n "$CASELENS_API_BASE_URL"
-      - name: Build Lambda artifact
-        working-directory: backend
-        run: ./mvnw -B -ntp -Plambda -DskipTests package
-      - uses: aws-actions/configure-aws-credentials@v4
+          name: caselens-frontend-dist
+          path: artifact/dist
+      - name: Show what is being deployed
+        run: |
+          sha256sum artifact/backend/caselens-lambda.jar
+          ls artifact/dist/assets
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       - name: Publish frontend to the deployment bucket
-        run: aws s3 sync frontend/dist "s3://${{ vars.CASELENS_FRONTEND_BUCKET }}" --delete
+        env:
+          BUCKET: ${{ vars.CASELENS_FRONTEND_BUCKET }}
+        run: |
+          test -n "$BUCKET"
+          # Hashed assets never change, so browsers may keep them for a year. Old assets stay in the bucket, so a
+          # visitor who still has the previous page open can still load its scripts after this deploy.
+          aws s3 sync artifact/dist/assets "s3://${BUCKET}/assets" --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync artifact/dist "s3://${BUCKET}" --exclude "assets/*" --exclude index.html --cache-control "public, max-age=3600"
+          # index.html last, so it never names an asset that is not uploaded yet. no-cache: the browser checks for a
+          # new version on every visit (a 304 when nothing changed).
+          aws s3 cp artifact/dist/index.html "s3://${BUCKET}/index.html" --cache-control "no-cache"
+      - name: Remove old assets that this build does not use
+        env:
+          BUCKET: ${{ vars.CASELENS_FRONTEND_BUCKET }}
+        run: |
+          # Only assets older than 30 days, so pages opened before the last few deploys keep working.
+          # ISO 8601 times sort as text, so a string compare finds the older ones.
+          cutoff="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%S)"
+          aws s3api list-objects-v2 --bucket "$BUCKET" --prefix assets/ \
+            --query "Contents[].[Key, LastModified]" --output text | while read -r key modified; do
+            if [ -z "$key" ] || [ "$key" = "None" ] || [ -e "artifact/dist/${key}" ]; then continue; fi
+            if [[ "$modified" < "$cutoff" ]]; then aws s3 rm "s3://${BUCKET}/${key}"; fi
+          done
       - name: Publish Lambda artifact
         env:
           CASELENS_ARTIFACT_BUCKET: ${{ vars.CASELENS_ARTIFACT_BUCKET }}
         run: |
           test -n "$CASELENS_ARTIFACT_BUCKET"
-          aws s3 cp backend/target/caselens-lambda.jar "s3://${CASELENS_ARTIFACT_BUCKET}/artifacts/caselens-lambda.jar"
+          aws s3 cp artifact/backend/caselens-lambda.jar "s3://${CASELENS_ARTIFACT_BUCKET}/artifacts/caselens-lambda.jar"
       - name: Optionally update deployed Lambda functions
         env:
           CASELENS_LAMBDA_DEPLOY_ENABLED: ${{ vars.CASELENS_LAMBDA_DEPLOY_ENABLED }}
@@ -205,3 +259,19 @@ jobs:
           done
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "${{ vars.CASELENS_CLOUDFRONT_DISTRIBUTION_ID }}" --paths '/*'
+      - name: Check that the site and the API answer
+        env:
+          CASELENS_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
+          CASELENS_SITE_URL: ${{ vars.CASELENS_SITE_URL || 'https://caselens.harishdarko.com' }}
+        run: |
+          # The API still runs the previous Lambda versions until the live aliases move; this checks that it answers.
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 -o /dev/null \
+            -w "API GET /api/demo/session: %{http_code} in %{time_total}s\n" "${CASELENS_API_BASE_URL%/}/api/demo/session"
+          site="${CASELENS_SITE_URL%/}"
+          script="$(cd artifact/dist/assets && ls -- *.js | head -n 1)"
+          for attempt in $(seq 1 12); do
+            if curl -fsS --max-time 15 "$site/" | grep -q "$script"; then echo "The site serves the new page ($script)."; break; fi
+            if [ "$attempt" = 12 ]; then echo "The site does not serve the new index.html after 2 minutes."; exit 1; fi
+            sleep 10
+          done
+          curl -fsSI --max-time 15 "$site/assets/$script" | grep -i "^cache-control: public, max-age=31536000, immutable"
