@@ -111,6 +111,17 @@ The deployed environment uses the following configuration:
    update step owns subsequent code
    versions, while S3 versioning preserves rollback targets. Compute remains
    disabled by default until Neon connectivity and the secret are verified.
+9. Before any alias move, check every newly published version. For each of the
+   api, worker and relay functions, run
+   `aws lambda get-function-configuration --function-name <fn> --qualifier <version>`
+   and confirm `State` is `Active` and `SnapStart.OptimizationStatus` is `On`.
+   A version whose init failed (for example a database migration or schema
+   validation error) ends `Failed` and must never become a `live` target.
+   Record the current `live` versions first (`aws lambda get-alias --name live`),
+   then move all three with one Terraform plan that changes only the three alias
+   `function_version` values. Database migrations run during that init, so a
+   `Failed` version can mean a migration did not apply; read its init log before
+   republishing.
 
 The base plan added 26 resources with no updates or deletions. The compute plan
 added 13 resources, updated one CloudFront setting, and deleted nothing. Final
