@@ -47,7 +47,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .live-status { margin: 0 0 .75rem; padding: .45rem .75rem; border: 1px solid #c6ded8; background: var(--teal-soft); color: #4d6760; font: .7rem/1.5 var(--mono); }
 .live-status.paused { border-color: var(--line); background: #fff; }
 .live-status .text-button { margin-left: .4rem; }
-.industry-note { margin: 0; color: #4d6760; font: .7rem/1.5 var(--mono); }
 .access-card h2 { margin: .2rem 0 .35rem; font-size: 1.08rem; letter-spacing: -.03em; }
 .muted { color: var(--muted); font-size: .8rem; line-height: 1.55; }
 .access-card .muted { margin: 0; }
