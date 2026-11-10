@@ -117,11 +117,18 @@ The deployed environment uses the following configuration:
    and confirm `State` is `Active` and `SnapStart.OptimizationStatus` is `On`.
    A version whose init failed (for example a database migration or schema
    validation error) ends `Failed` and must never become a `live` target.
-   Record the current `live` versions first (`aws lambda get-alias --name live`),
-   then move all three with one Terraform plan that changes only the three alias
-   `function_version` values. Database migrations run during that init, so a
-   `Failed` version can mean a migration did not apply; read its init log before
-   republishing.
+   Record the current `live` versions first
+   (`aws lambda get-alias --function-name <fn> --name live`), then move all three
+   with one Terraform plan that changes only the three alias `function_version`
+   values. A `Failed` version can mean a migration did not apply; read its init
+   log before republishing.
+
+   Database migrations run against the shared production database when a new
+   version is published, during its SnapStart init, before any alias moves. The
+   versions behind the `live` aliases keep serving on the changed schema until
+   the aliases move, and keep serving if a release is rolled back. So every
+   migration must be expand-only: add columns, tables or rows, or relax a
+   constraint. Never drop or rename something the running version still uses.
 
 The base plan added 26 resources with no updates or deletions. The compute plan
 added 13 resources, updated one CloudFront setting, and deleted nothing. Final

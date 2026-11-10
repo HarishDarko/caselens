@@ -12,7 +12,8 @@ async function installApiStubs(page: import('@playwright/test').Page) {
     const request = route.request()
     const url = new URL(request.url())
     let body: unknown
-    if (url.pathname.endsWith('/api/demo/session')) body = { token: 'e2e-token', expiresAt: now }
+    if (url.pathname.endsWith('/api/demo/session') && request.method() === 'GET') body = { defaultIndustry: 'ev-charging', industries: [{ id: 'ev-charging', name: 'EV charging', featuredScenario: { key: 'charger-offline-site-wide', label: ticket.subject }, scenarios: [{ key: 'charger-offline-site-wide', label: ticket.subject }] }, { id: 'e-commerce', name: 'E-commerce', featuredScenario: { key: 'shop-checkout-down', label: 'Every card fails at checkout' }, scenarios: [{ key: 'shop-checkout-down', label: 'Every card fails at checkout' }] }, { id: 'saas-support', name: 'SaaS support', featuredScenario: { key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }, scenarios: [{ key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }] }] }
+    else if (url.pathname.endsWith('/api/demo/session')) body = { token: 'e2e-token', expiresAt: now, industry: 'ev-charging' }
     else if (url.pathname.endsWith('/api/demo/runtime')) body = { environment: 'LOCAL_REVIEW', database: 'POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'DETERMINISTIC' }
     else if (url.pathname.endsWith('/api/demo/reset')) body = { seeded: 9 }
     else if (url.pathname.endsWith('/api/tickets') && request.method() === 'GET') body = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }

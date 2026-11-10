@@ -23,12 +23,18 @@ public class DemoSessionService {
 
     @Transactional
     public DemoSession create() {
+        return create(DemoWorkspace.DEFAULT_INDUSTRY);
+    }
+
+    /** A new 24-hour workspace for the given industry; the caller checks that the industry exists. */
+    @Transactional
+    public DemoSession create(String industry) {
         Instant createdAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
         Instant expiresAt = createdAt.plus(SESSION_TTL);
         UUID workspaceId = UUID.randomUUID();
-        workspaces.save(new DemoWorkspace(workspaceId, createdAt, expiresAt));
-        return new DemoSession(tokens.create(workspaceId, expiresAt), expiresAt);
+        workspaces.save(new DemoWorkspace(workspaceId, createdAt, expiresAt, industry));
+        return new DemoSession(tokens.create(workspaceId, expiresAt), expiresAt, industry);
     }
 
-    public record DemoSession(String token, Instant expiresAt) {}
+    public record DemoSession(String token, Instant expiresAt, String industry) {}
 }

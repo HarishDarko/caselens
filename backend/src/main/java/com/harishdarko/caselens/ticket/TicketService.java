@@ -1,7 +1,7 @@
 package com.harishdarko.caselens.ticket;
 
 import com.harishdarko.caselens.demo.DemoScenario;
-import com.harishdarko.caselens.demo.ScenarioCatalog;
+import com.harishdarko.caselens.demo.DemoScenarios;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
@@ -15,10 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class TicketService {
     private final TicketRepository tickets;
-    private final ScenarioCatalog scenarios;
+    private final DemoScenarios scenarios;
     private final Clock clock;
 
-    TicketService(TicketRepository tickets, ScenarioCatalog scenarios, Clock clock) {
+    TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock) {
         this.tickets = tickets;
         this.scenarios = scenarios;
         this.clock = clock;
@@ -45,13 +45,13 @@ public class TicketService {
 
     @Transactional
     public Ticket createScenario(UUID workspaceId, String key) {
-        return saveScenario(workspaceId, scenarios.require(key));
+        return saveScenario(workspaceId, scenarios.require(workspaceId, key));
     }
 
     @Transactional
     public int reset(UUID workspaceId) {
         tickets.deleteByWorkspaceId(workspaceId);
-        List<DemoScenario> all = scenarios.all();
+        List<DemoScenario> all = scenarios.forWorkspace(workspaceId);
         all.forEach(scenario -> saveScenario(workspaceId, scenario));
         return all.size();
     }

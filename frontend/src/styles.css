@@ -35,6 +35,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .landing-summary { max-width: 34rem; margin: 1.5rem 0 0; color: #52605d; font-size: 1rem; line-height: 1.6; }
 .access-card { width: min(100%, 35rem); display: grid; gap: .75rem; padding: 1.15rem; border: 1px solid var(--line); border-top: 3px solid var(--teal); background: rgba(251,250,247,.78); box-shadow: .65rem .65rem 0 rgba(23,33,33,.06); }
 .access-card > button { min-height: 2.75rem; border: 0; padding: .8rem 1rem; background: var(--ink); color: #fff; font-weight: 700; }
+.industry-picker { display: grid; gap: .5rem; margin: 0; padding: 0; border: 0; }
+.industry-picker legend { padding: 0; font-weight: 700; font-size: .85rem; }
+.industry-picker > .muted { margin: 0; font-size: .78rem; }
+.industry-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: .5rem; }
+.industry-option { display: flex; align-items: flex-start; gap: .5rem; padding: .6rem .7rem; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+.industry-option.selected { border-color: var(--teal); background: var(--teal-soft); }
+.industry-option input { margin-top: .2rem; accent-color: var(--teal); }
+.industry-option > span { display: grid; gap: .15rem; font-size: .8rem; }
+.workspace-industry { color: var(--teal); font: .66rem var(--mono); }
+.industry-note { margin: 0; color: #4d6760; font: .7rem/1.5 var(--mono); }
 .access-card h2 { margin: .2rem 0 .35rem; font-size: 1.08rem; letter-spacing: -.03em; }
 .muted { color: var(--muted); font-size: .8rem; line-height: 1.55; }
 .access-card .muted { margin: 0; }

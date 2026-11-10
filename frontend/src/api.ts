@@ -155,6 +155,14 @@ export type FailurePage = {
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
+export type DemoScenarioOption = { key: string; label: string }
+
+export type Industry = { id: string; name: string; featuredScenario: DemoScenarioOption; scenarios: DemoScenarioOption[] }
+
+export type SessionOptions = { defaultIndustry: string; industries: Industry[] }
+
+export type DemoSession = { token: string; expiresAt: string; industry?: string }
+
 export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseLensApi {
   let token = ''
 
@@ -176,8 +184,9 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
   }
 
   return {
-    createSession: () => request<{ token: string; expiresAt: string }>('/api/demo/session', {
-      method: 'POST',
+    getSessionOptions: () => request<SessionOptions>('/api/demo/session'),
+    createSession: (industry) => request<DemoSession>('/api/demo/session', {
+      method: 'POST', ...(industry ? { body: JSON.stringify({ industry }) } : {}),
     }),
     setToken: (value) => { token = value },
     resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
@@ -197,7 +206,8 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
 }
 
 export type CaseLensApi = {
-  createSession: () => Promise<{ token: string; expiresAt: string }>
+  getSessionOptions: () => Promise<SessionOptions>
+  createSession: (industry?: string) => Promise<DemoSession>
   setToken: (token: string) => void
   resetDemo: () => Promise<{ seeded: number }>
   getRuntimeSummary: () => Promise<RuntimeSummary>

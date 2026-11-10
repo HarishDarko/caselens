@@ -42,7 +42,7 @@ class PackMigrationIntegrationTest {
         }
 
         Flyway latest = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
-                .locations("classpath:db/migration").load();
+                .locations("classpath:db/migration").target("6").load();
         latest.migrate();
         assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("6");
 
