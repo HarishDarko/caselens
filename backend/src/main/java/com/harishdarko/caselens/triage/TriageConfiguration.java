@@ -12,6 +12,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
 
 @Configuration
@@ -93,7 +95,9 @@ public class TriageConfiguration {
     @Bean
     TriageWorker triageWorker(TriageJobRepository jobs, TicketRepository tickets, TriageResultRepository results,
             TriageAttemptRepository attempts, TriageEngine engine, ObjectMapper objectMapper, Clock clock,
-            TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy, PackResolver packs) {
-        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics, demoFailurePolicy, packs);
+            TriageMetrics metrics, DemoFailurePolicy demoFailurePolicy, PackResolver packs,
+            PlatformTransactionManager transactionManager) {
+        return new TriageWorker(jobs, tickets, results, attempts, engine, objectMapper, clock, metrics, demoFailurePolicy, packs,
+                new TransactionTemplate(transactionManager));
     }
 }
