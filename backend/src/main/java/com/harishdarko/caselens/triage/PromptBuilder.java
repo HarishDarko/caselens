@@ -1,8 +1,11 @@
 package com.harishdarko.caselens.triage;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 public final class PromptBuilder {
+    private static final Pattern MARKER = Pattern.compile(
+            "\\p{Punct}*(?:TICKET[_-]DATA|INDUSTRY[_-]CONTEXT)\\w*\\p{Punct}*", Pattern.CASE_INSENSITIVE);
     private final String promptVersion;
     private final TicketRedactor redactor;
 
@@ -49,7 +52,8 @@ public final class PromptBuilder {
 
     /**
      * Trusted context from the workspace's industry pack: the industry, one line per category and the guidance of
-     * each policy. It sits before the ticket boundary, so ticket text can never pose as pack context.
+     * each policy. It sits before the ticket data, and ticket text is escaped (see escapeBoundary), so a ticket can
+     * neither close the ticket data nor pose as pack context.
      */
     String industryContext(PackRules pack) {
         StringBuilder context = new StringBuilder("INDUSTRY_CONTEXT_START\nindustry=").append(pack.name()).append("\ncategories:\n");
@@ -63,9 +67,12 @@ public final class PromptBuilder {
         return context.append("INDUSTRY_CONTEXT_END").toString();
     }
 
-    private String escapeBoundary(String value) {
-        return value.replace("</TICKET_DATA_END>", "[escaped boundary]")
-                .replace("<TICKET_DATA_START>", "[escaped boundary]")
-                .replace("<TICKET_DATA_END>", "[escaped boundary]");
+    /**
+     * Replaces anything in ticket text that looks like one of the prompt's own markers (TICKET_DATA_* or
+     * INDUSTRY_CONTEXT_*, any case, with or without surrounding punctuation such as angle brackets), so a ticket
+     * cannot close the ticket data or open a fake industry block.
+     */
+    static String escapeBoundary(String value) {
+        return MARKER.matcher(value).replaceAll("[escaped boundary]");
     }
 }
