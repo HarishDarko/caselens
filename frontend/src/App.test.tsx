@@ -1,5 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -22,8 +21,9 @@ const sessionOptions = {
   ],
 }
 
-function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number } = {}) {
+function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number; laterEvaluation?: () => Promise<Response> } = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
+  let evaluationCalls = 0
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
@@ -38,6 +38,7 @@ function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPol
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
+    if (url.endsWith('/api/evaluation') && options.laterEvaluation && evaluationCalls++ > 0) return options.laterEvaluation()
     if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 220, failureRate: 0, providerUsage: [], recentEvents: [{ resultId: 'result-1', createdAt: '2026-07-11T09:14:02Z', latencyMs: 184, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', evaluated: true, corrected: false }] })
     if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 1, retryableFailures: options.syntheticFailure ? 1 : 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: options.syntheticFailure ? 1 : 0, recent: [], providers: [] })
     if (url.includes('/api/operations/failures')) return response(options.syntheticFailure
@@ -59,7 +60,7 @@ async function launch() {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 test('renders the honest CaseLens demo shell', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
   expect(screen.getByText('Demo environment')).toBeInTheDocument()
   expect(screen.getByText(/No account is required/i)).toBeInTheDocument()
@@ -70,7 +71,7 @@ test('renders the honest CaseLens demo shell', async () => {
 test('explains a possible serverless cold start while opening the workspace', async () => {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
     ? Promise.resolve(response(sessionOptions)) : new Promise(() => undefined)))
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -79,7 +80,7 @@ test('explains a possible serverless cold start while opening the workspace', as
 })
 
 test('opens an isolated reviewer workspace from the public launch screen', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -95,7 +96,7 @@ test('opens an isolated reviewer workspace from the public launch screen', async
 
 test('opens the reviewer workspace from the real session and ticket endpoints', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -106,7 +107,7 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
 
 test('lists the industries and sends the picked industry when the workspace opens', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(await screen.findByRole('radio', { name: /EV charging/ })).toBeChecked()
   fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
@@ -122,7 +123,7 @@ test('lists the industries and sends the picked industry when the workspace open
 
 test('still opens an EV charging workspace when the industry list does not load', async () => {
   const fetchMock = mockBackend({ industriesStatus: 503 })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(await screen.findByText('The list of industries did not load. The demo opens with EV charging tickets.')).toBeInTheDocument()
   await launch()
@@ -136,7 +137,7 @@ test('still opens an EV charging workspace when the industry list does not load'
 
 test('keeps the launch button off while the industry list loads', () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(screen.getByText(/Loading the list of industries/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeDisabled()
@@ -144,7 +145,7 @@ test('keeps the launch button off while the industry list loads', () => {
 
 test('gives the full EV journey when the API does not know the industry list yet (405 during a deploy)', async () => {
   mockBackend({ industriesStatus: 405 })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -155,7 +156,7 @@ test('gives the full EV journey when the API does not know the industry list yet
 })
 
 test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -181,7 +182,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {
     mockBackend({ pendingProcessingPolls: 60 })
-    render(<MemoryRouter><App /></MemoryRouter>)
+    render(<App />)
     await launch()
     await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
 
@@ -199,7 +200,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
 })
 
 test('requires a reviewer note before saving a correction', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
@@ -211,7 +212,7 @@ test('requires a reviewer note before saving a correction', async () => {
 
 test('launches the fixed synthetic retry demonstration', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -225,7 +226,7 @@ test('launches the fixed synthetic retry demonstration', async () => {
 })
 
 test('shows measured evaluation and operational failure views', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -238,7 +239,7 @@ test('shows measured evaluation and operational failure views', async () => {
 })
 
 test('surfaces persisted evaluation activity and operations telemetry', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -256,7 +257,7 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
 
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
   mockBackend({ syntheticFailure: true })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -266,4 +267,125 @@ test('labels a controlled synthetic timeout as reviewer recovery rather than pro
   expect(screen.getByText('A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Retry case' })).toBeInTheDocument()
   expect(screen.queryByText(/Provider degraded/)).not.toBeInTheDocument()
+})
+
+// Live refresh: the tab can be hidden, and a visitor can walk away. Timers and Date are faked only after the
+// workspace is open, so the waits above still use real time.
+function setVisibility(state: 'visible' | 'hidden') {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+async function advance(ms: number) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+}
+
+function calls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  return fetchMock.mock.calls.filter(([url]) => String(url).endsWith(path)).length
+}
+
+async function openView(name: 'Evaluation' | 'Operations', backend: Parameters<typeof mockBackend>[0] = {}) {
+  const fetchMock = mockBackend(backend)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  fireEvent.click(screen.getByRole('button', { name }))
+  await advance(0)
+  return fetchMock
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+  delete (document as { visibilityState?: string }).visibilityState
+})
+
+test('refreshes Evaluation every 5 seconds only while the tab is visible', async () => {
+  const fetchMock = await openView('Evaluation')
+  const start = calls(fetchMock, '/api/evaluation')
+
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation') - start).toBe(12)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+
+  setVisibility('hidden')
+  const hidden = calls(fetchMock, '/api/evaluation')
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(hidden)
+
+  setVisibility('visible')
+  await advance(0)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(hidden + 1)
+})
+
+test('makes no Operations requests from a hidden tab', async () => {
+  const fetchMock = await openView('Operations')
+  setVisibility('hidden')
+  const overview = calls(fetchMock, '/api/operations/overview')
+  const failures = calls(fetchMock, '/api/operations/failures?page=0&size=50')
+
+  await advance(10 * 60_000)
+
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(overview)
+  expect(calls(fetchMock, '/api/operations/failures?page=0&size=50')).toBe(failures)
+})
+
+test('stops refreshing after 10 minutes without activity, says so, and resumes on request', async () => {
+  const fetchMock = await openView('Evaluation')
+
+  await advance(10 * 60_000 + 5_000)
+  expect(screen.getByRole('status')).toHaveTextContent('Live updates are paused because there was no activity for 10 minutes.')
+  const paused = calls(fetchMock, '/api/evaluation')
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(paused)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh now' }))
+  await advance(0)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(paused + 1)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+})
+
+test('announces only state changes, not every routine refresh', async () => {
+  await openView('Evaluation')
+  await advance(5_000)
+  const announced = screen.getByRole('status').textContent
+  const updated = screen.getByText(/Last updated at/).textContent
+
+  await advance(5_000)
+
+  expect(screen.getByRole('status').textContent).toBe(announced)
+  expect(screen.getByRole('status')).not.toHaveTextContent(/Last updated/)
+  expect(screen.getByText(/Last updated at/).textContent).not.toBe(updated)
+})
+
+test('waits for a slow refresh instead of sending overlapping requests', async () => {
+  const fetchMock = await openView('Evaluation', { laterEvaluation: () => new Promise<Response>(() => undefined) })
+  const started = calls(fetchMock, '/api/evaluation')
+
+  await advance(60_000)
+
+  expect(calls(fetchMock, '/api/evaluation')).toBe(started)
+  expect(screen.getByRole('status')).toHaveTextContent('Loading the latest numbers for this workspace.')
+})
+
+test('ignores a late answer for a view the reviewer has already left', async () => {
+  let failLate: (reason: Error) => void = () => undefined
+  await openView('Evaluation', { laterEvaluation: () => new Promise<Response>((_, reject) => { failLate = reject }) })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await advance(0)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+
+  await act(async () => { failLate(new Error('Failed to fetch')) })
+  await advance(0)
+
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
+})
+
+test('says in plain words when the latest numbers could not load', async () => {
+  await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Request failed with status 503' }, 503)) })
+
+  expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.')
+  expect(screen.queryByText(/status 503/)).not.toBeInTheDocument()
 })

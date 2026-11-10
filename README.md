@@ -77,7 +77,7 @@ state, processing evidence, provider telemetry, and reviewer recovery action.
 
 | Area | Technology and implementation |
 | --- | --- |
-| Reviewer interface | React 19, TypeScript, Vite, TanStack Query, responsive CSS, Vitest, and Playwright |
+| Reviewer interface | React 19, TypeScript, Vite, responsive CSS, Vitest, and Playwright |
 | Application | Java 21, Spring Boot, Spring Security, Spring Data JPA, Flyway, and a modular-monolith boundary around the API, domain, worker, and relay |
 | Durable data | Neon PostgreSQL 16 with workspace-scoped records, immutable original results, human feedback, and database-derived evaluation metrics |
 | Asynchronous processing | Transactional outbox, Amazon SQS and DLQ, EventBridge recovery, idempotent job claims, bounded retries, and operator replay |
