@@ -1,5 +1,4 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -59,7 +58,7 @@ async function launch() {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 test('renders the honest CaseLens demo shell', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
   expect(screen.getByText('Demo environment')).toBeInTheDocument()
   expect(screen.getByText(/No account is required/i)).toBeInTheDocument()
@@ -70,7 +69,7 @@ test('renders the honest CaseLens demo shell', async () => {
 test('explains a possible serverless cold start while opening the workspace', async () => {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
     ? Promise.resolve(response(sessionOptions)) : new Promise(() => undefined)))
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -79,7 +78,7 @@ test('explains a possible serverless cold start while opening the workspace', as
 })
 
 test('opens an isolated reviewer workspace from the public launch screen', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -95,7 +94,7 @@ test('opens an isolated reviewer workspace from the public launch screen', async
 
 test('opens the reviewer workspace from the real session and ticket endpoints', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   await launch()
 
@@ -106,7 +105,7 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
 
 test('lists the industries and sends the picked industry when the workspace opens', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(await screen.findByRole('radio', { name: /EV charging/ })).toBeChecked()
   fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
@@ -122,7 +121,7 @@ test('lists the industries and sends the picked industry when the workspace open
 
 test('still opens an EV charging workspace when the industry list does not load', async () => {
   const fetchMock = mockBackend({ industriesStatus: 503 })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(await screen.findByText('The list of industries did not load. The demo opens with EV charging tickets.')).toBeInTheDocument()
   await launch()
@@ -136,7 +135,7 @@ test('still opens an EV charging workspace when the industry list does not load'
 
 test('keeps the launch button off while the industry list loads', () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)))
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
 
   expect(screen.getByText(/Loading the list of industries/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeDisabled()
@@ -144,7 +143,7 @@ test('keeps the launch button off while the industry list loads', () => {
 
 test('gives the full EV journey when the API does not know the industry list yet (405 during a deploy)', async () => {
   mockBackend({ industriesStatus: 405 })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -155,7 +154,7 @@ test('gives the full EV journey when the API does not know the industry list yet
 })
 
 test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -181,7 +180,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
   vi.useFakeTimers({ shouldAdvanceTime: true })
   try {
     mockBackend({ pendingProcessingPolls: 60 })
-    render(<MemoryRouter><App /></MemoryRouter>)
+    render(<App />)
     await launch()
     await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
 
@@ -199,7 +198,7 @@ test('keeps waiting through a slow worker start and explains the delay', async (
 })
 
 test('requires a reviewer note before saving a correction', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
@@ -211,7 +210,7 @@ test('requires a reviewer note before saving a correction', async () => {
 
 test('launches the fixed synthetic retry demonstration', async () => {
   const fetchMock = mockBackend()
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -225,7 +224,7 @@ test('launches the fixed synthetic retry demonstration', async () => {
 })
 
 test('shows measured evaluation and operational failure views', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -238,7 +237,7 @@ test('shows measured evaluation and operational failure views', async () => {
 })
 
 test('surfaces persisted evaluation activity and operations telemetry', async () => {
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
@@ -256,7 +255,7 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
 
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
   mockBackend({ syntheticFailure: true })
-  render(<MemoryRouter><App /></MemoryRouter>)
+  render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
