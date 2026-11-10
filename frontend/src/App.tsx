@@ -223,7 +223,19 @@ function App() {
 
   async function openWorkspace() {
     setBusy(true); setError(null)
-    try { const session = await api.createSession(industryId); api.setToken(session.token); setWorkspaceIndustryId(session.industry ?? industryId); await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime); setSelectedTicketId(null); setView('inbox'); setSessionOpen(true) }
+    try {
+      // One call opens a seeded workspace. Evaluation and Operations load themselves when they are opened, so a new
+      // workspace never shows the numbers of the one before it.
+      const session = await api.createSession(industryId, true)
+      api.setToken(session.token); setWorkspaceIndustryId(session.industry ?? industryId); setOperationsOverview(null)
+      if (session.tickets && session.runtime) {
+        setTickets(session.tickets.map(mapApiTicket)); setRuntime(session.runtime); setEvaluation(null); setFailures(null)
+      } else {
+        // An API from before the one-call open (for example during a deploy) returns a bare session: open it as before.
+        await api.resetDemo(); const [page, currentEvaluation, currentFailures, currentRuntime] = await Promise.all([api.listTickets(), api.getEvaluation(), api.listFailures(), api.getRuntimeSummary()]); setTickets(page.content.map(mapApiTicket)); setEvaluation(currentEvaluation); setFailures(currentFailures); setRuntime(currentRuntime)
+      }
+      setSelectedTicketId(null); setView('inbox'); setSessionOpen(true)
+    }
     catch (cause: unknown) { setError(plainError(cause, 'Could not open the demo workspace. Try again in a few seconds.')) } finally { setBusy(false) }
   }
 
