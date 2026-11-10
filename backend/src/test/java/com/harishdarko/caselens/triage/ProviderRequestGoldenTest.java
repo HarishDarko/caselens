@@ -26,7 +26,8 @@ import tools.jackson.databind.ObjectMapper;
  * Set -Dcaselens.golden.out=<file> to write the full golden text for a diff.
  */
 class ProviderRequestGoldenTest {
-    private static final String EXPECTED_SHA256 = "014530508f702c1ebc3f8bda5ed439c931bd9bb7666ff7380200096a175dc595";
+    // triage-v2 (PR 3, CL-07): the PR #11 digest 014530508f70... plus the industry block and the new prompt version.
+    private static final String EXPECTED_SHA256 = "ae3a39f1f27a6ca380733cf9e8cc9a60936eff6898867dc3d93f5b2026f555a4";
     private static final TriageRequest REQUEST = new TriageRequest(UUID.fromString("00000000-0000-0000-0000-000000000042"),
             "Payment accepted", "Payment accepted but session never started. Please check it.", TicketChannel.WEB, 0);
     private static final RedactedTicket REDACTED = new RedactedTicket(REQUEST.subject(), REQUEST.message());

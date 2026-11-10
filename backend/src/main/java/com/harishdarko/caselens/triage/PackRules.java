@@ -26,6 +26,7 @@ public final class PackRules {
     private final String name;
     private final List<Category> categories;
     private final Category generalCategory;
+    private final Map<Category, String> categoryDescriptions;
     private final PolicyCatalog policies;
     private final List<TermRule<Category>> categoryRules;
     private final List<TermRule<Urgency>> urgencyRules;
@@ -48,6 +49,11 @@ public final class PackRules {
             throw new IllegalStateException("Pack categories must be a non-empty list without repeats");
         }
         generalCategory = requireCategory(required(root, "generalCategory").asText());
+        Map<Category, String> descriptions = new LinkedHashMap<>();
+        for (Category category : categories) {
+            descriptions.put(category, required(required(root, "categoryDescriptions"), category.name()).asText());
+        }
+        categoryDescriptions = Map.copyOf(descriptions);
         Map<String, String> guidance = new LinkedHashMap<>();
         for (JsonNode policy : required(root, "policies")) {
             guidance.put(required(policy, "id").asText(), required(policy, "guidance").asText());
@@ -107,6 +113,9 @@ public final class PackRules {
 
     /** The categories of this pack, in file order. */
     List<Category> categories() { return categories; }
+
+    /** One plain line that tells the model what the category covers. */
+    String description(Category category) { return categoryDescriptions.get(category); }
 
     /** The category used when no rule matches; the scorer and the rules treat it as the general, low-urgency case. */
     Category generalCategory() { return generalCategory; }

@@ -8,6 +8,11 @@ final class TestPacks {
               "name": "SaaS support (test)",
               "categories": ["LOGIN", "INVOICE", "GENERAL"],
               "generalCategory": "GENERAL",
+              "categoryDescriptions": {
+                "LOGIN": "Sign-in and password problems.",
+                "INVOICE": "Questions about an invoice.",
+                "GENERAL": "Anything else."
+              },
               "policyVersion": "t1",
               "policies": [
                 { "id": "ACCOUNT_LOCKOUT", "guidance": "Verify the user's identity before unlocking the account." },

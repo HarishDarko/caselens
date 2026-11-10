@@ -14,7 +14,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 public final class GroqTriageProvider implements TriageProvider {
-    private static final String PROMPT_VERSION = "triage-v1";
+    private static final String PROMPT_VERSION = "triage-v2";
     private static final int MAX_RESPONSE_CHARS = 65_536;
     private final URI endpoint;
     private final String apiKey;

@@ -3,6 +3,15 @@
   "name": "EV charging",
   "categories": ["BILLING", "CHARGING_SESSION", "CHARGER_HARDWARE", "CONNECTIVITY", "ACCOUNT_ACCESS", "REFUND", "GENERAL"],
   "generalCategory": "GENERAL",
+  "categoryDescriptions": {
+    "BILLING": "Payments, charges, receipts and other billing questions.",
+    "CHARGING_SESSION": "A charging session that did not start, stopped early or charged slowly.",
+    "CHARGER_HARDWARE": "A fault in a charger or connector, such as a broken plug or an error light.",
+    "CONNECTIVITY": "A charger that is offline or has lost its network or OCPP heartbeat.",
+    "ACCOUNT_ACCESS": "Sign-in, account or RFID card authorization problems.",
+    "REFUND": "A request to give money back for a charge.",
+    "GENERAL": "Questions, feedback and anything that fits no other category."
+  },
   "policyVersion": "v1",
   "policies": [
     { "id": "PAYMENT_CAPTURE_NO_SESSION", "guidance": "Verify session and payment state; do not promise a refund before confirmation." },

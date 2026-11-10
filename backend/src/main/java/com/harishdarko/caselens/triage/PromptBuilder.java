@@ -35,6 +35,7 @@ public final class PromptBuilder {
         return """
                 Prompt version: %s.
                 %s
+                %s
                 TICKET_DATA_START
                 ticketId=%s
                 channel=%s
@@ -42,8 +43,24 @@ public final class PromptBuilder {
                 subject=%s
                 message=%s
                 TICKET_DATA_END
-                """.formatted(promptVersion, systemInstruction(), request.ticketId(), request.channel(), request.repeatContactCount(),
+                """.formatted(promptVersion, systemInstruction(), industryContext(request.pack()), request.ticketId(), request.channel(), request.repeatContactCount(),
                 escapeBoundary(ticket.subject()), escapeBoundary(ticket.message()));
+    }
+
+    /**
+     * Trusted context from the workspace's industry pack: the industry, one line per category and the guidance of
+     * each policy. It sits before the ticket boundary, so ticket text can never pose as pack context.
+     */
+    String industryContext(PackRules pack) {
+        StringBuilder context = new StringBuilder("INDUSTRY_CONTEXT_START\nindustry=").append(pack.name()).append("\ncategories:\n");
+        for (Category category : pack.categories()) {
+            context.append("- ").append(category.name()).append(": ").append(pack.description(category)).append('\n');
+        }
+        context.append("policies:\n");
+        for (String id : pack.policies().ids().stream().sorted().toList()) {
+            context.append("- ").append(id).append(": ").append(pack.policies().guidance(id)).append('\n');
+        }
+        return context.append("INDUSTRY_CONTEXT_END").toString();
     }
 
     private String escapeBoundary(String value) {
