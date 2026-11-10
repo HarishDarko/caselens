@@ -70,6 +70,7 @@ class TriageWorkerTest {
             return 1;
         });
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        stillOwnsTheClaim();
         TriageProvider transientFailure = (request, redacted) -> {
             throw new ProviderCallException("provider unavailable", "HTTP_503");
         };
@@ -94,6 +95,7 @@ class TriageWorkerTest {
             return 1;
         });
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        stillOwnsTheClaim();
 
         TriageWorker worker = new TriageWorker(jobs, tickets, results, null,
                 transientEngine(new MockTriageProvider()), new ObjectMapper(), clock,
@@ -113,6 +115,7 @@ class TriageWorkerTest {
         when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
         when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(1);
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        stillOwnsTheClaim();
         when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         WorkerResult result = worker(new MockTriageProvider()).process(
@@ -125,18 +128,52 @@ class TriageWorkerTest {
     }
 
     @Test
-    void acknowledgesWhenAnotherWorkerWinsTheAtomicClaim() {
+    void asksForRedeliveryWhenAnotherWorkerHoldsTheAtomicClaim() {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
         TriageProvider provider = org.mockito.Mockito.mock(TriageProvider.class);
         when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
-        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(0);
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenAnswer(invocation -> {
+            job.claim(invocation.getArgument(1)); // another worker's claim is live, so this one changes no row
+            return 0;
+        });
 
         WorkerResult result = workerWithEngine(transientEngine(provider)).process(
                 new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
 
-        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK_DUPLICATE);
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
+        assertThat(result.errorCode()).isEqualTo("CLAIM_HELD");
         verify(provider, never()).analyze(any(), any());
         verify(tickets, never()).findByIdAndWorkspaceId(any(), any());
+    }
+
+    @Test
+    void dropsTheFinalWritesWhenTheClaimWasTakenOverDuringTheProviderCall() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        Ticket ticket = ticket();
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenAnswer(invocation -> {
+            job.claim(invocation.getArgument(1));
+            return 1;
+        });
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.holdClaim(eq(eventId), eq(1), any(Instant.class))).thenReturn(0);
+        TriageProvider transientFailure = (request, redacted) -> {
+            throw new ProviderCallException("provider unavailable", "HTTP_503");
+        };
+
+        WorkerResult result = workerWithEngine(failureEngine(transientFailure)).process(
+                new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
+        assertThat(result.errorCode()).isEqualTo("CLAIM_LOST");
+        assertThat(job.getStatus()).isEqualTo(TriageJobStatus.PROCESSING);
+        verify(jobs, never()).save(any());
+        verify(tickets).save(ticket); // once, by the claim; not again by the dropped failure write
+        verify(results, never()).save(any());
+    }
+
+    private void stillOwnsTheClaim() {
+        when(jobs.holdClaim(eq(eventId), any(Integer.class), any(Instant.class))).thenReturn(1);
     }
 
     private TriageWorker worker(TriageProvider provider) {

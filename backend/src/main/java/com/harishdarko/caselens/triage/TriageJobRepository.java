@@ -47,10 +47,13 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
 
     /**
      * How long a claim protects a job. The worker commits its claim before the AI call, so a worker that dies during
-     * the call leaves the job in PROCESSING. The lease is longer than the worker Lambda timeout (60 s), so the first
-     * worker is gone, and shorter than the SQS visibility timeout (90 s), so the redelivered message can take the job.
+     * the call leaves the job in PROCESSING. The claim is made after the invocation starts and the worker Lambda
+     * timeout is 60 s, so 62 s after the claim the first worker is gone. A delivery that finds a live claim is not
+     * dropped: the worker returns RETRY (CLAIM_HELD), SQS shows the message again after its 90 s visibility timeout,
+     * and that delivery sees the job COMPLETED (a duplicate) or the lease lapsed (it takes the job). maxReceiveCount 5
+     * bounds the retries. A short lease leaves more of the 90 s for the time between receive and claim.
      */
-    Duration CLAIM_LEASE = Duration.ofSeconds(75);
+    Duration CLAIM_LEASE = Duration.ofSeconds(62);
 
     default int claimForProcessing(UUID eventId, Instant now) {
         return claimForProcessing(eventId, now, now.minus(CLAIM_LEASE));
@@ -67,4 +70,20 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
             """, nativeQuery = true)
     int claimForProcessing(@Param("eventId") UUID eventId, @Param("now") Instant now,
             @Param("staleBefore") Instant staleBefore);
+
+    /**
+     * Guard for the worker's final writes: matches only while the job is still PROCESSING under the attempt this worker
+     * claimed. It returns 0 when the lease lapsed and another worker took the job (or finished it). When it returns 1,
+     * the row stays locked until the surrounding transaction commits, so no claim can slip in before the final saves.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE triage_job
+               SET updated_at = :now
+             WHERE event_id = :eventId
+               AND status = 'PROCESSING'
+               AND attempt_count = :claimedAttempt
+            """, nativeQuery = true)
+    int holdClaim(@Param("eventId") UUID eventId, @Param("claimedAttempt") int claimedAttempt,
+            @Param("now") Instant now);
 }
