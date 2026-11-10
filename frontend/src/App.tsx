@@ -16,7 +16,7 @@ const TRIAGE_WAIT_MS = 120_000
 // after 10 minutes without a click, key press, scroll or touch, so an open tab does not keep the API and Neon awake.
 const LIVE_REFRESH_MS = 5_000
 const LIVE_IDLE_MS = 10 * 60_000
-type LiveState = 'loading' | 'live' | 'paused'
+type LiveState = 'loading' | 'live' | 'paused' | 'failed'
 const SLOW_TRIAGE_NOTICE_MS = 8_000
 function triagePollDelay(elapsedMs: number) { return elapsedMs < 10_000 ? 250 : elapsedMs < 30_000 ? 1_000 : 2_000 }
 
@@ -132,18 +132,31 @@ function App() {
     let interval: number | undefined
     let lastActivity = Date.now()
     let paused = false
+    let inFlight = false
+    let cancelled = false
     const refresh = async () => {
+      // One request at a time: during a cold start a response can take longer than the 5-second interval.
+      if (inFlight) return
+      inFlight = true
       try {
-        if (view === 'evaluation') { setEvaluation(await api.getEvaluation()); setError(null) }
-        else {
+        if (view === 'evaluation') {
+          const next = await api.getEvaluation()
+          if (cancelled) return
+          setEvaluation(next)
+        } else {
           const [overview, failurePage] = await Promise.all([api.getOperationsOverview(), api.listFailures()])
+          if (cancelled) return
           setOperationsOverview(overview)
           setFailures(failurePage)
-          setError(null)
         }
+        setError(null)
         setLastUpdated(new Date())
-      } catch (cause: unknown) {
-        setError(cause instanceof Error ? cause.message : 'Could not refresh the workspace.')
+        if (!paused) setLiveState('live')
+      } catch {
+        // The status line says what failed in plain words; the raw error ("Failed to fetch", a status code) is not shown.
+        if (!cancelled && !paused) setLiveState('failed')
+      } finally {
+        inFlight = false
       }
     }
     const stop = () => { if (interval !== undefined) { window.clearInterval(interval); interval = undefined } }
@@ -155,7 +168,6 @@ function App() {
       lastActivity = Date.now()
       if (document.visibilityState === 'hidden' || interval !== undefined) return
       paused = false
-      setLiveState('live')
       void refresh()
       interval = window.setInterval(tick, LIVE_REFRESH_MS)
     }
@@ -169,6 +181,7 @@ function App() {
     const activityEvents = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const
     activityEvents.forEach((name) => window.addEventListener(name, onActivity, { passive: true }))
     return () => {
+      cancelled = true
       stop()
       resumeLiveRef.current = null
       document.removeEventListener('visibilitychange', onVisibility)
@@ -235,11 +248,17 @@ function formatEventTime(value: string) {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+const LIVE_STATUS_TEXT: Record<LiveState, string> = {
+  loading: 'Loading the latest numbers for this workspace. The first load can take up to 20 seconds while the service starts.',
+  live: 'Live: updates every 5 seconds while this tab is open.',
+  paused: 'Live updates are paused because there was no activity for 10 minutes.',
+  failed: 'Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.',
+}
+
+// Only the state sentence is a live region, so a screen reader speaks when the state changes, not on every refresh.
 function LiveStatus({ state, lastUpdated, onRefresh }: { state: LiveState; lastUpdated: Date | null; onRefresh: () => void }) {
   const time = lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : null
-  if (state === 'paused') return <p className="live-status paused" role="status">Live updates are paused because there was no activity for 10 minutes.{time ? ` Last updated at ${time}.` : ''} <button type="button" className="text-button" onClick={onRefresh}>Refresh now</button></p>
-  if (!time) return <p className="live-status" role="status">Loading the latest numbers for this workspace. The first load can take up to 20 seconds while the service starts.</p>
-  return <p className="live-status" role="status">Live: updates every 5 seconds while this tab is open. Last updated at {time}.</p>
+  return <p className={state === 'paused' || state === 'failed' ? 'live-status paused' : 'live-status'}><span role="status">{LIVE_STATUS_TEXT[state]}</span>{time && <span className="live-updated"> Last updated at {time}.</span>}{state === 'paused' && <> <button type="button" className="text-button" onClick={onRefresh}>Refresh now</button></>}</p>
 }
 
 function EvaluationView({ evaluation }: { evaluation: EvaluationSummary | null }) {

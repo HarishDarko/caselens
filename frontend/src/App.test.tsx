@@ -21,8 +21,9 @@ const sessionOptions = {
   ],
 }
 
-function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number } = {}) {
+function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesStatus?: number; laterEvaluation?: () => Promise<Response> } = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
+  let evaluationCalls = 0
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
@@ -37,6 +38,7 @@ function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPol
     if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
+    if (url.endsWith('/api/evaluation') && options.laterEvaluation && evaluationCalls++ > 0) return options.laterEvaluation()
     if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 220, failureRate: 0, providerUsage: [], recentEvents: [{ resultId: 'result-1', createdAt: '2026-07-11T09:14:02Z', latencyMs: 184, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', evaluated: true, corrected: false }] })
     if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 1, retryableFailures: options.syntheticFailure ? 1 : 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: options.syntheticFailure ? 1 : 0, recent: [], providers: [] })
     if (url.includes('/api/operations/failures')) return response(options.syntheticFailure
@@ -282,8 +284,8 @@ function calls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
   return fetchMock.mock.calls.filter(([url]) => String(url).endsWith(path)).length
 }
 
-async function openView(name: 'Evaluation' | 'Operations') {
-  const fetchMock = mockBackend()
+async function openView(name: 'Evaluation' | 'Operations', backend: Parameters<typeof mockBackend>[0] = {}) {
+  const fetchMock = mockBackend(backend)
   render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
@@ -341,4 +343,49 @@ test('stops refreshing after 10 minutes without activity, says so, and resumes o
   await advance(0)
   expect(calls(fetchMock, '/api/evaluation')).toBe(paused + 1)
   expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+})
+
+test('announces only state changes, not every routine refresh', async () => {
+  await openView('Evaluation')
+  await advance(5_000)
+  const announced = screen.getByRole('status').textContent
+  const updated = screen.getByText(/Last updated at/).textContent
+
+  await advance(5_000)
+
+  expect(screen.getByRole('status').textContent).toBe(announced)
+  expect(screen.getByRole('status')).not.toHaveTextContent(/Last updated/)
+  expect(screen.getByText(/Last updated at/).textContent).not.toBe(updated)
+})
+
+test('waits for a slow refresh instead of sending overlapping requests', async () => {
+  const fetchMock = await openView('Evaluation', { laterEvaluation: () => new Promise<Response>(() => undefined) })
+  const started = calls(fetchMock, '/api/evaluation')
+
+  await advance(60_000)
+
+  expect(calls(fetchMock, '/api/evaluation')).toBe(started)
+  expect(screen.getByRole('status')).toHaveTextContent('Loading the latest numbers for this workspace.')
+})
+
+test('ignores a late answer for a view the reviewer has already left', async () => {
+  let failLate: (reason: Error) => void = () => undefined
+  await openView('Evaluation', { laterEvaluation: () => new Promise<Response>((_, reject) => { failLate = reject }) })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await advance(0)
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+
+  await act(async () => { failLate(new Error('Failed to fetch')) })
+  await advance(0)
+
+  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+  expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
+})
+
+test('says in plain words when the latest numbers could not load', async () => {
+  await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Request failed with status 503' }, 503)) })
+
+  expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.')
+  expect(screen.queryByText(/status 503/)).not.toBeInTheDocument()
 })
