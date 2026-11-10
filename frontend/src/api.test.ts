@@ -19,6 +19,20 @@ describe('CaseLens API client', () => {
     expect(new Headers(secondRequest?.headers).get('Authorization')).toBe('Bearer demo-token')
   })
 
+  it('reads the industries and sends the picked industry when it creates a session', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ defaultIndustry: 'ev-charging', industries: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z', industry: 'saas-support' }), { status: 200 }))
+    const api = createCaseLensApi('', fetcher)
+
+    await expect(api.getSessionOptions()).resolves.toEqual({ defaultIndustry: 'ev-charging', industries: [] })
+    await expect(api.createSession('saas-support')).resolves.toMatchObject({ industry: 'saas-support' })
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/demo/session')
+    expect(fetcher.mock.calls[0]?.[1]).not.toHaveProperty('method')
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/demo/session', expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'saas-support' }) }))
+  })
+
   it('calls scenario, evaluation, and failure endpoints with the active session', async () => {
     const fetcher = vi.fn().mockImplementation(() => new Response(JSON.stringify({}), { status: 200 }))
     const api = createCaseLensApi('', fetcher)

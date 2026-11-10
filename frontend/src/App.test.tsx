@@ -13,11 +13,21 @@ function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number } = {}) {
+const sessionOptions = {
+  defaultIndustry: 'ev-charging',
+  industries: [
+    { id: 'ev-charging', name: 'EV charging', featuredScenario: { key: 'charger-offline-site-wide', label: 'Every charger at the demo site appears offline' }, scenarios: [{ key: 'charger-offline-site-wide', label: 'Every charger at the demo site appears offline' }] },
+    { id: 'e-commerce', name: 'E-commerce', featuredScenario: { key: 'shop-checkout-down', label: 'Checkout fails for every card' }, scenarios: [{ key: 'shop-checkout-down', label: 'Checkout fails for every card' }] },
+    { id: 'saas-support', name: 'SaaS support', featuredScenario: { key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }, scenarios: [{ key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }] },
+  ],
+}
+
+function mockBackend(options: { syntheticFailure?: boolean; pendingProcessingPolls?: number; industriesFail?: boolean } = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
-  const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
+    if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesFail ? response({ detail: 'Unavailable' }, 503) : response(sessionOptions)
     if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
@@ -85,6 +95,35 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST' }))
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets?page=0&size=50'), expect.anything())
+})
+
+test('lists the industries and sends the picked industry when the workspace opens', async () => {
+  const fetchMock = mockBackend()
+  render(<MemoryRouter><App /></MemoryRouter>)
+
+  expect(await screen.findByRole('radio', { name: /EV charging/ })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
+  expect(screen.getByText('Industry: SaaS support')).toBeInTheDocument()
+  expect(screen.getByText('Whole team locked out after an SSO change')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Load saas-sso-lockout' })).toBeEnabled()
+})
+
+test('still opens an EV charging workspace when the industry list does not load', async () => {
+  const fetchMock = mockBackend({ industriesFail: true })
+  render(<MemoryRouter><App /></MemoryRouter>)
+
+  expect(await screen.findByText('The list of industries did not load. The demo opens with EV charging tickets.')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
+  expect(sessionCall?.[1]).not.toHaveProperty('body')
+  expect(screen.getByText('The demo scenarios did not load. The tickets in the queue still work.')).toBeInTheDocument()
 })
 
 test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
