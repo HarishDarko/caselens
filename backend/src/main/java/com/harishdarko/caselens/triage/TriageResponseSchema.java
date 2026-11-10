@@ -12,12 +12,12 @@ import tools.jackson.databind.node.ObjectNode;
 /** The structured-output schema a model must follow, and the parser for its answer. Shared by the AI providers. */
 final class TriageResponseSchema {
     private final ObjectMapper mapper;
-    private final PolicyCatalog policyCatalog;
-    private final PackRules pack = PackRules.evCharging();
+    private final PackRules pack;
 
-    TriageResponseSchema(ObjectMapper mapper, PolicyCatalog policyCatalog) {
+    /** The schema and parser for one industry pack: its categories and policy ids are the only allowed values. */
+    TriageResponseSchema(ObjectMapper mapper, PackRules pack) {
         this.mapper = Objects.requireNonNull(mapper);
-        this.policyCatalog = Objects.requireNonNull(policyCatalog);
+        this.pack = Objects.requireNonNull(pack);
     }
 
     ObjectNode schema() {
@@ -38,7 +38,7 @@ final class TriageResponseSchema {
         ObjectNode policyIds = properties.putObject("policyIds").put("type", "array").put("maxItems", 3);
         ObjectNode policyId = policyIds.putObject("items").put("type", "string");
         ArrayNode allowedPolicyIds = policyId.putArray("enum");
-        policyCatalog.ids().stream().sorted().forEach(allowedPolicyIds::add);
+        pack.policies().ids().stream().sorted().forEach(allowedPolicyIds::add);
         properties.putObject("explanation").put("type", "string").put("minLength", 30).put("maxLength", 600);
         properties.putObject("recommendedActions").put("type", "array").put("minItems", 1).put("maxItems", 5)
                 .putObject("items").put("type", "string").put("minLength", 3).put("maxLength", 240);

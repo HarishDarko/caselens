@@ -6,7 +6,12 @@ import java.util.Locale;
 import java.util.Objects;
 
 public final class PriorityScorer {
-    private final PackRules pack = PackRules.evCharging();
+    static final String PAYMENT_IMPACT = "PAYMENT_IMPACT";
+    static final String SERVICE_BLOCKED = "SERVICE_BLOCKED";
+    static final String BROAD_IMPACT = "BROAD_IMPACT";
+    static final String POSITIVE_GENERAL_REQUEST = "POSITIVE_GENERAL_REQUEST";
+    /** The keyword indicators a pack must define, one entry each under "priority" in pack.json. */
+    static final List<String> INDICATORS = List.of(PAYMENT_IMPACT, SERVICE_BLOCKED, BROAD_IMPACT, POSITIVE_GENERAL_REQUEST);
 
     public PriorityResult score(PriorityContext context) {
         Objects.requireNonNull(context);
@@ -23,14 +28,15 @@ public final class PriorityScorer {
             case HIGH -> apply(rules, "SLA_RISK_HIGH", 20, "High risk of breaching the response target");
         };
 
+        PackRules pack = context.pack();
         String text = context.normalizedText().toLowerCase(Locale.ROOT);
-        score += indicator(rules, text, "PAYMENT_IMPACT", 10);
-        score += indicator(rules, text, "SERVICE_BLOCKED", 10);
-        score += indicator(rules, text, "BROAD_IMPACT", 15);
+        score += indicator(pack, rules, text, PAYMENT_IMPACT, 10);
+        score += indicator(pack, rules, text, SERVICE_BLOCKED, 10);
+        score += indicator(pack, rules, text, BROAD_IMPACT, 15);
         if (context.repeatContactCount() >= 2) {
             score += apply(rules, "REPEAT_CONTACT", 10, "Customer contacted support at least twice");
         }
-        if (context.category().equals(pack.generalCategory())) score += indicator(rules, text, "POSITIVE_GENERAL_REQUEST", -10);
+        if (context.category().equals(pack.generalCategory())) score += indicator(pack, rules, text, POSITIVE_GENERAL_REQUEST, -10);
         return new PriorityResult(Math.max(0, Math.min(100, score)), rules);
     }
 
@@ -39,7 +45,7 @@ public final class PriorityScorer {
         return points;
     }
 
-    private int indicator(List<RuleApplication> rules, String text, String code, int points) {
+    private int indicator(PackRules pack, List<RuleApplication> rules, String text, String code, int points) {
         PackRules.PriorityIndicator indicator = pack.priority(code);
         return PackRules.containsAny(text, indicator.terms()) ? apply(rules, code, points, indicator.explanation()) : 0;
     }

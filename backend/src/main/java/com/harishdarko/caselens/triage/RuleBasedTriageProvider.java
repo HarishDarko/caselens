@@ -7,7 +7,6 @@ import java.util.Locale;
 final class RuleBasedTriageProvider implements TriageProvider {
     private final String modelVersion;
     private final String promptVersion;
-    private final PackRules pack = PackRules.evCharging();
 
     RuleBasedTriageProvider(String modelVersion, String promptVersion) {
         this.modelVersion = modelVersion;
@@ -19,35 +18,36 @@ final class RuleBasedTriageProvider implements TriageProvider {
         String subject = ticket.subject();
         String message = ticket.message();
         String text = (subject + "\n" + message).toLowerCase(Locale.ROOT);
-        Category category = category(text);
-        Urgency urgency = urgency(text, category);
-        SlaRisk slaRisk = slaRisk(text, category);
-        Sentiment sentiment = sentiment(text);
+        PackRules pack = request.pack();
+        Category category = category(pack, text);
+        Urgency urgency = urgency(pack, text, category);
+        SlaRisk slaRisk = slaRisk(pack, text, category);
+        Sentiment sentiment = sentiment(pack, text);
         List<EvidenceItem> evidence = evidence(subject, message, text, category);
-        List<String> policyIds = policies(text, category);
+        List<String> policyIds = policies(pack, text, category);
         String summary = summary(category, urgency);
         String explanation = "The ticket evidence indicates " + category.name().toLowerCase(Locale.ROOT).replace('_', ' ')
                 + " impact with " + urgency.name().toLowerCase(Locale.ROOT) + " urgency and "
                 + slaRisk.name().toLowerCase(Locale.ROOT) + " SLA risk.";
-        List<String> actions = actions(category);
+        List<String> actions = pack.actions(category);
         String reply = "Thanks for the detail. We are reviewing the affected service state and will share the next update after verification.";
         return new ProviderCall(new ProviderTriageResult(category, urgency, slaRisk, sentiment, summary, evidence, policyIds,
                 explanation, actions, reply, List.of(), modelVersion, promptVersion), null, null);
     }
 
-    private Category category(String text) {
+    private Category category(PackRules pack, String text) {
         return pack.category(text).orElse(pack.generalCategory());
     }
 
-    private Urgency urgency(String text, Category category) {
+    private Urgency urgency(PackRules pack, String text, Category category) {
         return pack.urgency(text).orElse(category.equals(pack.generalCategory()) ? Urgency.LOW : Urgency.MEDIUM);
     }
 
-    private SlaRisk slaRisk(String text, Category category) {
+    private SlaRisk slaRisk(PackRules pack, String text, Category category) {
         return pack.slaRisk(text).orElse(category.equals(pack.generalCategory()) ? SlaRisk.LOW : SlaRisk.MEDIUM);
     }
 
-    private Sentiment sentiment(String text) {
+    private Sentiment sentiment(PackRules pack, String text) {
         return pack.sentiment(text).orElse(Sentiment.NEUTRAL);
     }
 
@@ -59,7 +59,7 @@ final class RuleBasedTriageProvider implements TriageProvider {
         return result.subList(0, Math.min(result.size(), 2));
     }
 
-    private List<String> policies(String text, Category category) {
+    private List<String> policies(PackRules pack, String text, Category category) {
         List<String> ids = pack.policyIds(text, category);
         return ids.subList(0, Math.min(ids.size(), 3));
     }
@@ -67,9 +67,5 @@ final class RuleBasedTriageProvider implements TriageProvider {
     private String summary(Category category, Urgency urgency) {
         return "Synthetic " + category.name().toLowerCase(Locale.ROOT).replace('_', ' ') + " case requires "
                 + urgency.name().toLowerCase(Locale.ROOT) + " review.";
-    }
-
-    private List<String> actions(Category category) {
-        return pack.actions(category);
     }
 }

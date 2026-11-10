@@ -23,17 +23,10 @@ public final class GroqTriageProvider implements TriageProvider {
     private final ObjectMapper mapper;
     private final Duration requestTimeout;
     private final IntSupplier retryDelayMillis;
-    private final PolicyCatalog policyCatalog;
-    private final TriageResponseSchema responseSchema;
     private final PromptBuilder promptBuilder = new PromptBuilder(PROMPT_VERSION);
 
     public GroqTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
             ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis) {
-        this(endpoint, apiKey, model, client, mapper, requestTimeout, retryDelayMillis, PolicyCatalog.defaultCatalog());
-    }
-
-    public GroqTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
-            ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis, PolicyCatalog policyCatalog) {
         this.endpoint = Objects.requireNonNull(endpoint);
         this.apiKey = required(apiKey, "Groq API key");
         this.model = required(model, "Groq model");
@@ -41,8 +34,6 @@ public final class GroqTriageProvider implements TriageProvider {
         this.mapper = Objects.requireNonNull(mapper);
         this.requestTimeout = Objects.requireNonNull(requestTimeout);
         this.retryDelayMillis = Objects.requireNonNull(retryDelayMillis);
-        this.policyCatalog = Objects.requireNonNull(policyCatalog);
-        this.responseSchema = new TriageResponseSchema(this.mapper, policyCatalog);
     }
 
     @Override
@@ -66,7 +57,7 @@ public final class GroqTriageProvider implements TriageProvider {
             if (output == null || output.isBlank()) {
                 throw new ProviderCallException("Groq provider returned no model output", "SCHEMA_FAILURE");
             }
-            ProviderTriageResult result = responseSchema.parse(output, model, PROMPT_VERSION);
+            ProviderTriageResult result = new TriageResponseSchema(mapper, request.pack()).parse(output, model, PROMPT_VERSION);
             JsonNode usage = root.path("usage");
             return new ProviderCall(result, usageLong(usage, "prompt_tokens"), usageLong(usage, "completion_tokens"));
         } catch (ProviderCallException exception) {
@@ -119,9 +110,9 @@ public final class GroqTriageProvider implements TriageProvider {
         messages.addObject().put("role", "system").put("content", promptBuilder.systemInstruction()
                 + " Return exactly one JSON object with these fields: category, urgency, slaRisk, sentiment, summary, evidence, policyIds, explanation, recommendedActions, suggestedReply, and warnings."
                 + " Use only policy identifiers permitted by the response schema; return an empty policyIds array when none apply."
-                + " Allowed policyIds: " + String.join(", ", policyCatalog.ids().stream().sorted().toList()) + ".");
+                + " Allowed policyIds: " + String.join(", ", request.pack().policies().ids().stream().sorted().toList()) + ".");
         messages.addObject().put("role", "user").put("content", promptBuilder.build(request, redactedTicket));
-        root.set("response_format", responseFormat());
+        root.set("response_format", responseFormat(new TriageResponseSchema(mapper, request.pack())));
         try {
             return mapper.writeValueAsString(root);
         } catch (JacksonException exception) {
@@ -129,7 +120,7 @@ public final class GroqTriageProvider implements TriageProvider {
         }
     }
 
-    private ObjectNode responseFormat() {
+    private ObjectNode responseFormat(TriageResponseSchema responseSchema) {
         if (!supportsStrictSchema()) return mapper.createObjectNode().put("type", "json_object");
         ObjectNode responseFormat = mapper.createObjectNode().put("type", "json_schema");
         ObjectNode jsonSchema = responseFormat.putObject("json_schema");

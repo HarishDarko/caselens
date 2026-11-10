@@ -3,8 +3,10 @@ package com.harishdarko.caselens.triage;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import com.harishdarko.caselens.ticket.TicketRepository;
+import jakarta.validation.ConstraintViolationException;
 import java.time.Clock;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,17 +17,24 @@ public class FeedbackService {
     private final TriageResultRepository results;
     private final TriageFeedbackRepository feedback;
     private final Clock clock;
+    private final PackResolver packs;
 
-    FeedbackService(TicketRepository tickets, TriageResultRepository results, TriageFeedbackRepository feedback, Clock clock) {
+    FeedbackService(TicketRepository tickets, TriageResultRepository results, TriageFeedbackRepository feedback, Clock clock,
+            PackResolver packs) {
         this.tickets = tickets;
         this.results = results;
         this.feedback = feedback;
         this.clock = clock;
+        this.packs = packs;
     }
 
     @Transactional
     public FeedbackSnapshot submit(UUID workspaceId, UUID ticketId, UUID requestedResultId,
             Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note) {
+        if (correctedCategory != null && !packs.forWorkspace(workspaceId).categories().contains(correctedCategory)) {
+            // Same 400 "Validation failed" answer an unknown enum value gave before categories came from packs.
+            throw new ConstraintViolationException("Category is not part of this workspace's industry", Set.of());
+        }
         Ticket ticket = scopedTicket(workspaceId, ticketId);
         TriageResult result = requestedResultId == null
                 ? results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDesc(ticketId, workspaceId)

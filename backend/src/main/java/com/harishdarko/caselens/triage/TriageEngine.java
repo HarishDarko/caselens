@@ -42,7 +42,7 @@ public final class TriageEngine {
         try {
             ProviderCall providerCall = primaryProvider.analyze(request, redacted);
             ProviderTriageResult providerResult = providerCall.result();
-            ValidatedProviderResult validated = validator.validate(providerResult, redacted);
+            ValidatedProviderResult validated = validator.validate(providerResult, redacted, request.pack());
             Instant ended = clock.instant();
             recordSafely(request, primaryProvider.providerName(), providerResult.modelVersion(), providerResult.promptVersion(), started, ended, "SUCCESS", null,
                     providerCall.inputTokens(), providerCall.outputTokens());
@@ -65,7 +65,7 @@ public final class TriageEngine {
     private TriageDecision decision(TriageRequest request, ProviderTriageResult result,
             ReliabilitySignal reliability, DecisionSource source) {
         PriorityResult priority = priorityScorer.score(new PriorityContext(result.urgency(), result.slaRisk(), result.category(),
-                request.subject() + "\n" + request.message(), request.repeatContactCount()));
+                request.subject() + "\n" + request.message(), request.repeatContactCount(), request.pack()));
         return new TriageDecision(request.ticketId(), result.category(), result.urgency(), result.slaRisk(), result.sentiment(),
                 result.summary(), result.evidence(), result.policyIds(), result.explanation(), result.recommendedActions(),
                 result.suggestedReply(), reliability, result.warnings(), priority.score(), priority.appliedRules(), source,
