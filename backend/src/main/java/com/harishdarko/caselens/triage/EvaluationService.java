@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -53,11 +54,11 @@ public class EvaluationService {
         int fullMatches = 0;
         int corrections = 0;
         List<Long> latencies = new ArrayList<>();
-        List<UUID> ticketIds = new ArrayList<>();
-        Map<UUID, Ticket> scopedTickets = new HashMap<>();
+        List<UUID> ticketIds = storedResults.stream().map(TriageResult::getTicketId).toList();
+        Map<UUID, Ticket> scopedTickets = ticketIds.isEmpty() ? Map.of()
+                : tickets.findByWorkspaceIdAndIdIn(workspaceId, new HashSet<>(ticketIds)).stream()
+                        .collect(java.util.stream.Collectors.toMap(Ticket::getId, ticket -> ticket));
         for (TriageResult result : storedResults) {
-            ticketIds.add(result.getTicketId());
-            tickets.findByIdAndWorkspaceId(result.getTicketId(), workspaceId).ifPresent(ticket -> scopedTickets.put(ticket.getId(), ticket));
             TriageFeedback correction = latestFeedback.get(result.getId());
             if (correction != null && correction.differsFrom(result)) corrections++;
             TriageJob job = jobsByEvent.get(result.getEventId());

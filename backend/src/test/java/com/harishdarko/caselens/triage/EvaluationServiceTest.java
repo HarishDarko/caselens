@@ -44,7 +44,7 @@ class EvaluationServiceTest {
 
         when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(result));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
-        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(java.util.Optional.of(ticket));
+        when(tickets.findByWorkspaceIdAndIdIn(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(ticket));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(correction));
         when(groundTruth.findAll()).thenReturn(List.of(new EvaluationGroundTruth("synthetic-session",
                 Category.CHARGING_SESSION, Urgency.HIGH)));
@@ -138,7 +138,7 @@ class EvaluationServiceTest {
                 null, Urgency.HIGH, null, "Escalation review", "demo-reviewer", FINISHED);
         when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(result));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
-        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(java.util.Optional.of(ticket));
+        when(tickets.findByWorkspaceIdAndIdIn(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(ticket));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(sameValue, laterId));
         when(groundTruth.findAll()).thenReturn(List.of());
         when(invocations.findByTicketIds(List.of(ticketId))).thenReturn(List.of());

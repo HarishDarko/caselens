@@ -1,5 +1,7 @@
 package com.harishdarko.caselens.ticket;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import jakarta.persistence.LockModeType;
@@ -11,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface TicketRepository extends JpaRepository<Ticket, UUID>, JpaSpecificationExecutor<Ticket> {
     Optional<Ticket> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
+
+    List<Ticket> findByWorkspaceIdAndIdIn(UUID workspaceId, Collection<UUID> ids);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from Ticket t where t.id = :id and t.workspaceId = :workspaceId")
