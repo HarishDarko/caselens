@@ -7,6 +7,7 @@ import java.util.Locale;
 final class RuleBasedTriageProvider implements TriageProvider {
     private final String modelVersion;
     private final String promptVersion;
+    private final PackRules pack = PackRules.evCharging();
 
     RuleBasedTriageProvider(String modelVersion, String promptVersion) {
         this.modelVersion = modelVersion;
@@ -35,32 +36,19 @@ final class RuleBasedTriageProvider implements TriageProvider {
     }
 
     private Category category(String text) {
-        if (containsAny(text, "refund", "charged", "payment", "billing", "receipt")) return Category.BILLING;
-        if (containsAny(text, "authorization", "rfid", "account", "login", "sign in")) return Category.ACCOUNT_ACCESS;
-        if (containsAny(text, "heartbeat", "network", "offline", "connectivity", "last-seen")) return Category.CONNECTIVITY;
-        if (containsAny(text, "connector", "charger", "hardware", "plug")) return Category.CHARGER_HARDWARE;
-        if (containsAny(text, "session", "charging", "charge did not", "never started")) return Category.CHARGING_SESSION;
-        if (containsAny(text, "feature", "suggestion", "how do", "question")) return Category.GENERAL;
-        return Category.GENERAL;
+        return pack.category(text).orElse(Category.GENERAL);
     }
 
     private Urgency urgency(String text, Category category) {
-        if (containsAny(text, "safety", "fire", "smoke", "site-wide", "outage", "multiple users")) return Urgency.CRITICAL;
-        if (containsAny(text, "blocked", "never started", "did not start", "charged twice", "payment captured")) return Urgency.HIGH;
-        if (category == Category.GENERAL) return Urgency.LOW;
-        return Urgency.MEDIUM;
+        return pack.urgency(text).orElse(category == Category.GENERAL ? Urgency.LOW : Urgency.MEDIUM);
     }
 
     private SlaRisk slaRisk(String text, Category category) {
-        if (containsAny(text, "site-wide", "outage", "multiple users", "payment captured", "blocked")) return SlaRisk.HIGH;
-        return category == Category.GENERAL ? SlaRisk.LOW : SlaRisk.MEDIUM;
+        return pack.slaRisk(text).orElse(category == Category.GENERAL ? SlaRisk.LOW : SlaRisk.MEDIUM);
     }
 
     private Sentiment sentiment(String text) {
-        if (containsAny(text, "furious", "angry", "unacceptable", "again", "still not")) return Sentiment.ANGRY;
-        if (containsAny(text, "failed", "cannot", "can't", "unable", "error", "never")) return Sentiment.NEGATIVE;
-        if (containsAny(text, "thanks", "thank you", "works well")) return Sentiment.POSITIVE;
-        return Sentiment.NEUTRAL;
+        return pack.sentiment(text).orElse(Sentiment.NEUTRAL);
     }
 
     private List<EvidenceItem> evidence(String subject, String message, String text, Category category) {
@@ -72,16 +60,7 @@ final class RuleBasedTriageProvider implements TriageProvider {
     }
 
     private List<String> policies(String text, Category category) {
-        List<String> ids = new ArrayList<>();
-        if (containsAny(text, "payment", "charged")
-                && containsAny(text, "no session", "did not start", "never started", "session blocked")) {
-            ids.add("PAYMENT_CAPTURE_NO_SESSION");
-        }
-        if (containsAny(text, "charged twice", "duplicate")) ids.add("DUPLICATE_CHARGE_REVIEW");
-        if (containsAny(text, "site-wide", "outage", "multiple users")) ids.add("CHARGER_SITE_OUTAGE");
-        if (category == Category.CHARGER_HARDWARE && containsAny(text, "connector", "fault")) ids.add("CONNECTOR_FAULT");
-        if (category == Category.CONNECTIVITY) ids.add("OCPP_CONNECTIVITY");
-        if (category == Category.ACCOUNT_ACCESS) ids.add("ACCOUNT_AUTHORIZATION");
+        List<String> ids = pack.policyIds(text, category);
         return ids.subList(0, Math.min(ids.size(), 3));
     }
 
@@ -91,19 +70,6 @@ final class RuleBasedTriageProvider implements TriageProvider {
     }
 
     private List<String> actions(Category category) {
-        return switch (category) {
-            case BILLING -> List.of("Verify payment and session state", "Collect a transaction reference for billing review");
-            case CHARGER_HARDWARE -> List.of("Isolate the connector fault", "Check alternate connector availability");
-            case CONNECTIVITY -> List.of("Check heartbeat and last-seen timestamp", "Verify the network path");
-            case ACCOUNT_ACCESS -> List.of("Verify account or RFID authorization state", "Do not request secrets");
-            case CHARGING_SESSION -> List.of("Verify the session lifecycle state", "Check whether another connector is available");
-            case REFUND -> List.of("Verify the captured payment state", "Escalate for refund review after confirmation");
-            case GENERAL -> List.of("Clarify the requested outcome", "Respond with the next supported step");
-        };
-    }
-
-    private boolean containsAny(String text, String... values) {
-        for (String value : values) if (text.contains(value)) return true;
-        return false;
+        return pack.actions(category);
     }
 }
