@@ -28,6 +28,11 @@ function pendingJob(status: string, lastErrorCode: string | null = null) {
   return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status, attemptCount: status === 'QUEUED' ? 0 : 1, startedAt: null, completedAt: null, lastErrorCode, attempts: [] }, result: null })
 }
 
+// The session POST may carry a query string (?seed=true asks the API to seed the workspace in the same call).
+function isSessionPost(url: string, init?: RequestInit) {
+  return new URL(url, 'http://test').pathname === '/api/demo/session' && init?.method === 'POST'
+}
+
 function mockBackend(options: BackendOptions = {}) {
   let pendingPolls = options.pendingProcessingPolls ?? 0
   const pollSteps = [...(options.pollSteps ?? [])]
@@ -37,8 +42,8 @@ function mockBackend(options: BackendOptions = {}) {
     if (input === undefined) return response({})
     const url = String(input)
     if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesStatus ? response({ detail: 'Unavailable' }, options.industriesStatus) : response(sessionOptions)
-    if (url.endsWith('/api/demo/session') && sessionStatuses.length) return response({ detail: 'Request failed with status 429' }, sessionStatuses.shift())
-    if (url.endsWith('/api/demo/session')) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
+    if (isSessionPost(url, init) && sessionStatuses.length) return response({ detail: 'Request failed with status 429' }, sessionStatuses.shift())
+    if (isSessionPost(url, init)) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
     if (url.endsWith('/api/demo/runtime')) return response({ environment: 'LOCAL_REVIEW', database: 'NEON_POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'GROQ' })
     if (url.includes('/api/demo/scenarios/provider-retry-demo')) return response({ ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }, 201)
@@ -130,7 +135,7 @@ test('lists the industries and sends the picked industry when the workspace open
   await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
-  const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
+  const sessionCall = fetchMock.mock.calls.find(([url, init]) => isSessionPost(String(url), init))
   expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
   expect(screen.getByText('Industry: SaaS support')).toBeInTheDocument()
   expect(screen.getByText('Whole team locked out after an SSO change')).toBeInTheDocument()
@@ -146,10 +151,10 @@ test('still opens an EV charging workspace when the industry list does not load'
   await launch()
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
-  const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session') && init?.method === 'POST')
+  const sessionCall = fetchMock.mock.calls.find(([url, init]) => isSessionPost(String(url), init))
   expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
   expect(screen.getByText('Every charger at the demo site appears offline')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Load charger-offline-site-wide' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' })).toBeEnabled()
 })
 
 test('lets the visitor pick and launch at once, before a cold API answers the industry list', async () => {
@@ -180,7 +185,7 @@ test('gives the full EV journey when the API does not know the industry list yet
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
-  fireEvent.click(screen.getByRole('button', { name: /Load charger-offline-site-wide/i }))
+  fireEvent.click(screen.getByRole('button', { name: /Load ticket: Every charger at the demo site appears offline/i }))
 
   await waitFor(() => expect(screen.getAllByText('Every charger at the demo site appears offline').length).toBeGreaterThan(1))
   expect(screen.getByRole('button', { name: /Review CL-A104/i })).toBeInTheDocument()
@@ -191,7 +196,7 @@ test('loads a synthetic scenario into the inbox and records reviewer feedback', 
   await launch()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
 
-  fireEvent.click(screen.getByRole('button', { name: /Load charger-offline-site-wide/i }))
+  fireEvent.click(screen.getByRole('button', { name: /Load ticket: Every charger at the demo site appears offline/i }))
   await waitFor(() => expect(screen.getAllByText('Every charger at the demo site appears offline').length).toBeGreaterThan(0))
   fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
   expect(screen.getByRole('heading', { name: 'Why this ticket is here' })).toBeInTheDocument()
@@ -503,4 +508,122 @@ test('says in plain words when the latest numbers could not load', async () => {
   // The client tries a GET once more after a 503 (1 second later), so the failed state comes after that try.
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.'), { timeout: 3_000 })
   expect(screen.queryByText(/status 503/)).not.toBeInTheDocument()
+})
+
+// Opening a workspace in one call: POST /api/demo/session?seed=true seeds the workspace and returns its tickets and the
+// runtime summary. mockBackend answers like the API before this change (a bare session), which is the deploy gap.
+const seededRuntime = { environment: 'AWS_DEMO', database: 'NEON_POSTGRESQL', queue: 'AMAZON_SQS', aiProvider: 'GROQ' }
+const chargerTicket = { ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide', createdAt: '2026-07-11T09:15:00Z' }
+
+function completedProcessing(ticketId: string, priorityScore: number, slaRisk: 'LOW' | 'MEDIUM' | 'HIGH') {
+  return response({ job: { id: `job-${ticketId}`, eventId: `event-${ticketId}`, ticketId, status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [] }, result: { id: `result-${ticketId}`, ticketId, category: 'GENERAL_QUESTION', urgency: 'LOW', slaRisk, sentiment: 'NEUTRAL', summary: `Summary for ${ticketId}.`, evidence: [{ quote: 'charged', meaning: 'A test quote.' }], policyIds: [], explanation: 'A test explanation.', recommendedActions: [], suggestedReply: '', reliabilitySignal: 'MEDIUM', warnings: [], priorityScore, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'test-model', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
+}
+
+function mockSeededBackend(tickets: unknown[] = [apiTicket], processing: Record<string, () => Response> = {}) {
+  const backend = mockBackend()
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/api/demo/session?seed=true') && init?.method === 'POST') return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z', industry: 'ev-charging', tickets, runtime: seededRuntime })
+    const ticketId = Object.keys(processing).find((id) => url.endsWith(`/api/tickets/${id}/processing`))
+    if (ticketId) return processing[ticketId]()
+    return backend(input, init)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+function apiCallsAfterLaunch(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.map(([url, init]) => `${init?.method ?? 'GET'} ${String(url)}`).filter((call) => call !== 'GET /api/demo/session')
+}
+
+function rowOrder() {
+  return screen.getAllByRole('article').map((row) => row.querySelector('.ticket-id')?.textContent)
+}
+
+test('opens a seeded workspace with one request and shows its tickets and runtime', async () => {
+  const fetchMock = mockSeededBackend()
+  render(<App />)
+  await launch()
+
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  expect(screen.getByText('AWS demo')).toBeInTheDocument()
+  expect(screen.getByText('Amazon SQS')).toBeInTheDocument()
+  expect(apiCallsAfterLaunch(fetchMock)).toEqual(['POST /api/demo/session?seed=true'])
+  const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session?seed=true') && init?.method === 'POST')
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
+  expect(screen.getByRole('button', { name: 'Operations' })).toHaveTextContent('OK')
+})
+
+test('still opens through reset and the separate reads when the API returns a bare session (deploy gap)', async () => {
+  const fetchMock = mockBackend()
+  render(<App />)
+  await launch()
+
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  expect(screen.getByText('Local review')).toBeInTheDocument()
+  expect(apiCallsAfterLaunch(fetchMock)).toEqual(expect.arrayContaining(['POST /api/demo/session?seed=true', 'POST /api/demo/reset', 'GET /api/tickets?page=0&size=50', 'GET /api/demo/runtime']))
+})
+
+test('loads Evaluation and Operations when they are opened, and never shows numbers from an earlier workspace', async () => {
+  const fetchMock = mockSeededBackend()
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  expect(calls(fetchMock, '/api/evaluation')).toBe(1)
+  expect(calls(fetchMock, '/api/operations/failures?page=0&size=50')).toBe(1)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  expect(screen.getByText('Loading the evaluation numbers for this workspace...')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
+})
+
+test('lists triaged tickets first, by priority score and then SLA risk, and untriaged ones after in API order', async () => {
+  const receipt = { ...apiTicket, id: 'ticket-a103', displayId: 'CL-A103', subject: 'Receipt requested for a completed session', scenarioKey: 'receipt-request-general' }
+  const offline = { ...chargerTicket, id: 'ticket-a106', displayId: 'CL-A106' }
+  mockSeededBackend([receipt, offline, apiTicket], {
+    'ticket-a103': () => completedProcessing('ticket-a103', 40, 'LOW'),
+    'ticket-a106': () => completedProcessing('ticket-a106', 40, 'HIGH'),
+    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'MEDIUM'),
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  expect(rowOrder()).toEqual(['CL-A103', 'CL-A106', 'CL-A102'])
+  expect(screen.getByText('Triaged cases first, by priority and SLA risk')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A103/ }))
+  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a103.').length).toBeGreaterThan(0))
+  expect(rowOrder()).toEqual(['CL-A103', 'CL-A106', 'CL-A102'])
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/ }))
+  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a102.').length).toBeGreaterThan(0))
+  expect(rowOrder()).toEqual(['CL-A102', 'CL-A103', 'CL-A106'])
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A106/ }))
+  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a106.').length).toBeGreaterThan(0))
+  expect(rowOrder()).toEqual(['CL-A102', 'CL-A106', 'CL-A103'])
+})
+
+test('opens the featured ticket already in the inbox instead of adding a copy, with a plain label', async () => {
+  const fetchMock = mockSeededBackend([chargerTicket, apiTicket])
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A104')).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /charger-offline-site-wide/ })).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Why this ticket is here' })).toBeInTheDocument())
+  expect(document.querySelector('.detail-column .ticket-id')).toHaveTextContent('CL-A104')
+  expect(screen.getAllByRole('article')).toHaveLength(2)
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/demo/scenarios/'))).toBe(false)
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a104/triage'), expect.objectContaining({ method: 'POST' })))
 })
