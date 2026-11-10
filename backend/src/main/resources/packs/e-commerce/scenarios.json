@@ -5,7 +5,7 @@
     "message": "Tracking for order 48213 says delivered yesterday at 3 pm, but nothing arrived at my door and the neighbours have not seen it either.",
     "channel": "EMAIL",
     "expectedCategory": "DELIVERY",
-    "expectedUrgency": "HIGH"
+    "expectedUrgency": "MEDIUM"
   },
   {
     "key": "shop-mug-broken",
@@ -21,7 +21,7 @@
     "message": "I returned the jacket two weeks ago and your site marks the return as received, but the refund has still not reached my card.",
     "channel": "CHAT",
     "expectedCategory": "RETURN_REFUND",
-    "expectedUrgency": "MEDIUM"
+    "expectedUrgency": "HIGH"
   },
   {
     "key": "shop-two-payments",
@@ -37,12 +37,12 @@
     "message": "I just placed order 60142 and noticed it still has my old address. Can you change it before it ships?",
     "channel": "CHAT",
     "expectedCategory": "ORDER_STATUS",
-    "expectedUrgency": "MEDIUM"
+    "expectedUrgency": "HIGH"
   },
   {
     "key": "shop-checkout-down",
-    "subject": "Checkout fails for every card",
-    "message": "Every card I try fails at the payment step with an error, and my friend sees the same thing. Is checkout down for everyone?",
+    "subject": "Every card fails at checkout",
+    "message": "I have tried three different cards on my phone and my laptop, and every card fails at the payment step with a payment processing error. Is your payment system down?",
     "channel": "EMAIL",
     "expectedCategory": "PAYMENT",
     "expectedUrgency": "CRITICAL"

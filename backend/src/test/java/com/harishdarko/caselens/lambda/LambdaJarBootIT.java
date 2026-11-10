@@ -63,6 +63,8 @@ class LambdaJarBootIT {
             try {
                 assertThat((Boolean) context.getClass().getMethod("isActive").invoke(context)).isTrue();
                 assertThat(latestVersion()).as("the jar's own Flyway applied its newest migration").isEqualTo(newestVersion);
+                assertThat(count("SELECT count(*) FROM evaluation_ground_truth WHERE scenario_key LIKE 'saas-%' OR scenario_key LIKE 'shop-%'"))
+                        .as("expected labels for the SaaS support and e-commerce demo tickets (V7)").isEqualTo(16);
             } finally {
                 context.getClass().getMethod("close").invoke(context);
             }
@@ -79,6 +81,15 @@ class LambdaJarBootIT {
         try (ZipFile zip = new ZipFile(jar)) {
             return zip.stream().map(entry -> migration.matcher(entry.getName())).filter(Matcher::matches)
                     .map(matcher -> Integer.valueOf(matcher.group(1))).sorted().toList();
+        }
+    }
+
+    private int count(String sql) throws Exception {
+        try (Connection connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                Statement statement = connection.createStatement();
+                ResultSet row = statement.executeQuery(sql)) {
+            assertThat(row.next()).isTrue();
+            return row.getInt(1);
         }
     }
 

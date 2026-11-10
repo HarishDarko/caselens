@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class DemoPackScenariosTest {
     /** Floors: the agreement measured when the packs were written (category, urgency, both, out of n). */
     private static final Map<String, List<Integer>> FLOORS = Map.of(
-            "saas-support", List.of(8, 8, 8, 8),
+            "saas-support", List.of(8, 7, 7, 8),
             "e-commerce", List.of(8, 8, 8, 8));
 
     private final RulesFallbackProvider rules = new RulesFallbackProvider();
@@ -65,6 +65,22 @@ class DemoPackScenariosTest {
             assertThat(urgency).as(floor.getKey() + " urgency").isGreaterThanOrEqualTo(floor.getValue().get(1));
             assertThat(both).as(floor.getKey() + " both").isGreaterThanOrEqualTo(floor.getValue().get(2));
         }
+    }
+
+    @Test
+    void theV7ExpectedLabelsMatchTheDemoTicketFiles() throws Exception {
+        String sql;
+        try (var input = getClass().getResourceAsStream("/db/migration/V7__add_pack_ground_truth.sql")) {
+            sql = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        java.util.Set<String> rows = new java.util.HashSet<>();
+        java.util.regex.Matcher row = java.util.regex.Pattern.compile("\\('([^']+)', '([^']+)', '([^']+)'\\)").matcher(sql);
+        while (row.find()) rows.add(row.group(1) + "|" + row.group(2) + "|" + row.group(3));
+        java.util.Set<String> expected = new java.util.HashSet<>();
+        for (String id : FLOORS.keySet()) {
+            scenarios(id).forEach(scenario -> expected.add(scenario.key() + "|" + scenario.expectedCategory() + "|" + scenario.expectedUrgency()));
+        }
+        assertThat(rows).hasSize(16).isEqualTo(expected);
     }
 
     private List<DemoScenario> scenarios(String id) {

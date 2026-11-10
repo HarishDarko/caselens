@@ -41,7 +41,7 @@ class PostgresMigrationIntegrationTest {
                 .load();
 
         flyway.migrate();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("6");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("7");
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -81,7 +81,7 @@ class PostgresMigrationIntegrationTest {
 
             try (ResultSet truth = statement.executeQuery("SELECT count(*) FROM evaluation_ground_truth")) {
                 assertThat(truth.next()).isTrue();
-                assertThat(truth.getInt(1)).isEqualTo(8);
+                assertThat(truth.getInt(1)).isEqualTo(24);
             }
 
             try (ResultSet indexes = statement.executeQuery(

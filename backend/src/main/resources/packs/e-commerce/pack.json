@@ -4,51 +4,51 @@
   "categories": ["ORDER_STATUS", "DELIVERY", "RETURN_REFUND", "PAYMENT", "PRODUCT_ISSUE", "ACCOUNT_ACCESS", "GENERAL"],
   "generalCategory": "GENERAL",
   "categoryDescriptions": {
-    "ORDER_STATUS": "Where an order is, or a change to an order before it ships.",
-    "DELIVERY": "A parcel that is late, lost or sent to the wrong address.",
+    "ORDER_STATUS": "Changes or cancellations before an order ships, and orders that have not shipped yet.",
+    "DELIVERY": "Tracking, and parcels that are late, lost or delivered to the wrong place after shipping.",
     "RETURN_REFUND": "Returns, exchanges and refunds.",
     "PAYMENT": "A failed, double or wrong payment at checkout.",
-    "PRODUCT_ISSUE": "A product that arrived broken, faulty or not as described.",
+    "PRODUCT_ISSUE": "An item that arrived broken, faulty, wrong, missing from the box or not as described.",
     "ACCOUNT_ACCESS": "Sign-in and account problems.",
     "GENERAL": "Questions, feedback and anything that fits no other category."
   },
   "policyVersion": "shop-v1",
   "policies": [
-    { "id": "LOST_PARCEL_CLAIM", "guidance": "Check the carrier tracking history before opening a lost-parcel claim." },
+    { "id": "LOST_PARCEL_CLAIM", "guidance": "Check the carrier's proof of delivery (photo or GPS) and the address; within 48 hours of the delivered scan, ask the customer to check nearby, then open a claim." },
     { "id": "DAMAGED_ITEM", "guidance": "Ask for a photo of the damage and offer a replacement or a refund under the returns policy." },
-    { "id": "REFUND_WINDOW", "guidance": "Confirm the return was received inside the 30-day window before approving a refund." },
-    { "id": "DOUBLE_CHARGE", "guidance": "Collect the order number and payment reference; a pending duplicate payment usually drops off within 5 days." },
+    { "id": "REFUND_TRACE", "guidance": "Confirm the return was received; if the refund has not reached the customer, trace it with the payment provider and share the refund reference." },
+    { "id": "DOUBLE_CHARGE", "guidance": "Check the payment processor first: refund a second capture at once; if it is only a pending authorization, explain that it drops off within 5 days." },
     { "id": "ADDRESS_CHANGE", "guidance": "Change the address only before the order ships; after that, ask the carrier to redirect it." },
-    { "id": "ACCOUNT_RECOVERY", "guidance": "Verify the account email before resetting access; never ask for the password." }
+    { "id": "ACCOUNT_RECOVERY", "guidance": "Check for a locked account or an order placed as a guest before sending another reset; verify the account email and never ask for the password." }
   ],
   "rules": {
     "category": [
       { "value": "PAYMENT", "terms": ["charged twice", "two payments", "payment step", "checkout", "declined"] },
       { "value": "RETURN_REFUND", "terms": ["refund", "return", "exchange"] },
-      { "value": "PRODUCT_ISSUE", "terms": ["broken", "faulty", "damaged", "not as described", "stopped working"] },
+      { "value": "PRODUCT_ISSUE", "terms": ["broken", "faulty", "damaged", "not as described", "stopped working", "wrong item", "missing item"] },
       { "value": "DELIVERY", "terms": ["tracking", "delivered", "arrived", "parcel", "courier"] },
-      { "value": "ORDER_STATUS", "terms": ["address", "cancel my order", "where is my order", "order status"] },
+      { "value": "ORDER_STATUS", "terms": ["delivery address", "shipping address", "old address", "cancel my order", "not shipped"] },
       { "value": "ACCOUNT_ACCESS", "terms": ["sign in", "log in", "password", "my account"] },
       { "value": "GENERAL", "terms": ["run small", "size", "question", "how do i"] }
     ],
     "urgency": [
-      { "value": "CRITICAL", "terms": ["every card", "for everyone", "all customers"] },
-      { "value": "HIGH", "terms": ["charged twice", "two payments", "never arrived", "nothing arrived"] }
+      { "value": "CRITICAL", "terms": ["every card", "payment system down", "all customers"] },
+      { "value": "HIGH", "terms": ["charged twice", "two payments", "before it ships", "still not reached"] }
     ],
     "slaRisk": [
-      { "value": "HIGH", "terms": ["every card", "for everyone", "two payments", "nothing arrived"] }
+      { "value": "HIGH", "terms": ["every card", "payment system down", "two payments"] }
     ],
     "sentiment": [
-      { "value": "ANGRY", "terms": ["unacceptable", "furious", "again", "still not"] },
+      { "value": "ANGRY", "terms": ["unacceptable", "furious", "still not"] },
       { "value": "NEGATIVE", "terms": ["broken", "cannot", "fails", "nothing arrived", "froze"] },
       { "value": "POSITIVE", "terms": ["thanks", "thank you", "love"] }
     ],
     "policies": [
       { "id": "LOST_PARCEL_CLAIM", "category": "DELIVERY", "allOf": [["delivered", "never arrived", "nothing arrived", "lost"]] },
       { "id": "DAMAGED_ITEM", "category": "PRODUCT_ISSUE", "allOf": [["broken", "damaged"]] },
-      { "id": "REFUND_WINDOW", "category": "RETURN_REFUND", "allOf": [["refund"], ["return"]] },
+      { "id": "REFUND_TRACE", "category": "RETURN_REFUND", "allOf": [["refund"], ["return"]] },
       { "id": "DOUBLE_CHARGE", "allOf": [["charged twice", "two payments"]] },
-      { "id": "ADDRESS_CHANGE", "category": "ORDER_STATUS", "allOf": [["address"]] },
+      { "id": "ADDRESS_CHANGE", "category": "ORDER_STATUS", "allOf": [["delivery address", "shipping address", "old address"]] },
       { "id": "ACCOUNT_RECOVERY", "category": "ACCOUNT_ACCESS", "allOf": [["password", "sign in"]] }
     ],
     "actions": {
@@ -57,7 +57,7 @@
       "RETURN_REFUND": ["Check that the return was received", "Confirm the refund date and method"],
       "PAYMENT": ["Compare the order with the payment records", "Explain when a pending duplicate drops off"],
       "PRODUCT_ISSUE": ["Ask for a photo of the item", "Offer a replacement or a refund"],
-      "ACCOUNT_ACCESS": ["Verify the account email", "Send a password reset link, never ask for the password"],
+      "ACCOUNT_ACCESS": ["Check for a locked account or a guest order", "Verify the account email, never ask for the password"],
       "GENERAL": ["Clarify the requested outcome", "Respond with the next supported step"]
     }
   },
@@ -74,14 +74,14 @@
     "urgency": {
       "LOW": ["question", "size", "thanks"],
       "MEDIUM": ["issue", "problem", "broken", "refund"],
-      "HIGH": ["charged twice", "two payments", "never arrived", "nothing arrived"],
-      "CRITICAL": ["every card", "for everyone", "all customers"]
+      "HIGH": ["charged twice", "two payments", "before it ships", "still not reached"],
+      "CRITICAL": ["every card", "payment system down", "all customers"]
     }
   },
   "priority": {
     "PAYMENT_IMPACT": { "explanation": "Payment or refund impact detected", "terms": ["charged twice", "two payments", "refund"] },
     "SERVICE_BLOCKED": { "explanation": "The customer cannot pay or sign in", "terms": ["cannot sign in", "fails at the payment", "declined"] },
-    "BROAD_IMPACT": { "explanation": "Many customers are affected", "terms": ["every card", "for everyone", "all customers"] },
+    "BROAD_IMPACT": { "explanation": "Many customers are affected", "terms": ["every card", "payment system down", "all customers"] },
     "POSITIVE_GENERAL_REQUEST": { "explanation": "Positive general or product question", "terms": ["thanks", "thank you", "love"] }
   }
 }

@@ -10,15 +10,15 @@
   {
     "key": "saas-mfa-new-phone",
     "subject": "New phone, two-factor codes no longer arrive",
-    "message": "I replaced my phone and the authenticator app did not move over, so I cannot get the two-factor codes to sign in. Can you reset two-factor for my account?",
+    "message": "I replaced my phone and the authenticator app did not move over, so I am locked out and cannot get the two-factor codes. Can you reset two-factor for my account?",
     "channel": "WEB",
     "expectedCategory": "LOGIN_ACCESS",
-    "expectedUrgency": "MEDIUM"
+    "expectedUrgency": "HIGH"
   },
   {
     "key": "saas-duplicate-invoice",
     "subject": "Charged twice for the March invoice",
-    "message": "Our card was charged twice for invoice INV-2026-0311 on the same day. Please refund the duplicate charge and confirm which payment you kept.",
+    "message": "Our card ending in 4412 was charged twice on the same day for invoice INV-2026-0311. Please refund the duplicate charge and send a confirmation once it is done.",
     "channel": "EMAIL",
     "expectedCategory": "BILLING",
     "expectedUrgency": "HIGH"
@@ -41,8 +41,8 @@
   },
   {
     "key": "saas-webhook-401",
-    "subject": "Webhooks stopped arriving yesterday",
-    "message": "Our webhook endpoint has not received any events since yesterday afternoon. The delivery log shows failed attempts with a 401 response.",
+    "subject": "Webhook deliveries fail with 401",
+    "message": "All webhook deliveries to our endpoint have failed with a 401 response since yesterday afternoon. We have not changed our webhook secret; did your signing key change?",
     "channel": "CHAT",
     "expectedCategory": "INTEGRATION",
     "expectedUrgency": "HIGH"
@@ -53,7 +53,7 @@
     "message": "We are closing our account at the end of the month. Please export all project data for us, and then delete our workspace and the personal data of our users.",
     "channel": "EMAIL",
     "expectedCategory": "DATA_REQUEST",
-    "expectedUrgency": "MEDIUM"
+    "expectedUrgency": "LOW"
   },
   {
     "key": "saas-custom-field-question",

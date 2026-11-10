@@ -4,26 +4,26 @@
   "categories": ["LOGIN_ACCESS", "BILLING", "BUG", "PERFORMANCE", "INTEGRATION", "DATA_REQUEST", "GENERAL"],
   "generalCategory": "GENERAL",
   "categoryDescriptions": {
-    "LOGIN_ACCESS": "Sign-in, password, single sign-on (SSO) and two-factor problems.",
+    "LOGIN_ACCESS": "Sign-in, password, single sign-on (SSO), two-factor, role and permission problems.",
     "BILLING": "Invoices, charges, plan changes and refunds.",
     "BUG": "A feature that does not work as expected or shows an error.",
-    "PERFORMANCE": "The product is slow, timing out or down.",
-    "INTEGRATION": "Problems with the API, webhooks or a connected app.",
+    "PERFORMANCE": "The product or its API is slow, timing out or down.",
+    "INTEGRATION": "Problems with webhooks, API keys or a connected app set up by the customer.",
     "DATA_REQUEST": "Requests to export, delete or correct account data.",
     "GENERAL": "Questions, feedback and anything that fits no other category."
   },
   "policyVersion": "saas-v1",
   "policies": [
-    { "id": "SSO_LOCKOUT", "guidance": "Check the identity provider status and the user's role before changing SSO settings." },
-    { "id": "MFA_RESET", "guidance": "Confirm the request with the account owner before removing two-factor authentication." },
-    { "id": "DUPLICATE_INVOICE", "guidance": "Collect both invoice numbers and escalate to billing; do not promise a refund before review." },
+    { "id": "SSO_LOCKOUT", "guidance": "Confirm the requester is a workspace admin, read the SAML or OIDC error, and offer a temporary bypass while the identity provider settings are fixed." },
+    { "id": "MFA_RESET", "guidance": "Verify identity out of band, through another workspace admin or the billing contact, before removing two-factor authentication." },
+    { "id": "DUPLICATE_INVOICE", "guidance": "Check the payment processor for two captures on the same invoice; refund the duplicate and send a receipt." },
     { "id": "OUTAGE_INCIDENT", "guidance": "Check the status page and link the ticket to the open incident." },
     { "id": "WEBHOOK_FAILURE", "guidance": "Ask for the endpoint response code and recent delivery IDs; never ask for secrets or API keys." },
-    { "id": "DATA_DELETION", "guidance": "Log the request and confirm the requester owns the account before anything is deleted." }
+    { "id": "DATA_DELETION", "guidance": "Confirm the requester owns the account, deliver any requested export first, check for active subscriptions or legal holds, then schedule deletion for the requested date." }
   ],
   "rules": {
     "category": [
-      { "value": "DATA_REQUEST", "terms": ["export", "delete our", "personal data", "gdpr", "data request"] },
+      { "value": "DATA_REQUEST", "terms": ["export all", "export our", "delete our", "personal data", "gdpr", "data request"] },
       { "value": "BILLING", "terms": ["invoice", "charged", "refund", "billing", "subscription"] },
       { "value": "PERFORMANCE", "terms": ["503", "outage", "is down", "down for", "timeout", "timing out", "slow", "minute to load"] },
       { "value": "INTEGRATION", "terms": ["webhook", "api key", "integration", "connected app"] },
@@ -33,13 +33,13 @@
     ],
     "urgency": [
       { "value": "CRITICAL", "terms": ["all users", "none of our", "whole team", "every call", "down for all"] },
-      { "value": "HIGH", "terms": ["blocked", "charged twice", "not received any", "stopped working"] }
+      { "value": "HIGH", "terms": ["blocked", "charged twice", "have failed", "stopped working", "locked out", "cannot sign in"] }
     ],
     "slaRisk": [
       { "value": "HIGH", "terms": ["all users", "none of our", "every call", "down for all", "blocked", "charged twice"] }
     ],
     "sentiment": [
-      { "value": "ANGRY", "terms": ["unacceptable", "furious", "again", "still not"] },
+      { "value": "ANGRY", "terms": ["unacceptable", "furious", "still not"] },
       { "value": "NEGATIVE", "terms": ["cannot", "failed", "error", "not received", "lost"] },
       { "value": "POSITIVE", "terms": ["thanks", "thank you", "great tool"] }
     ],
