@@ -69,7 +69,7 @@ public class EvaluationService {
             EvaluationGroundTruth truth = ticket == null ? null : expected.get(ticket.getScenarioKey());
             if (truth == null) continue;
             evaluated++;
-            boolean categoryMatch = result.getCategory() == truth.getExpectedCategory();
+            boolean categoryMatch = result.getCategory().equals(truth.getExpectedCategory());
             boolean urgencyMatch = result.getUrgency() == truth.getExpectedUrgency();
             if (categoryMatch) categoryMatches++;
             if (urgencyMatch) urgencyMatches++;

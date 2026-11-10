@@ -46,7 +46,7 @@ class SemanticValidatorTest {
     @Test
     void rejectsUnknownPolicies() {
         ProviderTriageResult result = new ProviderTriageResult(
-                Category.CHARGING_SESSION, Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                Category.of("CHARGING_SESSION"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
                 "Payment completed but the charging session did not begin.",
                 List.of(new EvidenceItem("session SESSION-DEMO-88421 never started", "Service blocked")),
                 List.of("PROMISE_IMMEDIATE_REFUND"),
@@ -72,7 +72,7 @@ class SemanticValidatorTest {
 
     private ProviderTriageResult validResult(List<EvidenceItem> evidence) {
         return new ProviderTriageResult(
-                Category.CHARGING_SESSION, Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                Category.of("CHARGING_SESSION"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
                 "Payment completed but the charging session did not begin.", evidence,
                 List.of("PAYMENT_CAPTURE_NO_SESSION"),
                 "Payment was captured while the expected charging service remained unavailable.",

@@ -15,7 +15,7 @@ class PriorityScorerTest {
     @MethodSource("baseScores")
     void appliesUrgencyAndSlaRisk(Urgency urgency, SlaRisk risk, int expected) {
         PriorityResult result = scorer.score(new PriorityContext(
-                urgency, risk, Category.GENERAL, "ordinary support request", 0));
+                urgency, risk, Category.of("GENERAL"), "ordinary support request", 0));
 
         assertThat(result.score()).isEqualTo(expected);
     }
@@ -32,7 +32,7 @@ class PriorityScorerTest {
     @MethodSource("indicatorRules")
     void appliesEachBusinessImpactRule(String text, int repeatCount, int expected, String ruleCode) {
         PriorityResult result = scorer.score(new PriorityContext(
-                Urgency.LOW, SlaRisk.LOW, Category.CHARGING_SESSION, text, repeatCount));
+                Urgency.LOW, SlaRisk.LOW, Category.of("CHARGING_SESSION"), text, repeatCount));
 
         assertThat(result.score()).isEqualTo(expected);
         assertThat(result.appliedRules()).extracting(RuleApplication::code).contains(ruleCode);
@@ -51,7 +51,7 @@ class PriorityScorerTest {
         PriorityResult result = scorer.score(new PriorityContext(
                 Urgency.CRITICAL,
                 SlaRisk.HIGH,
-                Category.REFUND,
+                Category.of("REFUND"),
                 "site-wide safety outage affecting multiple users; duplicate charge and refund; session blocked",
                 3));
 
@@ -61,7 +61,7 @@ class PriorityScorerTest {
     @Test
     void reducesPositiveGeneralRequestsWithoutGoingBelowZero() {
         PriorityResult result = scorer.score(new PriorityContext(
-                Urgency.LOW, SlaRisk.LOW, Category.GENERAL,
+                Urgency.LOW, SlaRisk.LOW, Category.of("GENERAL"),
                 "Thanks, everything works. I only have a feature request.", 0));
 
         assertThat(result.score()).isZero();

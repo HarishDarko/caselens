@@ -69,7 +69,7 @@ class FeedbackEvaluationApiIntegrationTest {
         Ticket ticket = tickets.findById(UUID.fromString(ticketId)).orElseThrow();
         UUID eventId = UUID.randomUUID();
         TriageResult original = TriageResult.from(eventId, principal.workspaceId(), new TriageDecision(ticket.getId(),
-                Category.CHARGING_SESSION, Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
+                Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
                 "Charging did not start", List.of(), List.of(), "The session did not start.",
                 List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.HIGH,
                 List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"), RESULT_CREATED, objectMapper);
@@ -78,7 +78,7 @@ class FeedbackEvaluationApiIntegrationTest {
         job.claim(CREATED.plusSeconds(1));
         job.complete(CREATED.plusSeconds(2));
         jobs.save(job);
-        groundTruth.save(new EvaluationGroundTruth("payment-captured-session-not-started", Category.CHARGING_SESSION, Urgency.HIGH));
+        groundTruth.save(new EvaluationGroundTruth("payment-captured-session-not-started", Category.of("CHARGING_SESSION"), Urgency.HIGH));
 
         mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
                         .header("Authorization", "Bearer " + token)

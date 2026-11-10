@@ -36,15 +36,15 @@ final class RuleBasedTriageProvider implements TriageProvider {
     }
 
     private Category category(String text) {
-        return pack.category(text).orElse(Category.GENERAL);
+        return pack.category(text).orElse(pack.generalCategory());
     }
 
     private Urgency urgency(String text, Category category) {
-        return pack.urgency(text).orElse(category == Category.GENERAL ? Urgency.LOW : Urgency.MEDIUM);
+        return pack.urgency(text).orElse(category.equals(pack.generalCategory()) ? Urgency.LOW : Urgency.MEDIUM);
     }
 
     private SlaRisk slaRisk(String text, Category category) {
-        return pack.slaRisk(text).orElse(category == Category.GENERAL ? SlaRisk.LOW : SlaRisk.MEDIUM);
+        return pack.slaRisk(text).orElse(category.equals(pack.generalCategory()) ? SlaRisk.LOW : SlaRisk.MEDIUM);
     }
 
     private Sentiment sentiment(String text) {

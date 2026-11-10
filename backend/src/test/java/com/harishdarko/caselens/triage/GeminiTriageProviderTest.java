@@ -46,7 +46,7 @@ class GeminiTriageProviderTest {
                 "Payment accepted", "Payment accepted but session never started."));
 
         assertThat(calls).hasValue(2);
-        assertThat(call.result().category()).isEqualTo(Category.BILLING);
+        assertThat(call.result().category()).isEqualTo(Category.of("BILLING"));
         assertThat(call.inputTokens()).isEqualTo(12L);
         assertThat(call.outputTokens()).isEqualTo(8L);
         assertThat(body.get()).contains("\"store\":false");

@@ -30,7 +30,7 @@ public final class PriorityScorer {
         if (context.repeatContactCount() >= 2) {
             score += apply(rules, "REPEAT_CONTACT", 10, "Customer contacted support at least twice");
         }
-        if (context.category() == Category.GENERAL) score += indicator(rules, text, "POSITIVE_GENERAL_REQUEST", -10);
+        if (context.category().equals(pack.generalCategory())) score += indicator(rules, text, "POSITIVE_GENERAL_REQUEST", -10);
         return new PriorityResult(Math.max(0, Math.min(100, score)), rules);
     }
 

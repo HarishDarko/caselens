@@ -87,7 +87,7 @@ class EvRulesCharacterizationTest {
         String text = subject + "\n" + message;
         golden.append("priority=").append(scorer.score(new PriorityContext(result.urgency(), result.slaRisk(), result.category(), text, 0)))
                 .append('\n');
-        for (Category category : Category.values()) {
+        for (Category category : PackRules.evCharging().categories()) {
             for (Urgency urgency : Urgency.values()) {
                 ProviderTriageResult decision = new ProviderTriageResult(category, urgency, result.slaRisk(), result.sentiment(),
                         result.summary(), result.evidence(), result.policyIds(), result.explanation(), result.recommendedActions(),

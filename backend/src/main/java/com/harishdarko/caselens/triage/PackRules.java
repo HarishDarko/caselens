@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -19,6 +20,8 @@ import tools.jackson.databind.ObjectMapper;
 final class PackRules {
     private static final PackRules EV_CHARGING = load("/packs/ev-charging/pack.json");
 
+    private final List<Category> categories;
+    private final Category generalCategory;
     private final List<TermRule<Category>> categoryRules;
     private final List<TermRule<Urgency>> urgencyRules;
     private final List<TermRule<SlaRisk>> slaRiskRules;
@@ -30,8 +33,15 @@ final class PackRules {
     private final Map<String, PriorityIndicator> priority;
 
     private PackRules(JsonNode root) {
+        List<Category> declared = new ArrayList<>();
+        for (JsonNode name : required(root, "categories")) declared.add(Category.of(name.asText()));
+        categories = List.copyOf(declared);
+        if (categories.isEmpty() || Set.copyOf(categories).size() != categories.size()) {
+            throw new IllegalStateException("Pack categories must be a non-empty list without repeats");
+        }
+        generalCategory = requireCategory(required(root, "generalCategory").asText());
         JsonNode rules = required(root, "rules");
-        categoryRules = termRules(required(rules, "category"), Category::valueOf);
+        categoryRules = termRules(required(rules, "category"), this::requireCategory);
         urgencyRules = termRules(required(rules, "urgency"), Urgency::valueOf);
         slaRiskRules = termRules(required(rules, "slaRisk"), SlaRisk::valueOf);
         sentimentRules = termRules(required(rules, "sentiment"), Sentiment::valueOf);
@@ -40,12 +50,12 @@ final class PackRules {
             List<List<String>> allOf = new ArrayList<>();
             for (JsonNode group : required(rule, "allOf")) allOf.add(strings(group));
             policies.add(new PolicyRule(required(rule, "id").asText(),
-                    rule.hasNonNull("category") ? Category.valueOf(rule.get("category").asText()) : null, List.copyOf(allOf)));
+                    rule.hasNonNull("category") ? requireCategory(rule.get("category").asText()) : null, List.copyOf(allOf)));
         }
         policyRules = List.copyOf(policies);
-        actions = byEnum(Category.values(), required(rules, "actions"));
+        actions = byCategory(required(rules, "actions"));
         JsonNode support = required(root, "evidenceSupport");
-        categorySupport = byEnum(Category.values(), required(support, "category"));
+        categorySupport = byCategory(required(support, "category"));
         urgencySupport = byEnum(Urgency.values(), required(support, "urgency"));
         Map<String, PriorityIndicator> indicators = new LinkedHashMap<>();
         for (String code : List.of("PAYMENT_IMPACT", "SERVICE_BLOCKED", "BROAD_IMPACT", "POSITIVE_GENERAL_REQUEST")) {
@@ -67,6 +77,19 @@ final class PackRules {
         } catch (IOException exception) {
             throw new IllegalStateException("Pack file could not be read: " + resource, exception);
         }
+    }
+
+    /** The categories of this pack, in file order. */
+    List<Category> categories() { return categories; }
+
+    /** The category used when no rule matches; the scorer and the rules treat it as the general, low-urgency case. */
+    Category generalCategory() { return generalCategory; }
+
+    /** The named category, which must belong to this pack. */
+    Category requireCategory(String name) {
+        Category category = Category.of(name);
+        if (!categories.contains(category)) throw new IllegalArgumentException("Category is not part of this pack");
+        return category;
     }
 
     Optional<Category> category(String text) { return firstMatch(categoryRules, text); }
@@ -108,6 +131,12 @@ final class PackRules {
         return List.copyOf(rules);
     }
 
+    private Map<Category, List<String>> byCategory(JsonNode node) {
+        Map<Category, List<String>> result = new LinkedHashMap<>();
+        for (Category category : categories) result.put(category, strings(required(node, category.name())));
+        return Map.copyOf(result);
+    }
+
     private static <E extends Enum<E>> Map<E, List<String>> byEnum(E[] values, JsonNode node) {
         Map<E, List<String>> result = new EnumMap<>(values[0].getDeclaringClass());
         for (E value : values) result.put(value, strings(required(node, value.name())));
@@ -131,7 +160,7 @@ final class PackRules {
 
     record PolicyRule(String id, Category category, List<List<String>> allOf) {
         boolean matches(String text, Category actual) {
-            if (category != null && category != actual) return false;
+            if (category != null && !category.equals(actual)) return false;
             for (List<String> group : allOf) if (!containsAny(text, group)) return false;
             return true;
         }

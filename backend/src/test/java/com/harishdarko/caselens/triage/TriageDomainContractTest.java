@@ -13,7 +13,7 @@ class TriageDomainContractTest {
         List<EvidenceItem> evidence = new ArrayList<>(List.of(
                 new EvidenceItem("Payment accepted", "Payment state")));
         ProviderTriageResult result = new ProviderTriageResult(
-                Category.BILLING, Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                Category.of("BILLING"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
                 "Payment completed but the session did not begin.", evidence,
                 List.of("PAYMENT_CAPTURE_NO_SESSION"),
                 "The payment was captured while service remained unavailable to the driver.",
@@ -26,7 +26,7 @@ class TriageDomainContractTest {
         assertThatThrownBy(() -> new EvidenceItem("", "meaning"))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ProviderTriageResult(
-                Category.BILLING, Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                Category.of("BILLING"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
                 "too short", List.of(new EvidenceItem("Payment accepted", "Payment state")), List.of(),
                 "The payment was captured while service remained unavailable to the driver.",
                 List.of("Verify payment and session state"),

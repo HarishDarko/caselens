@@ -18,14 +18,14 @@ class TriageFeedbackTest {
         UUID ticketId = UUID.randomUUID();
         UUID resultId = UUID.randomUUID();
         TriageResult original = TriageResult.from(UUID.randomUUID(), workspaceId,
-                new TriageDecision(ticketId, Category.CHARGING_SESSION, Urgency.MEDIUM, SlaRisk.MEDIUM,
+                new TriageDecision(ticketId, Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM,
                         Sentiment.NEGATIVE, "Charging session did not start", List.of(), List.of("POL-CHARGE-01"),
                         "The session did not start after payment.", List.of("Inspect the charger session"),
                         "We are reviewing the charging session.", ReliabilitySignal.HIGH, List.of(), 55, List.of(),
                         DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"), NOW, new ObjectMapper());
 
         TriageFeedback feedback = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketId, original.getId(),
-                Category.CHARGING_SESSION, Urgency.HIGH, null, "Reviewer confirmed high urgency", "demo-reviewer", NOW);
+                Category.of("CHARGING_SESSION"), Urgency.HIGH, null, "Reviewer confirmed high urgency", "demo-reviewer", NOW);
 
         assertThat(feedback.getOriginalResultId()).isEqualTo(original.getId());
         assertThat(feedback.getCorrectedUrgency()).isEqualTo(Urgency.HIGH);

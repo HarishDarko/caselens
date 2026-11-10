@@ -1,5 +1,7 @@
 {
   "id": "ev-charging",
+  "categories": ["BILLING", "CHARGING_SESSION", "CHARGER_HARDWARE", "CONNECTIVITY", "ACCOUNT_ACCESS", "REFUND", "GENERAL"],
+  "generalCategory": "GENERAL",
   "rules": {
     "category": [
       { "value": "BILLING", "terms": ["refund", "charged", "payment", "billing", "receipt"] },

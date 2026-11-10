@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -19,7 +20,7 @@ public class TriageResult {
     @Column(name = "event_id", nullable = false, unique = true) private UUID eventId;
     @Column(name = "workspace_id", nullable = false) private UUID workspaceId;
     @Column(name = "ticket_id", nullable = false) private UUID ticketId;
-    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 32) private Category category;
+    @Convert(converter = CategoryConverter.class) @Column(nullable = false, length = 32) private Category category;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16) private Urgency urgency;
     @Enumerated(EnumType.STRING) @Column(name = "sla_risk", nullable = false, length = 16) private SlaRisk slaRisk;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 16) private Sentiment sentiment;

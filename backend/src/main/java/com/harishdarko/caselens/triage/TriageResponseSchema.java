@@ -13,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 final class TriageResponseSchema {
     private final ObjectMapper mapper;
     private final PolicyCatalog policyCatalog;
+    private final PackRules pack = PackRules.evCharging();
 
     TriageResponseSchema(ObjectMapper mapper, PolicyCatalog policyCatalog) {
         this.mapper = Objects.requireNonNull(mapper);
@@ -22,7 +23,8 @@ final class TriageResponseSchema {
     ObjectNode schema() {
         ObjectNode schema = mapper.createObjectNode().put("type", "object").put("additionalProperties", false);
         ObjectNode properties = schema.putObject("properties");
-        enumProperty(properties, "category", Category.values());
+        ArrayNode categories = properties.putObject("category").put("type", "string").putArray("enum");
+        pack.categories().forEach(category -> categories.add(category.name()));
         enumProperty(properties, "urgency", Urgency.values());
         enumProperty(properties, "slaRisk", SlaRisk.values());
         enumProperty(properties, "sentiment", Sentiment.values());
@@ -55,7 +57,7 @@ final class TriageResponseSchema {
             evidence.add(new EvidenceItem(item.path("quote").asText(), item.path("meaning").asText()));
         }
         return new ProviderTriageResult(
-                Category.valueOf(node.path("category").asText()),
+                pack.requireCategory(node.path("category").asText()),
                 Urgency.valueOf(node.path("urgency").asText()),
                 SlaRisk.valueOf(node.path("slaRisk").asText()),
                 Sentiment.valueOf(node.path("sentiment").asText()),
