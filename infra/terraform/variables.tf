@@ -118,6 +118,12 @@ variable "relay_lambda_s3_key" {
   default = "artifacts/caselens-lambda.jar"
 }
 
+variable "alarm_email" {
+  description = "Email address that receives the alarm notifications. Set it in the var file, not here, so it stays out of the public repository. AWS sends a confirmation email that must be accepted before any alarm arrives."
+  type        = string
+  default     = null
+}
+
 variable "alarm_topic_arns" {
   type    = list(string)
   default = []

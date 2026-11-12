@@ -2,6 +2,8 @@ locals {
   name = "${var.project_name}-${var.environment}"
   # The page calls only its own origin and the API, so the CSP names exactly those (it used to allow every https host).
   csp_connect_src = var.deploy_compute ? "'self' ${aws_apigatewayv2_api.api[0].api_endpoint}" : "'self'"
+  # Every alarm notifies the same places: any topics passed in, plus the email topic when an address is set.
+  alarm_actions = concat(var.alarm_topic_arns, aws_sns_topic.alarms[*].arn)
 }
 
 resource "aws_s3_bucket" "frontend" {
@@ -518,6 +520,19 @@ resource "aws_lambda_permission" "api_keepalive" {
   source_arn    = aws_cloudwatch_event_rule.snapshot_keepalive[0].arn
 }
 
+resource "aws_sns_topic" "alarms" {
+  count = var.alarm_email == null ? 0 : 1
+  name  = "${local.name}-alarms"
+}
+
+# AWS emails a confirmation link to this address; alarms reach it only after the link is clicked.
+resource "aws_sns_topic_subscription" "alarm_email" {
+  count     = var.alarm_email == null ? 0 : 1
+  topic_arn = aws_sns_topic.alarms[0].arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
 resource "aws_cloudwatch_metric_alarm" "queue_depth" {
   alarm_name          = "${local.name}-queue-depth"
   alarm_description   = "Triage work is waiting beyond the normal demo baseline."
@@ -530,7 +545,8 @@ resource "aws_cloudwatch_metric_alarm" "queue_depth" {
   threshold           = 10
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_topic_arns
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
@@ -545,7 +561,8 @@ resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
   threshold           = 0
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_topic_arns
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
 }
 
 resource "aws_cloudwatch_metric_alarm" "api_errors" {
@@ -561,5 +578,6 @@ resource "aws_cloudwatch_metric_alarm" "api_errors" {
   threshold           = 3
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_topic_arns
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
 }
