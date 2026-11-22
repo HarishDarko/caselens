@@ -18,33 +18,38 @@ import tools.jackson.databind.ObjectMapper;
 
 final class DemoRateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(DemoRateLimitFilter.class);
+    /** An IPv6 address is at most 45 characters; anything longer is not an address and is cut. */
+    static final int MAX_CLIENT_ADDRESS_LENGTH = 64;
+    private static final String TRIAGE_PATH = "/api/tickets/[^/]+/triage";
+    private static final String FEEDBACK_PATH = "/api/tickets/[^/]+/feedback";
     private final RateLimitService limits;
     private final ObjectMapper objectMapper;
-    private final int sessionLimit;
-    private final int triageLimit;
-    private final int mutationLimit;
+    private final boolean trustGatewayClientIp;
+    private final Limits perMinute;
 
-    DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, int sessionLimit, int triageLimit, int mutationLimit) {
+    /** Requests per minute for each kind of POST. */
+    record Limits(int session, int triage, int mutation, int ticket, int feedback) {}
+
+    DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, boolean trustGatewayClientIp, Limits perMinute) {
         this.limits = limits;
         this.objectMapper = objectMapper;
-        this.sessionLimit = sessionLimit;
-        this.triageLimit = triageLimit;
-        this.mutationLimit = mutationLimit;
+        this.trustGatewayClientIp = trustGatewayClientIp;
+        this.perMinute = perMinute;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String key = keyFor(request);
-        if (key == null) {
+        Bucket bucket = bucketFor(request);
+        if (bucket == null) {
             chain.doFilter(request, response);
             return;
         }
         try {
-            limits.acquire(key, limitFor(request));
+            limits.acquire(bucket.key(), bucket.limit());
             chain.doFilter(request, response);
         } catch (RateLimitExceededException exceeded) {
-            log.warn("security.rate_limited key={}", SensitiveDataSanitizer.text(key));
+            log.warn("security.rate_limited key={}", SensitiveDataSanitizer.text(bucket.key()));
             response.setStatus(429);
             response.setHeader("Retry-After", Long.toString(exceeded.retryAfterSeconds()));
             response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
@@ -54,36 +59,37 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
         }
     }
 
-    private String keyFor(HttpServletRequest request) {
+    Bucket bucketFor(HttpServletRequest request) {
         if (!"POST".equalsIgnoreCase(request.getMethod())) return null;
-        if (request.getRequestURI().equals("/api/demo/session")) return "session:" + clientAddress(request);
-        if (request.getRequestURI().matches("/api/tickets/[^/]+/triage")) {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
-                return "triage:" + principal.workspaceId();
-            }
-            return "triage:" + clientAddress(request);
-        }
-        if (request.getRequestURI().startsWith("/api/demo/")
-                || request.getRequestURI().matches("/api/operations/failures/[^/]+/retry")) {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
-                return "mutation:" + principal.workspaceId();
-            }
-            return "mutation:" + clientAddress(request);
+        String uri = request.getRequestURI();
+        if (uri.equals("/api/demo/session")) return new Bucket("session:" + clientAddress(request), perMinute.session());
+        if (uri.matches(TRIAGE_PATH)) return new Bucket("triage:" + owner(request), perMinute.triage());
+        if (uri.equals("/api/tickets")) return new Bucket("ticket:" + owner(request), perMinute.ticket());
+        if (uri.matches(FEEDBACK_PATH)) return new Bucket("feedback:" + owner(request), perMinute.feedback());
+        if (uri.startsWith("/api/demo/") || uri.matches("/api/operations/failures/[^/]+/retry")) {
+            return new Bucket("mutation:" + owner(request), perMinute.mutation());
         }
         return null;
     }
 
-    private String clientAddress(HttpServletRequest request) {
-        String gatewayAddress = request.getHeader("X-CaseLens-Client-Ip");
-        if (gatewayAddress != null && !gatewayAddress.isBlank()) return gatewayAddress.trim();
-        return request.getRemoteAddr();
+    /** The workspace for a signed-in caller; the client address before the request is turned away as 401. */
+    private String owner(HttpServletRequest request) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
+            return principal.workspaceId().toString();
+        }
+        return clientAddress(request);
     }
 
-    private int limitFor(HttpServletRequest request) {
-        if (request.getRequestURI().equals("/api/demo/session")) return sessionLimit;
-        if (request.getRequestURI().matches("/api/tickets/[^/]+/triage")) return triageLimit;
-        return mutationLimit;
+    String clientAddress(HttpServletRequest request) {
+        String address = request.getRemoteAddr();
+        if (trustGatewayClientIp) {
+            String gatewayAddress = request.getHeader("X-CaseLens-Client-Ip");
+            if (gatewayAddress != null && !gatewayAddress.isBlank()) address = gatewayAddress.trim();
+        }
+        if (address == null) return "unknown";
+        return address.length() > MAX_CLIENT_ADDRESS_LENGTH ? address.substring(0, MAX_CLIENT_ADDRESS_LENGTH) : address;
     }
+
+    record Bucket(String key, int limit) {}
 }

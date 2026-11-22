@@ -44,8 +44,16 @@ public final class ApiHandler implements RequestStreamHandler {
         Map<String, String> headers = forwardedHeaders(event);
         String sourceIp = sourceIp(event);
         if (!sourceIp.isBlank()) headers.put("X-CaseLens-Client-Ip", sourceIp);
-        ApiExchange response = transport.exchange(method,
-                URI.create(baseUrl.get() + path + (query.isBlank() ? "" : "?" + query)), headers, body(event));
+        ApiExchange response;
+        try {
+            response = transport.exchange(method,
+                    URI.create(baseUrl.get() + path + (query.isBlank() ? "" : "?" + query)), headers, body(event));
+        } catch (IllegalArgumentException malformed) {
+            // URI.create rejects characters such as { | ^ and a bad %-escape; HttpRequest.Builder rejects bad header
+            // names and values; Base64 rejects a bad body. All of these are the caller's fault, so answer 400
+            // instead of failing the invocation, which would count as a Lambda error and trip the alarm.
+            response = BAD_REQUEST;
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("statusCode", response.statusCode());
         result.put("headers", response.headers().entrySet().stream()
@@ -55,7 +63,12 @@ public final class ApiHandler implements RequestStreamHandler {
         mapper.writeValue(output, result);
     }
 
-    private static Map<String, String> forwardedHeaders(JsonNode event) {
+    static final ApiExchange BAD_REQUEST = new ApiExchange(400,
+            Map.of("Content-Type", java.util.List.of("application/problem+json")),
+            "{\"type\":\"about:blank\",\"title\":\"Bad request\",\"status\":400,"
+                    + "\"detail\":\"The request URI or headers are malformed\"}");
+
+    static Map<String, String> forwardedHeaders(JsonNode event) {
         Map<String, String> headers = new LinkedHashMap<>();
         JsonNode source = event.get("headers");
         if (source != null && source.isObject()) source.properties().forEach(entry -> {
@@ -86,16 +99,22 @@ public final class ApiHandler implements RequestStreamHandler {
 
     record ApiExchange(int statusCode, Map<String, java.util.List<String>> headers, String body) {}
 
+    /** Builds the loopback request; throws IllegalArgumentException for a header the JDK client refuses. */
+    static HttpRequest request(String method, URI uri, Map<String, String> headers, String body) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri);
+        headers.forEach(request::header);
+        request.method(method, body.isEmpty() ? HttpRequest.BodyPublishers.noBody()
+                : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        return request.build();
+    }
+
     private static final class DefaultApiTransport implements ApiTransport {
         @Override
         public ApiExchange exchange(String method, URI uri, Map<String, String> headers, String body) throws IOException {
-            HttpRequest.Builder request = HttpRequest.newBuilder(uri);
-            headers.forEach(request::header);
-            request.method(method, body.isEmpty() ? HttpRequest.BodyPublishers.noBody()
-                    : HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+            HttpRequest request = request(method, uri, headers, body);
             try {
                 HttpResponse<String> response = LambdaSpringContext.httpClient()
-                        .send(request.build(), HttpResponse.BodyHandlers.ofString());
+                        .send(request, HttpResponse.BodyHandlers.ofString());
                 return new ApiExchange(response.statusCode(), response.headers().map(), response.body());
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
@@ -104,8 +123,14 @@ public final class ApiHandler implements RequestStreamHandler {
         }
     }
 
-    private static final class SetHeaders {
-        private static final java.util.Set<String> SKIPPED = java.util.Set.of(
-                "host", "content-length", "connection", "x-caselens-client-ip");
+    static final class SetHeaders {
+        /**
+         * Not forwarded to the loopback request: hop-by-hop headers (RFC 9110 section 7.6.1), the headers the JDK
+         * HttpClient refuses to set (host, content-length, connection, expect, upgrade), and the client-IP header,
+         * which only this handler may set.
+         */
+        static final java.util.Set<String> SKIPPED = java.util.Set.of(
+                "host", "content-length", "connection", "expect", "upgrade", "keep-alive", "te", "trailer",
+                "transfer-encoding", "proxy-connection", "x-caselens-client-ip");
     }
 }

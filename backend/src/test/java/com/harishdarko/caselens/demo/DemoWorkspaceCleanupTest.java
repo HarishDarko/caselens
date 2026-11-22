@@ -15,11 +15,21 @@ class DemoWorkspaceCleanupTest {
     void deletesExpiredWorkspacesUsingTheApplicationClock() {
         DemoWorkspaceRepository repository = mock(DemoWorkspaceRepository.class);
         Instant now = Instant.parse("2040-07-11T12:00:00Z");
-        when(repository.deleteByExpiresAtBefore(now)).thenReturn(3L);
+        when(repository.deleteExpiredBatch(now, DemoWorkspaceCleanup.DEFAULT_BATCH)).thenReturn(3);
 
         int deleted = new DemoWorkspaceCleanup(repository, Clock.fixed(now, ZoneOffset.UTC)).deleteExpired();
 
         assertThat(deleted).isEqualTo(3);
-        verify(repository).deleteByExpiresAtBefore(now);
+        verify(repository).deleteExpiredBatch(now, DemoWorkspaceCleanup.DEFAULT_BATCH);
+    }
+
+    @Test
+    void deletesAtMostTheRequestedBatch() {
+        DemoWorkspaceRepository repository = mock(DemoWorkspaceRepository.class);
+        Instant now = Instant.parse("2040-07-11T12:00:00Z");
+        when(repository.deleteExpiredBatch(now, 7)).thenReturn(7);
+
+        assertThat(new DemoWorkspaceCleanup(repository, Clock.fixed(now, ZoneOffset.UTC)).deleteExpired(7)).isEqualTo(7);
+        verify(repository).deleteExpiredBatch(now, 7);
     }
 }

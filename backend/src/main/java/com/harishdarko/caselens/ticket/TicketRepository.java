@@ -21,4 +21,6 @@ public interface TicketRepository extends JpaRepository<Ticket, UUID>, JpaSpecif
     Optional<Ticket> findByIdAndWorkspaceIdForUpdate(@Param("id") UUID id, @Param("workspaceId") UUID workspaceId);
 
     long deleteByWorkspaceId(UUID workspaceId);
+
+    long countByWorkspaceId(UUID workspaceId);
 }

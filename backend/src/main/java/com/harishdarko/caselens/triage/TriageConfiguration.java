@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
+import com.harishdarko.caselens.security.AiCallBudget;
 import com.harishdarko.caselens.ticket.TicketRepository;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -81,9 +82,14 @@ public class TriageConfiguration {
 
     @Bean
     TriageEngine triageEngine(@Qualifier("triageProvider") TriageProvider provider, RulesFallbackProvider fallback,
-            PolicyCatalog policies, Clock clock, JpaModelInvocationRecorder invocationRecorder) {
-        return new TriageEngine(new TicketRedactor(), provider, fallback, new SemanticValidator(policies),
+            PolicyCatalog policies, Clock clock, JpaModelInvocationRecorder invocationRecorder, AiCallBudget aiCallBudget) {
+        return new TriageEngine(new TicketRedactor(), budgeted(provider, aiCallBudget), fallback, new SemanticValidator(policies),
                 new PriorityScorer(), invocationRecorder, clock);
+    }
+
+    /** Paid or quota-bound providers spend the global daily budget; the offline mock provider costs nothing. */
+    static TriageProvider budgeted(TriageProvider provider, AiCallBudget budget) {
+        return provider instanceof MockTriageProvider ? provider : new BudgetedTriageProvider(provider, budget);
     }
 
     @Bean

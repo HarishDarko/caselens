@@ -3,12 +3,16 @@ package com.harishdarko.caselens.demo;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Deletes expired demo workspaces. On Lambda the relay's 30-minute sweep calls it (see DemoRetentionSweep); elsewhere
+ * DemoWorkspaceCleanupScheduler does. Each call is one short transaction over a bounded batch.
+ */
 @Component
 public class DemoWorkspaceCleanup {
+    static final int DEFAULT_BATCH = 100;
     private static final Logger log = LoggerFactory.getLogger(DemoWorkspaceCleanup.class);
     private final DemoWorkspaceRepository workspaces;
     private final Clock clock;
@@ -18,11 +22,16 @@ public class DemoWorkspaceCleanup {
         this.clock = clock;
     }
 
-    @Scheduled(initialDelayString = "${caselens.cleanup.initial-delay-ms:3600000}",
-            fixedDelayString = "${caselens.cleanup.fixed-delay-ms:3600000}")
     @Transactional
     public int deleteExpired() {
-        int deleted = (int) workspaces.deleteByExpiresAtBefore(clock.instant());
+        return deleteExpired(DEFAULT_BATCH);
+    }
+
+    /** Deletes up to {@code limit} workspaces that expired before now and returns how many went. */
+    @Transactional
+    public int deleteExpired(int limit) {
+        if (limit < 1) throw new IllegalArgumentException("Cleanup batch must be positive");
+        int deleted = workspaces.deleteExpiredBatch(clock.instant(), limit);
         if (deleted > 0) log.info("demo.workspace_cleanup deleted={}", deleted);
         return deleted;
     }

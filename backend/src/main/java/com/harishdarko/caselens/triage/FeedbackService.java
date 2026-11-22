@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.triage;
 
+import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import com.harishdarko.caselens.ticket.TicketRepository;
@@ -8,6 +9,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,14 +20,16 @@ public class FeedbackService {
     private final TriageFeedbackRepository feedback;
     private final Clock clock;
     private final PackResolver packs;
+    private final int maxFeedbackPerWorkspace;
 
     FeedbackService(TicketRepository tickets, TriageResultRepository results, TriageFeedbackRepository feedback, Clock clock,
-            PackResolver packs) {
+            PackResolver packs, @Value("${caselens.limits.feedback-per-workspace:100}") int maxFeedbackPerWorkspace) {
         this.tickets = tickets;
         this.results = results;
         this.feedback = feedback;
         this.clock = clock;
         this.packs = packs;
+        this.maxFeedbackPerWorkspace = maxFeedbackPerWorkspace;
     }
 
     @Transactional
@@ -48,6 +52,9 @@ public class FeedbackService {
                 correctedCategory, correctedUrgency, correctedSlaRisk, note, "demo-reviewer", clock.instant());
         if (!candidate.differsFrom(result)) {
             throw new IllegalArgumentException("Feedback must change at least one triage field");
+        }
+        if (feedback.countByWorkspaceId(workspaceId) >= maxFeedbackPerWorkspace) {
+            throw new WorkspaceLimitExceededException("feedback entries", maxFeedbackPerWorkspace);
         }
         TriageFeedback saved = feedback.save(candidate);
         return FeedbackSnapshot.from(saved);

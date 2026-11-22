@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.config.Customizer;
@@ -57,11 +58,23 @@ class SecurityConfiguration {
     }
 
     @Bean
-    DemoRateLimitFilter demoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper,
+    AiCallBudget aiCallBudget(RateLimitService limits, Clock clock,
+            @Value("${caselens.ai.daily-call-budget:300}") int dailyCallBudget) {
+        return new AiCallBudget(limits, clock, dailyCallBudget);
+    }
+
+    @Bean
+    DemoRateLimitFilter demoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, Environment environment,
             @Value("${caselens.rate-limit.session-per-minute:20}") int sessionLimit,
             @Value("${caselens.rate-limit.triage-per-minute:30}") int triageLimit,
-            @Value("${caselens.rate-limit.mutation-per-minute:${caselens.rate-limit.default-per-minute:30}}") int mutationLimit) {
-        return new DemoRateLimitFilter(limits, objectMapper, sessionLimit, triageLimit, mutationLimit);
+            @Value("${caselens.rate-limit.mutation-per-minute:${caselens.rate-limit.default-per-minute:30}}") int mutationLimit,
+            @Value("${caselens.rate-limit.ticket-per-minute:10}") int ticketLimit,
+            @Value("${caselens.rate-limit.feedback-per-minute:20}") int feedbackLimit) {
+        // Only ApiHandler sets X-CaseLens-Client-Ip, from the API Gateway sourceIp, after dropping any copy the client
+        // sent. Outside Lambda nothing strips it, so a caller could pick a new address for every request.
+        boolean trustGatewayClientIp = environment.matchesProfiles("lambda");
+        return new DemoRateLimitFilter(limits, objectMapper, trustGatewayClientIp,
+                new DemoRateLimitFilter.Limits(sessionLimit, triageLimit, mutationLimit, ticketLimit, feedbackLimit));
     }
 
     @Bean
@@ -77,7 +90,6 @@ class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/demo/session", "/actuator/health/**", "/actuator/info").permitAll()
-                        .requestMatchers("/actuator/metrics/**").authenticated()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> {

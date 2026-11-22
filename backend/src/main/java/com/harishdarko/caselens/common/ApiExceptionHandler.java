@@ -17,6 +17,12 @@ class ApiExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "Not found", "Ticket not found");
     }
 
+    @ExceptionHandler(WorkspaceLimitExceededException.class)
+    ResponseEntity<ProblemDetail> workspaceLimit(WorkspaceLimitExceededException exception) {
+        return problem(HttpStatus.CONFLICT, "Workspace limit reached", "This demo workspace holds at most "
+                + exception.limit() + " " + exception.item() + ". Reset the workspace or start a new demo.");
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<ProblemDetail> invalidArgument(IllegalArgumentException exception) {
         return problem(HttpStatus.CONFLICT, "Invalid operation", "The requested operation is not valid");

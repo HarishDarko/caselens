@@ -42,6 +42,15 @@ caselens:
     session-per-minute: ${CASELENS_RATE_LIMIT_SESSION_PER_MINUTE:20}
     triage-per-minute: ${CASELENS_RATE_LIMIT_TRIAGE_PER_MINUTE:30}
     mutation-per-minute: ${CASELENS_RATE_LIMIT_MUTATION_PER_MINUTE:${CASELENS_RATE_LIMIT_DEFAULT_PER_MINUTE:30}}
+    ticket-per-minute: ${CASELENS_RATE_LIMIT_TICKET_PER_MINUTE:10}
+    feedback-per-minute: ${CASELENS_RATE_LIMIT_FEEDBACK_PER_MINUTE:20}
+  limits:
+    # A seeded workspace holds about 10 tickets; 50 leaves room to explore and bounds the overview queries.
+    tickets-per-workspace: ${CASELENS_LIMIT_TICKETS_PER_WORKSPACE:50}
+    feedback-per-workspace: ${CASELENS_LIMIT_FEEDBACK_PER_WORKSPACE:100}
+  ai:
+    # AI provider calls per UTC day across all instances; past it, triage uses the rules provider. 0 turns AI off.
+    daily-call-budget: ${CASELENS_AI_DAILY_CALL_BUDGET:300}
   cleanup:
     initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:21600000}
     fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:21600000}
@@ -64,7 +73,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info
   endpoint:
     health:
       probes:

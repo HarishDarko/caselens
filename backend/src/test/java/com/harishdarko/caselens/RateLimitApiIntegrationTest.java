@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
     "CASELENS_QUEUE_ENABLED=false",
     "CASELENS_RATE_LIMIT_SESSION_PER_MINUTE=2",
     "CASELENS_RATE_LIMIT_MUTATION_PER_MINUTE=1",
+    "CASELENS_RATE_LIMIT_TICKET_PER_MINUTE=1",
     "spring.datasource.url=jdbc:h2:mem:rate-limit;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
     "spring.datasource.username=sa",
     "spring.datasource.password=",
@@ -45,20 +46,34 @@ class RateLimitApiIntegrationTest {
     }
 
     @Test
-    void usesTheForwardedClientAddressForGatewaySessionLimits() throws Exception {
+    void ignoresAClientSuppliedAddressHeaderOutsideLambda() throws Exception {
+        // Only ApiHandler on Lambda sets this header; here a caller could pick a fresh address for every request.
         for (int attempt = 0; attempt < 2; attempt++) {
             mvc.perform(post("/api/demo/session")
-                            .header("X-CaseLens-Client-Ip", "198.51.100.10"))
+                            .header("X-CaseLens-Client-Ip", "198.51.100.1" + attempt))
                     .andExpect(status().isOk());
         }
 
         mvc.perform(post("/api/demo/session")
-                        .header("X-CaseLens-Client-Ip", "198.51.100.10"))
+                        .header("X-CaseLens-Client-Ip", "198.51.100.12"))
                 .andExpect(status().isTooManyRequests());
+    }
 
-        mvc.perform(post("/api/demo/session")
-                        .header("X-CaseLens-Client-Ip", "198.51.100.11"))
-                .andExpect(status().isOk());
+    @Test
+    void limitsTicketCreationByWorkspace() throws Exception {
+        String body = mvc.perform(post("/api/demo/session"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String token = new tools.jackson.databind.ObjectMapper().readTree(body).get("token").asText();
+        String ticket = "{\"subject\":\"Charger offline\",\"message\":\"The charger at bay four shows offline since noon.\","
+                + "\"channel\":\"WEB\"}";
+
+        mvc.perform(post("/api/tickets").header("Authorization", "Bearer " + token)
+                        .contentType("application/json").content(ticket))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/tickets").header("Authorization", "Bearer " + token)
+                        .contentType("application/json").content(ticket))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "60"));
     }
 
     @Test

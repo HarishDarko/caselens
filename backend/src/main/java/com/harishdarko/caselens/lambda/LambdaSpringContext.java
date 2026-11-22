@@ -34,8 +34,9 @@ final class LambdaSpringContext {
         System.setProperty("spring.datasource.hikari.minimum-idle", "0");
         System.setProperty("spring.datasource.hikari.maximum-pool-size", "4");
         System.setProperty("spring.datasource.hikari.allow-pool-suspension", "true");
-        System.setProperty("spring.datasource.hikari.connection-timeout", "3000");
-        System.setProperty("spring.datasource.hikari.validation-timeout", "1000");
+        // Same as application-lambda.yml: room for a Neon resume, well under the 30 s function timeout.
+        System.setProperty("spring.datasource.hikari.connection-timeout", "10000");
+        System.setProperty("spring.datasource.hikari.validation-timeout", "3000");
         return new SpringApplicationBuilder(CaseLensApplication.class)
                 .web(WebApplicationType.SERVLET)
                 .profiles("lambda")

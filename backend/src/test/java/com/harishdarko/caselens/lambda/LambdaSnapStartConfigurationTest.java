@@ -17,6 +17,18 @@ class LambdaSnapStartConfigurationTest {
     }
 
     @Test
+    void lambdaProfileGivesNeonTimeToResumeWithinTheFunctionTimeout() throws Exception {
+        var properties = new YamlPropertySourceLoader()
+                .load("lambda", new ClassPathResource("application-lambda.yml"))
+                .getFirst();
+
+        org.assertj.core.api.Assertions.assertThat(properties.getProperty("spring.datasource.hikari.connection-timeout"))
+                .isEqualTo(10000);
+        org.assertj.core.api.Assertions.assertThat(properties.getProperty("spring.datasource.hikari.validation-timeout"))
+                .isEqualTo(3000);
+    }
+
+    @Test
     void lambdaBootstrapActivatesLambdaProfileAndCanonicalHikariProperties() {
         try {
             org.assertj.core.api.Assertions.assertThat(
@@ -27,6 +39,12 @@ class LambdaSnapStartConfigurationTest {
             org.assertj.core.api.Assertions.assertThat(
                             System.getProperty("spring.datasource.hikari.allow-pool-suspension"))
                     .isEqualTo("true");
+            org.assertj.core.api.Assertions.assertThat(
+                            System.getProperty("spring.datasource.hikari.connection-timeout"))
+                    .isEqualTo("10000");
+            org.assertj.core.api.Assertions.assertThat(
+                            System.getProperty("spring.datasource.hikari.validation-timeout"))
+                    .isEqualTo("3000");
         } finally {
             System.clearProperty("spring.profiles.active");
             System.clearProperty("spring.datasource.hikari.allow-pool-suspension");
