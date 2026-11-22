@@ -2,6 +2,7 @@ package com.harishdarko.caselens.triage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,9 +35,10 @@ class OutboxRelayTest {
         OutboxEvent success = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-1", clock.instant());
         OutboxEvent failed = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-2", clock.instant());
         when(events.findPublishCandidates(20, OutboxRelay.MAX_PUBLISH_ATTEMPTS))
-                .thenReturn(List.of(success.getId(), failed.getId()));
+                .thenReturn(List.of(success, failed));
         when(events.lockUnpublished(success.getId())).thenReturn(Optional.of(success));
         when(events.lockUnpublished(failed.getId())).thenReturn(Optional.of(failed));
+        doNothing().when(publisher).publish(success);
         doThrow(new QueuePublishException("QUEUE_TRANSIENT")).when(publisher).publish(failed);
         CountingTransactions transactions = new CountingTransactions();
 
@@ -51,9 +53,9 @@ class OutboxRelayTest {
 
     @Test
     void skipsAnEventThatWasPublishedOrLockedSinceTheCandidateQuery() {
-        UUID taken = UUID.randomUUID();
+        OutboxEvent taken = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-taken", clock.instant());
         when(events.findPublishCandidates(25, OutboxRelay.MAX_PUBLISH_ATTEMPTS)).thenReturn(List.of(taken));
-        when(events.lockUnpublished(taken)).thenReturn(Optional.empty());
+        when(events.lockUnpublished(taken.getId())).thenReturn(Optional.empty());
 
         int published = new OutboxRelay(events, publisher, clock).publishBatch(25);
 

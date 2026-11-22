@@ -119,7 +119,8 @@ class TriageApiIntegrationTest {
         jdbc.update("update outbox_event set publish_attempts = ? where id = ?", OutboxRelay.MAX_PUBLISH_ATTEMPTS, capped.getId());
         jdbc.update("update outbox_event set publish_attempts = 3 where id = ?", retried.getId());
 
-        List<UUID> candidates = events.findPublishCandidates(100, OutboxRelay.MAX_PUBLISH_ATTEMPTS);
+        List<UUID> candidates = events.findPublishCandidates(100, OutboxRelay.MAX_PUBLISH_ATTEMPTS).stream()
+                .map(OutboxEvent::getId).toList();
         assertThat(candidates).doesNotContain(capped.getId());
         assertThat(candidates.indexOf(fresh.getId())).isLessThan(candidates.indexOf(retried.getId()));
 

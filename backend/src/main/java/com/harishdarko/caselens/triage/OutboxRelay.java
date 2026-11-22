@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import java.time.Clock;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -54,7 +55,9 @@ public class OutboxRelay {
 
     public int publishBatch(int limit) {
         int published = 0;
-        for (UUID eventId : events.findPublishCandidates(Math.max(1, Math.min(limit, 100)), MAX_PUBLISH_ATTEMPTS)) {
+        List<UUID> candidates = events.findPublishCandidates(Math.max(1, Math.min(limit, 100)), MAX_PUBLISH_ATTEMPTS)
+                .stream().map(OutboxEvent::getId).toList();
+        for (UUID eventId : candidates) {
             if (Boolean.TRUE.equals(transactions.execute(status -> publishOne(eventId)))) published++;
         }
         return published;
