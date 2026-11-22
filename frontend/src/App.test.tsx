@@ -627,3 +627,190 @@ test('opens the featured ticket already in the inbox instead of adding a copy, w
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/demo/scenarios/'))).toBe(false)
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a104/triage'), expect.objectContaining({ method: 'POST' })))
 })
+
+// Neon review CL-13, CL-23, CL-24 and CL-16: polling stops with the workspace, an ended session stops live updates,
+// a correction never repeats the original result, and an unfinished job does not look like a 0 ms rules decision.
+function stubOver(backend: ReturnType<typeof mockBackend>, override: (url: string, init?: RequestInit) => Response | undefined) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => override(String(input), init) ?? backend(input, init))
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+test('stops the triage poll when the demo closes, and the next workspace starts without the old token', async () => {
+  const fetchMock = await openTicketWithFakeTimers({ pendingProcessingPolls: 100 })
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+  expect(calls(fetchMock, '/processing')).toBeGreaterThan(0)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+  const atClose = calls(fetchMock, '/processing')
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+  expect(calls(fetchMock, '/processing')).toBe(atClose)
+
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  const sessionPosts = fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init))
+  expect(sessionPosts).toHaveLength(2)
+  expect(new Headers(sessionPosts[1]?.[1]?.headers).get('Authorization')).toBeNull()
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+  expect(calls(fetchMock, '/processing')).toBe(atClose)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Waiting for the triage worker/)).not.toBeInTheDocument()
+})
+
+test('stops live updates when the session has ended and offers a new demo', async () => {
+  const fetchMock = await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Unauthorized' }, 401)) })
+
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your demo session has ended, so live updates stopped.'))
+  const ended = calls(fetchMock, '/api/evaluation')
+  await advance(60_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(ended)
+
+  const sessionPosts = () => fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init)).length
+  const before = sessionPosts()
+  fireEvent.click(screen.getByRole('button', { name: 'Start a new demo' }))
+  await waitFor(() => expect(sessionPosts()).toBe(before + 1))
+})
+
+test('keeps the error from a failed action on screen while the view refreshes in the background', async () => {
+  const backend = mockBackend({ syntheticFailure: true })
+  stubOver(backend, (url) => url.endsWith('/retry') ? response({ detail: 'Request failed with status 500' }, 500) : undefined)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await advance(0)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem. Try again in a few seconds.'))
+  await advance(10_000)
+
+  expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem. Try again in a few seconds.')
+})
+
+test('says plainly when the API refuses a correction (409), without claiming which conflict it was', async () => {
+  const backend = mockBackend()
+  // The API sends the same generic detail for every refused correction.
+  stubOver(backend, (url) => url.includes('/feedback') ? response({ detail: 'The requested operation is not valid' }, 409) : undefined)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Lower than the model said.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'))
+  expect(screen.queryByText(/409|not valid|Try again in a few seconds/)).not.toBeInTheDocument()
+})
+
+test('keeps the original urgency apart from the saved correction, and shows the priority and suggested reply', async () => {
+  const fetchMock = mockBackend()
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency critical' })).toHaveAttribute('aria-pressed', 'true'))
+  expect(screen.getByText('Priority 82')).toBeInTheDocument()
+  expect(screen.getByText('We are reviewing the session start.')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  expect(screen.getByRole('button', { name: 'Mark urgency high' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Mark urgency critical' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The synthetic case is less urgent.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Correction saved. Evaluation metrics updated.'))
+  expect(screen.getByText('Original triage urgency: Critical.')).toBeInTheDocument()
+
+  // Going back to the urgency the model gave would send a no-op the API refuses, so Save stays off and the notice goes.
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency critical' }))
+  expect(screen.queryByText('Correction saved. Evaluation metrics updated.')).not.toBeInTheDocument()
+  expect(screen.getByText('This is the urgency the triage gave, so there is no correction to save.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
+  expect(calls(fetchMock, '/feedback')).toBe(1)
+})
+
+test('shows an unfinished job as Pending and Not called, not as a 0 ms rules decision', async () => {
+  const backend = mockBackend()
+  stubOver(backend, (url) => {
+    if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 1, evaluatedResults: 0, categoryAgreementRate: 0, urgencyAgreementRate: 0, agreementRate: 0, correctionRate: 0, medianLatencyMs: 0, p95LatencyMs: 0, failureRate: 0, providerUsage: [], recentEvents: [{ resultId: 'result-9', createdAt: '2026-07-11T09:14:02Z', latencyMs: null, provider: null, modelVersion: 'rules-v1', decisionSource: 'RULES_FALLBACK', evaluated: false, corrected: false }] })
+    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 0, completed: 0, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [{ jobId: 'job-9', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, createdAt: '2026-07-11T09:14:02Z', updatedAt: '2026-07-11T09:14:02Z', completedAt: null, lastErrorCode: null, provider: null, modelVersion: null, decisionSource: null, latencyMs: null }], providers: [] })
+    return undefined
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText('Pending', { selector: '.activity-latency' })).toBeInTheDocument())
+  expect(screen.getByText('Not called')).toBeInTheDocument()
+  expect(screen.queryByText('Rules fallback')).not.toBeInTheDocument()
+  expect(screen.queryByText('0 ms', { selector: '.activity-latency' })).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await waitFor(() => expect(screen.getByText('Recent processing')).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText('Pending', { selector: '.activity-latency' })).toBeInTheDocument())
+  expect(screen.getByText(/^Not called · updated/)).toBeInTheDocument()
+})
+
+test('offers a new demo when a ticket action finds the session ended, and moves focus to the new inbox', async () => {
+  const backend = mockBackend()
+  let expired = true
+  const fetchMock = stubOver(backend, (url) => {
+    if (url.endsWith('/triage') && expired) { expired = false; return response({ detail: 'Unauthorized' }, 401) }
+    return undefined
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Your demo session has ended. Start a new demo to keep exploring.'))
+  const sessionPosts = () => fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init)).length
+  expect(sessionPosts()).toBe(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Start a new demo' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toHaveFocus())
+  expect(sessionPosts()).toBe(2)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('sends one triage request when a ticket being triaged is opened twice', async () => {
+  const fetchMock = mockBackend({ pendingProcessingPolls: 100 })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+
+  // Both clicks land before React re-renders, so only a synchronous guard can stop the second request.
+  const review = screen.getByRole('button', { name: /Review CL-A102/i })
+  act(() => { review.click(); review.click() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+
+  expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/triage') && init?.method === 'POST')).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+})
+
+test('keeps the stage text of a ticket still in triage when another ticket finishes', async () => {
+  mockSeededBackend([chargerTicket, apiTicket], {
+    'ticket-a104': () => pendingJob('QUEUED'),
+    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A104')).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
+  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('A test explanation.'))
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
+  expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.')
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+})

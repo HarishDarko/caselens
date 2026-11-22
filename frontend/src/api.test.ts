@@ -81,6 +81,55 @@ describe('CaseLens API client', () => {
     }
   })
 
+  it('tries a GET once more when fetch fails with a TypeError (a gateway answer without CORS headers), but never a POST', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ content: [] }), { status: 200 }))
+      const api = createCaseLensApi('', fetcher)
+
+      const pending = api.listTickets()
+      await vi.advanceTimersByTimeAsync(999)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toEqual({ content: [] })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+
+      fetcher.mockRejectedValue(new TypeError('Failed to fetch'))
+      await expect(api.requestTriage('ticket-1')).rejects.toBeInstanceOf(TypeError)
+      expect(fetcher).toHaveBeenCalledTimes(3)
+
+      const get = api.getProcessing('ticket-1').catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(await get).toBeInstanceOf(TypeError)
+      expect(fetcher).toHaveBeenCalledTimes(5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sends nothing once the signal has aborted, and stops waiting to retry when it aborts', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+      const api = createCaseLensApi('', fetcher)
+      const controller = new AbortController()
+
+      const get = api.getProcessing('ticket-1', controller.signal).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(500)
+      controller.abort()
+      expect(await get).toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+
+      await expect(api.getProcessing('ticket-1', controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not wait out a long rate-limit window', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '60' } }))
     const api = createCaseLensApi('', fetcher)

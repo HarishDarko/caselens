@@ -98,10 +98,11 @@ export type EvaluationSummary = {
   recentEvents: EvaluationEvent[]
 }
 
+// latencyMs is null while a job has not finished (the API sends 0 instead before it made the field nullable).
 export type EvaluationEvent = {
   resultId: string
   createdAt: string
-  latencyMs: number
+  latencyMs: number | null
   provider: string | null
   modelVersion: string
   decisionSource: 'AI_VALIDATED' | 'RULES_FALLBACK'
@@ -132,7 +133,7 @@ export type OperationsOverview = {
     provider: string | null
     modelVersion: string | null
     decisionSource: 'AI_VALIDATED' | 'RULES_FALLBACK' | null
-    latencyMs: number
+    latencyMs: number | null
   }>
   providers: Array<{
     provider: string
@@ -177,6 +178,8 @@ export class ApiError extends Error {
 
 // One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on a GET.
 // A POST is never sent twice after a 503, because the first one may have run. A long rate-limit window is not waited out.
+// A GET is also tried once more when fetch itself fails with a TypeError. API Gateway answers its own throttle (429) and
+// errors without CORS headers, so the browser hides that answer and fetch rejects instead of returning the status.
 const RETRY_DEFAULT_MS = 1_000
 const RETRY_MAX_MS = 5_000
 function retryDelay(response: Response, method: string): number | null {
@@ -184,6 +187,15 @@ function retryDelay(response: Response, method: string): number | null {
   const header = response.headers.get('Retry-After')
   const delay = header === null || header.trim() === '' ? RETRY_DEFAULT_MS : Number(header) * 1_000
   return Number.isFinite(delay) && delay >= 0 && delay <= RETRY_MAX_MS ? delay : null
+}
+
+function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    function onAbort() { clearTimeout(timer); reject(signal?.reason) }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseLensApi {
@@ -194,10 +206,19 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     if (token) headers.set('Authorization', `Bearer ${token}`)
     const url = `${baseUrl.replace(/\/$/, '')}${path}`
-    let response = await fetcher(url, { ...init, headers })
-    const delay = response.ok ? null : retryDelay(response, (init.method ?? 'GET').toUpperCase())
+    const method = (init.method ?? 'GET').toUpperCase()
+    init.signal?.throwIfAborted()
+    let response: Response
+    try {
+      response = await fetcher(url, { ...init, headers })
+    } catch (cause: unknown) {
+      if (!(cause instanceof TypeError) || method !== 'GET' || init.signal?.aborted) throw cause
+      await wait(RETRY_DEFAULT_MS, init.signal)
+      response = await fetcher(url, { ...init, headers })
+    }
+    const delay = response.ok ? null : retryDelay(response, method)
     if (delay !== null) {
-      await new Promise((resolve) => setTimeout(resolve, delay))
+      await wait(delay, init.signal)
       response = await fetcher(url, { ...init, headers })
     }
     if (!response.ok) {
@@ -222,8 +243,8 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     getRuntimeSummary: () => request<RuntimeSummary>('/api/demo/runtime'),
     listTickets: () => request<TicketPage>('/api/tickets?page=0&size=50'),
     createScenario: (scenarioKey) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST' }),
-    requestTriage: (ticketId) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST' }),
-    getProcessing: (ticketId) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`),
+    requestTriage: (ticketId, signal) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }),
+    getProcessing: (ticketId, signal) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`, { signal }),
     submitFeedback: (ticketId, payload) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
       method: 'POST', body: JSON.stringify(payload),
     }),
@@ -242,8 +263,8 @@ export type CaseLensApi = {
   getRuntimeSummary: () => Promise<RuntimeSummary>
   listTickets: () => Promise<TicketPage>
   createScenario: (scenarioKey: string) => Promise<ApiTicket>
-  requestTriage: (ticketId: string) => Promise<TriageProcessing['job']>
-  getProcessing: (ticketId: string) => Promise<TriageProcessing>
+  requestTriage: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing['job']>
+  getProcessing: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing>
   submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }) => Promise<FeedbackResponse>
   getEvaluation: () => Promise<EvaluationSummary>
   getOperationsOverview: () => Promise<OperationsOverview>
