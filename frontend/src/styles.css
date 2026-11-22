@@ -257,3 +257,6 @@ input, textarea { min-width: 0; width: 100%; border: 1px solid #bfc7c1; border-r
   .feedback-actions { justify-items: stretch; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+.detail-badges { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: .4rem; }
+.suggested-reply { margin: 0 0 .8rem; }
+.suggested-reply .guardrail-copy { margin: .75rem 0 1rem; white-space: pre-line; }
