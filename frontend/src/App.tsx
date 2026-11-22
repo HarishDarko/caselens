@@ -35,7 +35,10 @@ const RETRY_DEMO_STOPPED_TEXT = 'The retry demo stopped this triage on purpose. 
 const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the ticket again in a minute to see the result.'
 
 const SESSION_ENDED_TEXT = 'Your demo session has ended. Close the demo and open a new one.'
-const CORRECTION_CONFLICT_TEXT = 'This correction matches the original triage result, so there is nothing to save. Pick a different urgency.'
+// The API answers every refused correction with the same 409 (an unchanged result, a result that is not the latest,
+// or one that belongs to another ticket), so the sentence covers all of them.
+const CORRECTION_CONFLICT_TEXT = 'This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'
+const SESSION_ENDED_BANNER_TEXT = 'Your demo session has ended. Start a new demo to keep exploring.'
 
 /** A sentence written for the visitor, shown as it is. */
 class PlainError extends Error {}
@@ -116,7 +119,7 @@ function Landing({ onOpen, busy, error, choice }: { onOpen: () => void; busy: bo
         <div className="brand-lockup"><span className="brand-mark">CL</span><span>CaseLens / reviewer console</span></div>
         <p className="environment">Demo environment</p>
         <p className="environment-note">synthetic data · reviewer console</p>
-        <h1 id="caselens-title">CaseLens</h1>
+        <h1 id="caselens-title" tabIndex={-1}>CaseLens</h1>
         <p className="landing-claim">Turn a messy case into a defensible next step.</p>
         <div className="access-card">
           <div><p className="eyebrow">Public reviewer demo</p><h2>Open an isolated workspace</h2><p className="muted">Launch a temporary workspace containing synthetic support cases. No account is required, and no customer or production systems are connected.</p></div>
@@ -163,6 +166,8 @@ function App() {
   // triage poll from the old workspace stops and never writes into the next one.
   const sessionAbortRef = useRef(new AbortController())
   const busyTicketsRef = useRef(new Set<string>())
+  // After "Start a new demo", focus follows the page: the landing heading while the workspace opens, then the inbox.
+  const restartFocusRef = useRef(false)
   // The industry list may arrive after the workspace opens; without an id the workspace is the default industry.
   const workspaceIndustry = useMemo(() => sessionOptions.industries.find((industry) => industry.id === (workspaceIndustryId ?? sessionOptions.defaultIndustry)) ?? null, [sessionOptions, workspaceIndustryId])
   const featuredScenario = workspaceIndustry?.featuredScenario ?? ((workspaceIndustryId ?? DEFAULT_INDUSTRY) === DEFAULT_INDUSTRY ? DEFAULT_FEATURED_SCENARIO : null)
@@ -170,6 +175,12 @@ function App() {
 
   useEffect(() => { if (selectedTicketId) window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.detail-column .back-button')?.focus({ preventScroll: true })) }, [selectedTicketId])
   useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen, selectedTicketId])
+  useEffect(() => {
+    if (!restartFocusRef.current) return
+    const target = sessionOpen ? document.querySelector<HTMLElement>('.workspace-main .page-heading h1') : document.getElementById('caselens-title')
+    target?.focus()
+    if (sessionOpen || !busy) restartFocusRef.current = false
+  }, [sessionOpen, busy])
   useEffect(() => {
     let active = true
     // Runs in the background: it wakes the API and its database before the visitor clicks, and replaces the bundled
@@ -260,7 +271,12 @@ function App() {
     setBusyTicketIds(new Set()); setTriageStages({}); setNotice(null); setError(null); setSessionEnded(false); setView('inbox')
   }
   function closeDemo() { startSession(); resetWorkspace(); setBusy(false); setSessionOpen(false) }
-  function startNewDemo() { closeDemo(); void openWorkspace() }
+  function startNewDemo() { restartFocusRef.current = true; closeDemo(); void openWorkspace() }
+  // A 401 means the token expired or is unknown. It will not come back, so offer a new demo instead of a retry.
+  function showActionError(cause: unknown, fallback: string, conflict?: string) {
+    if (cause instanceof ApiError && cause.status === 401) { setSessionEnded(true); return }
+    setError(plainError(cause, fallback, conflict))
+  }
 
   async function openWorkspace() {
     const signal = startSession()
@@ -314,7 +330,7 @@ function App() {
       }
       if (!signal.aborted) throw new PlainError(TRIAGE_STILL_RUNNING_TEXT)
     }
-    catch (cause: unknown) { if (!signal.aborted) setError(plainError(cause, 'Could not triage this ticket. Try again in a few seconds.')) }
+    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not triage this ticket. Try again in a few seconds.') }
     finally {
       // A closed workspace was already reset; touching state here would reach into the next one.
       if (!signal.aborted) {
@@ -339,7 +355,7 @@ function App() {
       if (signal.aborted) return
       setTickets((current) => current.some((ticket) => ticket.backendId === scenario.backendId) ? current : [...current, scenario]); setSelectedTicketId(scenario.id); setDraftUrgency(null); setFeedbackNote(''); setFeedbackSaved(false); setView('inbox'); await hydrateTriage(scenario)
     }
-    catch (cause: unknown) { if (!signal.aborted) setError(plainError(cause, 'Could not load the scenario. Try again in a few seconds.')) } finally { if (!signal.aborted) setBusy(false) }
+    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not load the scenario. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
   }
   function changeDraftUrgency(urgency: Urgency) { setDraftUrgency(urgency); setFeedbackSaved(false) }
   function changeFeedbackNote(note: string) { setFeedbackNote(note); setFeedbackSaved(false) }
@@ -356,18 +372,18 @@ function App() {
       // The correction is saved; a failed metrics read must not say otherwise. Evaluation reloads itself when opened.
       api.getEvaluation().then((next) => { if (!signal.aborted) setEvaluation(next) }).catch(() => undefined)
     }
-    catch (cause: unknown) { if (!signal.aborted) setError(plainError(cause, 'Could not save the correction. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT)) } finally { if (!signal.aborted) setBusy(false) }
+    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not save the correction. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT) } finally { if (!signal.aborted) setBusy(false) }
   }
   async function retryFailure() {
     const failure = failures?.content[0]; if (!failure) return
     const signal = sessionAbortRef.current.signal
     setBusy(true); setError(null)
     try { await api.retryFailure(failure.id); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(), api.listFailures()]); if (signal.aborted) return; setOperationsOverview(overview); setFailures(failurePage) }
-    catch (cause: unknown) { if (!signal.aborted) setError(plainError(cause, 'Could not retry the failed case. Try again in a few seconds.')) } finally { if (!signal.aborted) setBusy(false) }
+    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not retry the failed case. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
   }
 
   if (!sessionOpen) return <Landing onOpen={openWorkspace} busy={busy} error={error} choice={{ industries: sessionOptions.industries, selected: industryId, onSelect: setIndustryId }} />
-  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={closeDemo}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && <p className="notice-banner workspace-error" role="status">{notice.text}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || busyTicketIds.size > 0} detailBusy={busy || (selectedTicket !== null && busyTicketIds.has(selectedTicket.backendId))} triageStages={triageStages} featuredScenario={featuredScenario} onLoadScenario={loadScenario} onOpenScenario={(key) => void openScenario(key)} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={changeDraftUrgency} onFeedbackNote={changeFeedbackNote} onSaveFeedback={saveFeedback} />}{(view === 'evaluation' || view === 'operations') && <LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} onStartNew={startNewDemo} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
+  return <div className="app-shell"><aside className="app-rail"><div className="rail-brand"><span className="brand-mark">CL</span><span>CaseLens</span></div><div className="rail-workspace"><span className="eyebrow">Workspace</span><strong>Isolated demo workspace</strong>{workspaceIndustry && <span className="workspace-industry">Industry: {workspaceIndustry.name}</span>}<span className="workspace-id">token-scoped / 24 hours</span></div><nav className="primary-nav" aria-label="Primary navigation"><button aria-label="Inbox" className={view === 'inbox' ? 'nav-item active' : 'nav-item'} onClick={() => setView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}><span className="nav-icon">↗</span><span>Inbox</span><span className="nav-count">{tickets.length}</span></button><button aria-label="Evaluation" className={view === 'evaluation' ? 'nav-item active' : 'nav-item'} onClick={() => setView('evaluation')} aria-current={view === 'evaluation' ? 'page' : undefined}><span className="nav-icon">◌</span><span>Evaluation</span></button><button aria-label="Operations" className={view === 'operations' ? 'nav-item active' : 'nav-item'} onClick={() => setView('operations')} aria-current={view === 'operations' ? 'page' : undefined}><span className="nav-icon">⌁</span><span>Operations</span><span className="nav-status">{failures?.totalElements ? failures.totalElements : 'OK'}</span></button></nav><div className="rail-footer"><div className="preview-label"><span className="status-dot" />{runtime ? runtimeLabels.environment[runtime.environment] : 'Runtime unavailable'}</div>{runtime && <div className="runtime-stack" aria-label="Runtime services"><span>{runtimeLabels.database[runtime.database]}</span><span>{runtimeLabels.queue[runtime.queue]}</span><span>{runtimeLabels.aiProvider[runtime.aiProvider]}</span></div>}<p>All records are synthetic and scoped to this temporary workspace.</p><button className="text-button" onClick={closeDemo}>Close demo</button></div></aside><main className="workspace-main"><header className="topbar"><div className="breadcrumbs"><span>CaseLens</span><span className="breadcrumb-slash">/</span><strong>{view === 'inbox' ? 'Review queue' : view === 'evaluation' ? 'Evaluation signal' : 'Operations'}</strong></div><div className="topbar-actions"><span className="live-chip"><span className="status-dot" />{runtime ? `${runtimeLabels.aiProvider[runtime.aiProvider]} · ${runtimeLabels.database[runtime.database]}` : 'Backend data'}</span><span className="avatar">HD</span></div></header>{sessionEnded ? <div className="error-banner workspace-error session-ended" role="alert"><span>{SESSION_ENDED_BANNER_TEXT}</span> <button type="button" className="text-button" onClick={startNewDemo}>Start a new demo</button></div> : error && <p className="error-banner workspace-error" role="alert">{error}</p>}{notice && !error && !sessionEnded && <p className="notice-banner workspace-error" role="status">{notice.text}</p>}{view === 'inbox' && <InboxView tickets={tickets} selectedTicket={selectedTicket} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={busy || busyTicketIds.size > 0} detailBusy={busy || (selectedTicket !== null && busyTicketIds.has(selectedTicket.backendId))} triageStages={triageStages} featuredScenario={featuredScenario} onLoadScenario={loadScenario} onOpenScenario={(key) => void openScenario(key)} onSelectTicket={selectTicket} onBack={() => setSelectedTicketId(null)} onDraftUrgency={changeDraftUrgency} onFeedbackNote={changeFeedbackNote} onSaveFeedback={saveFeedback} />}{(view === 'evaluation' || view === 'operations') && <LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}{view === 'evaluation' && <EvaluationView evaluation={evaluation} />}{view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} />}</main></div>
 }
 
 // Save is possible only for a real change: not the urgency the model gave (the API refuses that with 409, since it
@@ -387,7 +403,7 @@ function reviewOrder(tickets: Ticket[]): Ticket[] {
 }
 type InboxViewProps = { tickets: Ticket[]; selectedTicket: Ticket | null; draftUrgency: Urgency | null; feedbackNote: string; feedbackSaved: boolean; busy: boolean; detailBusy: boolean; triageStages: Record<string, string>; featuredScenario: Industry['featuredScenario'] | null; onLoadScenario: (scenarioKey: string) => void; onOpenScenario: (scenarioKey: string) => void; onSelectTicket: (ticketId: string) => void; onBack: () => void; onDraftUrgency: (urgency: Urgency) => void; onFeedbackNote: (note: string) => void; onSaveFeedback: () => void }
 function InboxView({ tickets, selectedTicket, draftUrgency, feedbackNote, feedbackSaved, busy, detailBusy, triageStages, featuredScenario, onLoadScenario, onOpenScenario, onSelectTicket, onBack, onDraftUrgency, onFeedbackNote, onSaveFeedback }: InboxViewProps) {
-  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">Human review queue</p><h1>Ticket inbox</h1><p className="page-intro">Prioritized cases with the evidence behind each recommendation.</p></div><div className="heading-meta"><span className="metric-label">Queue health</span><strong><span className="status-dot" />{busy ? 'Processing' : 'Stable'}</strong><span className="metric-detail">{tickets.length} synthetic cases</span></div></div><div className={selectedTicket ? 'inbox-layout with-detail' : 'inbox-layout'}><section className="queue-column" aria-labelledby="queue-heading"><div className="section-bar"><div><h2 id="queue-heading">Needs review</h2><span className="muted">Triaged cases first, by priority and SLA risk</span></div><span className="count-pill">{tickets.length}</span></div><div className="scenario-card">{featuredScenario ? <><div><span className="scenario-kicker">Try a scenario</span><strong>{featuredScenario.label}</strong><span className="muted">Open this demo ticket and send it through the real queue worker.</span></div><button className="secondary-button" onClick={() => onOpenScenario(featuredScenario.key)} disabled={busy}>Load ticket: {featuredScenario.label}</button></> : <div><span className="scenario-kicker">Try a scenario</span><span className="muted">The demo scenarios did not load. The tickets in the queue still work.</span></div>}<div className="scenario-divider" /><div><span className="scenario-kicker">Failure handling</span><strong>Controlled retry demonstration</strong><span className="muted">Records one synthetic provider timeout, then exposes the job in Operations for a reviewer retry.</span></div><button className="secondary-button retry-demo-button" onClick={() => void onLoadScenario('provider-retry-demo')} disabled={busy}>Run controlled retry demo</button></div><div className="ticket-list">{reviewOrder(tickets).map((ticket) => <TicketRow key={`${ticket.id}-${ticket.backendId ?? 'fixture'}`} ticket={ticket} selected={ticket.id === selectedTicket?.id} onSelect={onSelectTicket} />)}</div></section>{selectedTicket && <TicketDetail ticket={selectedTicket} stage={triageStages[selectedTicket.backendId] ?? null} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={detailBusy} onBack={onBack} onDraftUrgency={onDraftUrgency} onFeedbackNote={onFeedbackNote} onSaveFeedback={onSaveFeedback} />}</div></div>
+  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">Human review queue</p><h1 tabIndex={-1}>Ticket inbox</h1><p className="page-intro">Prioritized cases with the evidence behind each recommendation.</p></div><div className="heading-meta"><span className="metric-label">Queue health</span><strong><span className="status-dot" />{busy ? 'Processing' : 'Stable'}</strong><span className="metric-detail">{tickets.length} synthetic cases</span></div></div><div className={selectedTicket ? 'inbox-layout with-detail' : 'inbox-layout'}><section className="queue-column" aria-labelledby="queue-heading"><div className="section-bar"><div><h2 id="queue-heading">Needs review</h2><span className="muted">Triaged cases first, by priority and SLA risk</span></div><span className="count-pill">{tickets.length}</span></div><div className="scenario-card">{featuredScenario ? <><div><span className="scenario-kicker">Try a scenario</span><strong>{featuredScenario.label}</strong><span className="muted">Open this demo ticket and send it through the real queue worker.</span></div><button className="secondary-button" onClick={() => onOpenScenario(featuredScenario.key)} disabled={busy}>Load ticket: {featuredScenario.label}</button></> : <div><span className="scenario-kicker">Try a scenario</span><span className="muted">The demo scenarios did not load. The tickets in the queue still work.</span></div>}<div className="scenario-divider" /><div><span className="scenario-kicker">Failure handling</span><strong>Controlled retry demonstration</strong><span className="muted">Records one synthetic provider timeout, then exposes the job in Operations for a reviewer retry.</span></div><button className="secondary-button retry-demo-button" onClick={() => void onLoadScenario('provider-retry-demo')} disabled={busy}>Run controlled retry demo</button></div><div className="ticket-list">{reviewOrder(tickets).map((ticket) => <TicketRow key={`${ticket.id}-${ticket.backendId ?? 'fixture'}`} ticket={ticket} selected={ticket.id === selectedTicket?.id} onSelect={onSelectTicket} />)}</div></section>{selectedTicket && <TicketDetail ticket={selectedTicket} stage={triageStages[selectedTicket.backendId] ?? null} draftUrgency={draftUrgency} feedbackNote={feedbackNote} feedbackSaved={feedbackSaved} busy={detailBusy} onBack={onBack} onDraftUrgency={onDraftUrgency} onFeedbackNote={onFeedbackNote} onSaveFeedback={onSaveFeedback} />}</div></div>
 }
 
 function TicketRow({ ticket, selected, onSelect }: { ticket: Ticket; selected: boolean; onSelect: (ticketId: string) => void }) {
@@ -423,13 +439,13 @@ const LIVE_STATUS_TEXT: Record<LiveState, string> = {
   live: 'Live: updates every 5 seconds while this tab is open.',
   paused: 'Live updates are paused because there was no activity for 10 minutes.',
   failed: 'Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.',
-  ended: 'Your demo session has ended, so live updates stopped. Start a new demo to keep exploring.',
+  ended: 'Your demo session has ended, so live updates stopped.',
 }
 
 // Only the state sentence is a live region, so a screen reader speaks when the state changes, not on every refresh.
-function LiveStatus({ state, lastUpdated, onRefresh, onStartNew }: { state: LiveState; lastUpdated: Date | null; onRefresh: () => void; onStartNew: () => void }) {
+function LiveStatus({ state, lastUpdated, onRefresh }: { state: LiveState; lastUpdated: Date | null; onRefresh: () => void }) {
   const time = lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : null
-  return <p className={state === 'live' || state === 'loading' ? 'live-status' : 'live-status paused'}><span role="status">{LIVE_STATUS_TEXT[state]}</span>{time && <span className="live-updated"> Last updated at {time}.</span>}{state === 'paused' && <> <button type="button" className="text-button" onClick={onRefresh}>Refresh now</button></>}{state === 'ended' && <> <button type="button" className="text-button" onClick={onStartNew}>Start a new demo</button></>}</p>
+  return <p className={state === 'live' || state === 'loading' ? 'live-status' : 'live-status paused'}><span role="status">{LIVE_STATUS_TEXT[state]}</span>{time && <span className="live-updated"> Last updated at {time}.</span>}{state === 'paused' && <> <button type="button" className="text-button" onClick={onRefresh}>Refresh now</button></>}</p>
 }
 
 function EvaluationView({ evaluation }: { evaluation: EvaluationSummary | null }) {

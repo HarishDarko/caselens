@@ -689,9 +689,10 @@ test('keeps the error from a failed action on screen while the view refreshes in
   expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem. Try again in a few seconds.')
 })
 
-test('says plainly when the API refuses a correction that matches the original result (409)', async () => {
+test('says plainly when the API refuses a correction (409), without claiming which conflict it was', async () => {
   const backend = mockBackend()
-  stubOver(backend, (url) => url.includes('/feedback') ? response({ detail: 'Feedback must change at least one triage field' }, 409) : undefined)
+  // The API sends the same generic detail for every refused correction.
+  stubOver(backend, (url) => url.includes('/feedback') ? response({ detail: 'The requested operation is not valid' }, 409) : undefined)
   render(<App />)
   await launch()
   await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
@@ -701,8 +702,8 @@ test('says plainly when the API refuses a correction that matches the original r
   fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Lower than the model said.' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
 
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This correction matches the original triage result, so there is nothing to save. Pick a different urgency.'))
-  expect(screen.queryByText(/409|at least one triage field|Try again in a few seconds/)).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'))
+  expect(screen.queryByText(/409|not valid|Try again in a few seconds/)).not.toBeInTheDocument()
 })
 
 test('keeps the original urgency apart from the saved correction, and shows the priority and suggested reply', async () => {
@@ -755,4 +756,61 @@ test('shows an unfinished job as Pending and Not called, not as a 0 ms rules dec
   await waitFor(() => expect(screen.getByText('Recent processing')).toBeInTheDocument())
   await waitFor(() => expect(screen.getByText('Pending', { selector: '.activity-latency' })).toBeInTheDocument())
   expect(screen.getByText(/^Not called · updated/)).toBeInTheDocument()
+})
+
+test('offers a new demo when a ticket action finds the session ended, and moves focus to the new inbox', async () => {
+  const backend = mockBackend()
+  let expired = true
+  const fetchMock = stubOver(backend, (url) => {
+    if (url.endsWith('/triage') && expired) { expired = false; return response({ detail: 'Unauthorized' }, 401) }
+    return undefined
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Your demo session has ended. Start a new demo to keep exploring.'))
+  const sessionPosts = () => fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init)).length
+  expect(sessionPosts()).toBe(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Start a new demo' }))
+
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toHaveFocus())
+  expect(sessionPosts()).toBe(2)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+test('sends one triage request when a ticket being triaged is opened twice', async () => {
+  const fetchMock = mockBackend({ pendingProcessingPolls: 100 })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+
+  // Both clicks land before React re-renders, so only a synchronous guard can stop the second request.
+  const review = screen.getByRole('button', { name: /Review CL-A102/i })
+  act(() => { review.click(); review.click() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+
+  expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/triage') && init?.method === 'POST')).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+})
+
+test('keeps the stage text of a ticket still in triage when another ticket finishes', async () => {
+  mockSeededBackend([chargerTicket, apiTicket], {
+    'ticket-a104': () => pendingJob('QUEUED'),
+    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A104')).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
+  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('A test explanation.'))
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
+  expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.')
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
