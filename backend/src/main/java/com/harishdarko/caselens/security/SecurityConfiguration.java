@@ -59,21 +59,28 @@ class SecurityConfiguration {
 
     @Bean
     AiCallBudget aiCallBudget(RateLimitService limits, Clock clock,
-            @Value("${caselens.ai.daily-call-budget:300}") int dailyCallBudget) {
-        return new AiCallBudget(limits, clock, dailyCallBudget);
+            @Value("${caselens.ai.daily-call-budget:300}") int dailyCallBudget,
+            @Value("${caselens.ai.daily-call-share-per-client:30}") int dailyCallSharePerClient) {
+        return new AiCallBudget(limits, clock, dailyCallBudget, dailyCallSharePerClient);
+    }
+
+    /**
+     * Only ApiHandler sets X-CaseLens-Client-Ip, from the API Gateway sourceIp, after dropping any copy the client
+     * sent. Outside Lambda nothing strips it, so a caller could pick a new address for every request.
+     */
+    @Bean
+    ClientAddresses clientAddresses(Environment environment, @Value("${caselens.session-secret}") String keySecret) {
+        return new ClientAddresses(environment.matchesProfiles("lambda"), keySecret);
     }
 
     @Bean
-    DemoRateLimitFilter demoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, Environment environment,
+    DemoRateLimitFilter demoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, ClientAddresses addresses,
             @Value("${caselens.rate-limit.session-per-minute:20}") int sessionLimit,
             @Value("${caselens.rate-limit.triage-per-minute:30}") int triageLimit,
             @Value("${caselens.rate-limit.mutation-per-minute:${caselens.rate-limit.default-per-minute:30}}") int mutationLimit,
             @Value("${caselens.rate-limit.ticket-per-minute:10}") int ticketLimit,
             @Value("${caselens.rate-limit.feedback-per-minute:20}") int feedbackLimit) {
-        // Only ApiHandler sets X-CaseLens-Client-Ip, from the API Gateway sourceIp, after dropping any copy the client
-        // sent. Outside Lambda nothing strips it, so a caller could pick a new address for every request.
-        boolean trustGatewayClientIp = environment.matchesProfiles("lambda");
-        return new DemoRateLimitFilter(limits, objectMapper, trustGatewayClientIp,
+        return new DemoRateLimitFilter(limits, objectMapper, addresses,
                 new DemoRateLimitFilter.Limits(sessionLimit, triageLimit, mutationLimit, ticketLimit, feedbackLimit));
     }
 

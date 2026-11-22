@@ -41,7 +41,7 @@ class PostgresMigrationIntegrationTest {
                 .load();
 
         flyway.migrate();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -79,6 +79,14 @@ class PostgresMigrationIntegrationTest {
                 while (indexes.next()) names.add(indexes.getString(1));
                 assertThat(names).containsExactlyInAnyOrder("idx_outbox_event_workspace", "idx_outbox_event_ticket",
                         "idx_triage_job_replayed_from", "idx_triage_feedback_ticket");
+            }
+
+            // V10 is expand only: the previous application version inserts workspaces without client_key.
+            try (ResultSet clientKey = statement.executeQuery("SELECT is_nullable, column_default FROM information_schema.columns "
+                    + "WHERE table_name = 'demo_workspaces' AND column_name = 'client_key'")) {
+                assertThat(clientKey.next()).isTrue();
+                assertThat(clientKey.getString(1)).isEqualTo("YES");
+                assertThat(clientKey.getString(2)).isNull();
             }
 
             // V8 is expand only: the previous application version inserts invocations without event_id.

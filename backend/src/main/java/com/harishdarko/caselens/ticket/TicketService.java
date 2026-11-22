@@ -3,6 +3,7 @@ package com.harishdarko.caselens.ticket;
 import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
 import com.harishdarko.caselens.demo.DemoScenario;
 import com.harishdarko.caselens.demo.DemoScenarios;
+import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
@@ -19,13 +20,15 @@ public class TicketService {
     private final TicketRepository tickets;
     private final DemoScenarios scenarios;
     private final Clock clock;
+    private final DemoWorkspaceAccess workspaces;
     private final int maxTicketsPerWorkspace;
 
-    TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock,
+    TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock, DemoWorkspaceAccess workspaces,
             @Value("${caselens.limits.tickets-per-workspace:50}") int maxTicketsPerWorkspace) {
         this.tickets = tickets;
         this.scenarios = scenarios;
         this.clock = clock;
+        this.workspaces = workspaces;
         this.maxTicketsPerWorkspace = maxTicketsPerWorkspace;
     }
 
@@ -55,16 +58,23 @@ public class TicketService {
         return saveScenario(workspaceId, scenarios.require(workspaceId, key));
     }
 
+    /** Holds the workspace lock, so a reset never interleaves with an add and leaves more tickets than the cap. */
     @Transactional
     public int reset(UUID workspaceId) {
+        workspaces.lockForUpdate(workspaceId);
         tickets.deleteByWorkspaceId(workspaceId);
         List<DemoScenario> all = scenarios.forWorkspace(workspaceId);
         all.forEach(scenario -> saveScenario(workspaceId, scenario));
         return all.size();
     }
 
-    /** Reset replaces the tickets with the seeded set, so only adding a ticket can reach the cap. */
+    /**
+     * Reset replaces the tickets with the seeded set, so only adding a ticket can reach the cap. The workspace lock,
+     * held until the insert commits, makes concurrent adds count one after the other instead of all seeing the same
+     * count and passing together.
+     */
     private void requireRoom(UUID workspaceId) {
+        workspaces.lockForUpdate(workspaceId);
         if (tickets.countByWorkspaceId(workspaceId) >= maxTicketsPerWorkspace) {
             throw new WorkspaceLimitExceededException("tickets", maxTicketsPerWorkspace);
         }

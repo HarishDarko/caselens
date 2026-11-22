@@ -1,6 +1,7 @@
 package com.harishdarko.caselens.triage;
 
 import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
+import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import com.harishdarko.caselens.ticket.TicketRepository;
@@ -20,15 +21,18 @@ public class FeedbackService {
     private final TriageFeedbackRepository feedback;
     private final Clock clock;
     private final PackResolver packs;
+    private final DemoWorkspaceAccess workspaces;
     private final int maxFeedbackPerWorkspace;
 
     FeedbackService(TicketRepository tickets, TriageResultRepository results, TriageFeedbackRepository feedback, Clock clock,
-            PackResolver packs, @Value("${caselens.limits.feedback-per-workspace:100}") int maxFeedbackPerWorkspace) {
+            PackResolver packs, DemoWorkspaceAccess workspaces,
+            @Value("${caselens.limits.feedback-per-workspace:100}") int maxFeedbackPerWorkspace) {
         this.tickets = tickets;
         this.results = results;
         this.feedback = feedback;
         this.clock = clock;
         this.packs = packs;
+        this.workspaces = workspaces;
         this.maxFeedbackPerWorkspace = maxFeedbackPerWorkspace;
     }
 
@@ -53,6 +57,8 @@ public class FeedbackService {
         if (!candidate.differsFrom(result)) {
             throw new IllegalArgumentException("Feedback must change at least one triage field");
         }
+        // The workspace lock, held until the insert commits, makes concurrent submits count one after the other.
+        workspaces.lockForUpdate(workspaceId);
         if (feedback.countByWorkspaceId(workspaceId) >= maxFeedbackPerWorkspace) {
             throw new WorkspaceLimitExceededException("feedback entries", maxFeedbackPerWorkspace);
         }

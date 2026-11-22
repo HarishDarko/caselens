@@ -37,10 +37,19 @@ public class DemoSessionService {
     /** A new 24-hour workspace for the given industry; the caller checks that the industry exists. */
     @Transactional
     public DemoSession create(String industry) {
+        return create(industry, null);
+    }
+
+    /**
+     * A new 24-hour workspace for the given industry, opened by the client with this key. Its AI calls count against
+     * that client's daily share of the AI budget; a null key counts against the global budget only.
+     */
+    @Transactional
+    public DemoSession create(String industry, String clientKey) {
         Instant createdAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
         Instant expiresAt = createdAt.plus(SESSION_TTL);
         UUID workspaceId = UUID.randomUUID();
-        workspaces.save(new DemoWorkspace(workspaceId, createdAt, expiresAt, industry));
+        workspaces.save(new DemoWorkspace(workspaceId, createdAt, expiresAt, industry, clientKey));
         return new DemoSession(workspaceId, tokens.create(workspaceId, expiresAt), expiresAt, industry);
     }
 
@@ -51,7 +60,11 @@ public class DemoSessionService {
      * equals what {@code GET /api/tickets} returns (timestamps at the database's precision).
      */
     public OpenedWorkspace openSeeded(String industry) {
-        DemoSession session = create(industry);
+        return openSeeded(industry, null);
+    }
+
+    public OpenedWorkspace openSeeded(String industry, String clientKey) {
+        DemoSession session = create(industry, clientKey);
         tickets.reset(session.workspaceId());
         return new OpenedWorkspace(session, tickets.list(session.workspaceId(), 0, 50, null, null).getContent(), runtime);
     }

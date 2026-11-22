@@ -51,6 +51,9 @@ caselens:
   ai:
     # AI provider calls per UTC day across all instances; past it, triage uses the rules provider. 0 turns AI off.
     daily-call-budget: ${CASELENS_AI_DAILY_CALL_BUDGET:300}
+    # The most of that budget one client network (an IPv4 address or an IPv6 /64) can spend per UTC day; past it, that
+    # client's triage uses the rules provider and everyone else still gets AI. 0 turns the share off.
+    daily-call-share-per-client: ${CASELENS_AI_DAILY_CALL_SHARE_PER_CLIENT:30}
   cleanup:
     initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:21600000}
     fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:21600000}
