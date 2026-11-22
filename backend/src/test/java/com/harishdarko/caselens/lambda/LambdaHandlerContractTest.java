@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
+import com.harishdarko.caselens.demo.DemoRetentionSweep;
 import com.harishdarko.caselens.triage.OutboxRelay;
 import com.harishdarko.caselens.triage.QueueMessageCodec;
 import com.harishdarko.caselens.triage.TriageWorker;
@@ -127,25 +128,64 @@ class LambdaHandlerContractTest {
                 () -> {
                     relayLoaded.set(true);
                     return mock(OutboxRelay.class);
-                });
+                },
+                () -> mock(DemoRetentionSweep.class));
 
         assertThat(mapperLoaded).isTrue();
         assertThat(relayLoaded).isTrue();
     }
 
     @Test
-    void relayPublishesOneBatchAndReportsTheCount() throws Exception {
+    void relayPublishesOneBatchPurgesExpiredDataAndReportsTheCounts() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         OutboxRelay relay = mock(OutboxRelay.class);
         when(relay.publishBatch(org.mockito.ArgumentMatchers.eq(RelayHandler.BATCH_SIZE), any())).thenReturn(3);
+        DemoRetentionSweep sweep = mock(DemoRetentionSweep.class);
+        when(sweep.sweep(RelayHandler.SWEEP_BUDGET)).thenReturn(new DemoRetentionSweep.Result(4, 9));
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
-        new RelayHandler(() -> mapper, () -> relay)
+        new RelayHandler(() -> mapper, () -> relay, () -> sweep)
                 .handleRequest(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)), output, null);
 
         JsonNode response = mapper.readTree(output.toByteArray());
         assertThat(response.path("published").asInt()).isEqualTo(3);
+        assertThat(response.path("purgedWorkspaces").asInt()).isEqualTo(4);
+        assertThat(response.path("purgedRateLimitBuckets").asInt()).isEqualTo(9);
         assertThat(response.path("status").asText()).isEqualTo("OK");
+    }
+
+    @Test
+    void relaySweepGetsOnlyTheTimeLeftAfterTheOutboxStep() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger remaining = new java.util.concurrent.atomic.AtomicInteger(29_000);
+        com.amazonaws.services.lambda.runtime.Context context = mock(com.amazonaws.services.lambda.runtime.Context.class);
+        when(context.getRemainingTimeInMillis()).thenAnswer(invocation -> remaining.get());
+        OutboxRelay relay = mock(OutboxRelay.class);
+        when(relay.publishBatch(org.mockito.ArgumentMatchers.eq(RelayHandler.BATCH_SIZE), any())).thenAnswer(invocation -> {
+            remaining.set(9_000); // a slow publish used 20 s
+            return 25;
+        });
+        DemoRetentionSweep sweep = mock(DemoRetentionSweep.class);
+        when(sweep.sweep(any())).thenReturn(new DemoRetentionSweep.Result(0, 0));
+
+        new RelayHandler(ObjectMapper::new, () -> relay, () -> sweep)
+                .handleRequest(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)), new ByteArrayOutputStream(),
+                        context);
+
+        org.mockito.Mockito.verify(sweep).sweep(java.time.Duration.ofSeconds(1));
+    }
+
+    @Test
+    void relaySweepBudgetStaysInsideTheRemainingFunctionTime() {
+        com.amazonaws.services.lambda.runtime.Context plenty = mock(com.amazonaws.services.lambda.runtime.Context.class);
+        when(plenty.getRemainingTimeInMillis()).thenReturn(29_000);
+        com.amazonaws.services.lambda.runtime.Context tight = mock(com.amazonaws.services.lambda.runtime.Context.class);
+        when(tight.getRemainingTimeInMillis()).thenReturn(12_000);
+        com.amazonaws.services.lambda.runtime.Context spent = mock(com.amazonaws.services.lambda.runtime.Context.class);
+        when(spent.getRemainingTimeInMillis()).thenReturn(5_000);
+
+        assertThat(RelayHandler.sweepBudget(plenty)).isEqualTo(RelayHandler.SWEEP_BUDGET);
+        assertThat(RelayHandler.sweepBudget(tight)).isEqualTo(java.time.Duration.ofSeconds(4));
+        assertThat(RelayHandler.sweepBudget(spent)).isEqualTo(java.time.Duration.ZERO);
     }
 
     @Test

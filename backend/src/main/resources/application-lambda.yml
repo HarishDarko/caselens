@@ -4,5 +4,7 @@ spring:
       minimum-idle: 0
       maximum-pool-size: 4
       allow-pool-suspension: true
-      connection-timeout: 3000
-      validation-timeout: 1000
+      # A suspended Neon compute takes a few seconds to resume; 10 s covers a slow resume and stays well inside
+      # the 30 s function timeout.
+      connection-timeout: 10000
+      validation-timeout: 3000

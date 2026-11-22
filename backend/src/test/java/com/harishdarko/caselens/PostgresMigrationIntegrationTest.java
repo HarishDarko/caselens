@@ -41,7 +41,7 @@ class PostgresMigrationIntegrationTest {
                 .load();
 
         flyway.migrate();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("8");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("9");
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -69,6 +69,16 @@ class PostgresMigrationIntegrationTest {
                         "started_at", "ended_at", "latency_ms", "status", "sanitized_error_code",
                         "input_tokens", "output_tokens");
                 assertThat(names).doesNotContain("raw_ticket", "request_body", "raw_response", "api_key");
+            }
+
+            // V9 indexes every foreign key the expired-workspace purge cascades through.
+            try (ResultSet indexes = statement.executeQuery("SELECT indexname FROM pg_indexes WHERE indexname IN "
+                    + "('idx_outbox_event_workspace', 'idx_outbox_event_ticket', 'idx_triage_job_replayed_from', "
+                    + "'idx_triage_feedback_ticket')")) {
+                List<String> names = new ArrayList<>();
+                while (indexes.next()) names.add(indexes.getString(1));
+                assertThat(names).containsExactlyInAnyOrder("idx_outbox_event_workspace", "idx_outbox_event_ticket",
+                        "idx_triage_job_replayed_from", "idx_triage_feedback_ticket");
             }
 
             // V8 is expand only: the previous application version inserts invocations without event_id.

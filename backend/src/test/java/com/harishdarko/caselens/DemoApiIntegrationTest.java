@@ -61,9 +61,11 @@ class DemoApiIntegrationTest {
     }
 
     @Test
-    void keepsMetricsBehindDemoAuthentication() throws Exception {
+    void doesNotExposeTheMetricsEndpoint() throws Exception {
         mvc.perform(get("/actuator/metrics"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/actuator/info"))
+                .andExpect(status().isOk());
     }
 
     @Test

@@ -34,8 +34,9 @@ final class LambdaSpringContext {
         System.setProperty("spring.datasource.hikari.minimum-idle", "0");
         System.setProperty("spring.datasource.hikari.maximum-pool-size", "4");
         System.setProperty("spring.datasource.hikari.allow-pool-suspension", "true");
-        System.setProperty("spring.datasource.hikari.connection-timeout", "3000");
-        System.setProperty("spring.datasource.hikari.validation-timeout", "1000");
+        // Same as application-lambda.yml: room for a Neon resume, well under the 30 s function timeout.
+        System.setProperty("spring.datasource.hikari.connection-timeout", "10000");
+        System.setProperty("spring.datasource.hikari.validation-timeout", "3000");
         return new SpringApplicationBuilder(CaseLensApplication.class)
                 .web(WebApplicationType.SERVLET)
                 .profiles("lambda")
@@ -44,6 +45,13 @@ final class LambdaSpringContext {
 
     static ObjectMapper mapper() {
         return get().getBean(ObjectMapper.class);
+    }
+
+    /** The origins Spring's CORS configuration allows (caselens.web.origins, set by Terraform). */
+    static java.util.Set<String> webOrigins() {
+        String origins = get().getEnvironment().getProperty("caselens.web.origins", "");
+        return java.util.Arrays.stream(origins.split(",")).map(String::trim).filter(origin -> !origin.isBlank())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     static HttpClient httpClient() {

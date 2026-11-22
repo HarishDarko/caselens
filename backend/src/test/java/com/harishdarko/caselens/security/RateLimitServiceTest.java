@@ -52,4 +52,40 @@ class RateLimitServiceTest {
         verify(jdbc).queryForObject(org.mockito.ArgumentMatchers.contains("ON CONFLICT (rate_key)"), any(RowMapper.class),
                 any(Object[].class));
     }
+
+    @Test
+    void cutsLongKeysSoTheyFitTheBucketColumn() {
+        RateLimitService service = new RateLimitService(
+                Clock.fixed(Instant.parse("2040-07-11T12:00:00Z"), ZoneOffset.UTC), 1, Duration.ofMinutes(1));
+        String hostile = "session:" + "9".repeat(5_000);
+
+        service.acquire(hostile);
+
+        // The cut key is the same bucket, so a second request with the same long value is still limited.
+        assertThatThrownBy(() -> service.acquire(hostile)).isInstanceOf(RateLimitExceededException.class);
+    }
+
+    @Test
+    void neverHoldsMoreInMemoryWindowsThanTheBound() {
+        RateLimitService service = new RateLimitService(
+                Clock.fixed(Instant.parse("2040-07-11T12:00:00Z"), ZoneOffset.UTC), 5, Duration.ofMinutes(1));
+
+        for (int key = 0; key < RateLimitService.MAX_IN_MEMORY_KEYS + 500; key++) service.acquire("session:" + key);
+
+        org.assertj.core.api.Assertions.assertThat(service.inMemoryKeyCount())
+                .isLessThanOrEqualTo(RateLimitService.MAX_IN_MEMORY_KEYS);
+    }
+
+    @Test
+    void acceptsAPerCallWindowForDailyBudgets() {
+        RateLimitService service = new RateLimitService(
+                Clock.fixed(Instant.parse("2040-07-11T12:00:00Z"), ZoneOffset.UTC), 5, Duration.ofMinutes(1));
+
+        service.acquire("ai-calls:2040-07-11", 1, Duration.ofHours(12));
+
+        assertThatThrownBy(() -> service.acquire("ai-calls:2040-07-11", 1, Duration.ofHours(12)))
+                .isInstanceOf(RateLimitExceededException.class)
+                .extracting(exception -> ((RateLimitExceededException) exception).retryAfterSeconds())
+                .isEqualTo(12 * 3600L);
+    }
 }

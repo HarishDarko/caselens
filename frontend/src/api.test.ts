@@ -63,6 +63,15 @@ describe('CaseLens API client', () => {
     }
   })
 
+  it('keeps the problem code on the error so the page can tell a workspace cap from other conflicts', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ type: 'urn:caselens:problem:workspace-limit', code: 'workspace-limit', status: 409, detail: 'Full' }),
+      { status: 409, headers: { 'Content-Type': 'application/problem+json' } }))
+    const api = createCaseLensApi('', fetcher)
+
+    await expect(api.requestTriage('ticket-1')).rejects.toMatchObject({ status: 409, code: 'workspace-limit', message: 'Full' })
+  })
+
   it('tries a GET once more after a 503, but never a POST, and keeps the status on the error', async () => {
     vi.useFakeTimers()
     try {

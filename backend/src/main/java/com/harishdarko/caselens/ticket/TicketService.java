@@ -1,10 +1,12 @@
 package com.harishdarko.caselens.ticket;
 
+import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
 import com.harishdarko.caselens.demo.DemoScenario;
 import com.harishdarko.caselens.demo.DemoScenarios;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -17,15 +19,19 @@ public class TicketService {
     private final TicketRepository tickets;
     private final DemoScenarios scenarios;
     private final Clock clock;
+    private final int maxTicketsPerWorkspace;
 
-    TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock) {
+    TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock,
+            @Value("${caselens.limits.tickets-per-workspace:50}") int maxTicketsPerWorkspace) {
         this.tickets = tickets;
         this.scenarios = scenarios;
         this.clock = clock;
+        this.maxTicketsPerWorkspace = maxTicketsPerWorkspace;
     }
 
     @Transactional
     public Ticket create(UUID workspaceId, String subject, String message, TicketChannel channel) {
+        requireRoom(workspaceId);
         return tickets.save(Ticket.create(UUID.randomUUID(), workspaceId, subject, message, channel, null, clock.instant()));
     }
 
@@ -45,6 +51,7 @@ public class TicketService {
 
     @Transactional
     public Ticket createScenario(UUID workspaceId, String key) {
+        requireRoom(workspaceId);
         return saveScenario(workspaceId, scenarios.require(workspaceId, key));
     }
 
@@ -54,6 +61,13 @@ public class TicketService {
         List<DemoScenario> all = scenarios.forWorkspace(workspaceId);
         all.forEach(scenario -> saveScenario(workspaceId, scenario));
         return all.size();
+    }
+
+    /** Reset replaces the tickets with the seeded set, so only adding a ticket can reach the cap. */
+    private void requireRoom(UUID workspaceId) {
+        if (tickets.countByWorkspaceId(workspaceId) >= maxTicketsPerWorkspace) {
+            throw new WorkspaceLimitExceededException("tickets", maxTicketsPerWorkspace);
+        }
     }
 
     private Ticket saveScenario(UUID workspaceId, DemoScenario scenario) {

@@ -4,10 +4,13 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.harishdarko.caselens.demo.DemoDataController.ScenarioTicketResponse;
 import com.harishdarko.caselens.triage.PackCatalog;
 import jakarta.validation.ConstraintViolationException;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,29 +23,40 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/demo")
 class DemoSessionController {
+    /** Neon suspends after 5 idle minutes, so one wake-up query a minute per instance is plenty. */
+    static final Duration WARM_UP_INTERVAL = Duration.ofMinutes(1);
     private final DemoSessionService sessions;
     private final PackCatalog packs;
     private final DemoScenarios scenarios;
     private final JdbcOperations jdbc;
+    private final Clock clock;
+    private final AtomicReference<Instant> lastWarmUp = new AtomicReference<>(Instant.MIN);
 
-    DemoSessionController(DemoSessionService sessions, PackCatalog packs, DemoScenarios scenarios, JdbcOperations jdbc) {
+    DemoSessionController(DemoSessionService sessions, PackCatalog packs, DemoScenarios scenarios, JdbcOperations jdbc,
+            Clock clock) {
         this.sessions = sessions;
         this.packs = packs;
         this.scenarios = scenarios;
         this.jdbc = jdbc;
+        this.clock = clock;
     }
 
     /**
      * What a new demo session can be: the industries, with the demo tickets of each. No token needed. The page has the
      * same list in its bundle and calls this in the background when it loads, so this call is also the warm-up: one
-     * cheap query wakes the database, and the visitor's first click does not wait for it.
+     * cheap query wakes the database, and the visitor's first click does not wait for it. The query runs at most once
+     * per {@link #WARM_UP_INTERVAL} on each instance, so a burst of anonymous calls costs one query, not one each.
      */
     @GetMapping("/session")
     SessionOptions options() {
-        try {
-            jdbc.queryForObject("select 1", Integer.class);
-        } catch (DataAccessException databaseAsleepOrDown) {
-            // The list does not need the database; the first real request will report a database problem.
+        Instant now = clock.instant();
+        Instant last = lastWarmUp.get();
+        if (!now.isBefore(last.plus(WARM_UP_INTERVAL)) && lastWarmUp.compareAndSet(last, now)) {
+            try {
+                jdbc.queryForObject("select 1", Integer.class);
+            } catch (DataAccessException databaseAsleepOrDown) {
+                // The list does not need the database; the first real request will report a database problem.
+            }
         }
         List<Industry> industries = packs.ids().stream()
                 .map(id -> new Industry(id, packs.require(id).name(), scenario(scenarios.featured(id)),
