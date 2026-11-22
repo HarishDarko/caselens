@@ -72,7 +72,7 @@ describe('CaseLens API client', () => {
     await expect(api.requestTriage('ticket-1')).rejects.toMatchObject({ status: 409, code: 'workspace-limit', message: 'Full' })
   })
 
-  it('tries a GET once more after a 503, but never a POST, and keeps the status on the error', async () => {
+  it('tries a GET once more after a 503, but never a non-idempotent POST, and keeps the status on the error', async () => {
     vi.useFakeTimers()
     try {
       const fetcher = vi.fn().mockImplementation(async () => new Response('', { status: 503 }))
@@ -83,14 +83,14 @@ describe('CaseLens API client', () => {
       expect(await get).toMatchObject({ status: 503 })
       expect(fetcher).toHaveBeenCalledTimes(2)
 
-      await expect(api.requestTriage('ticket-1')).rejects.toMatchObject({ status: 503 })
+      await expect(api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })).rejects.toMatchObject({ status: 503 })
       expect(fetcher).toHaveBeenCalledTimes(3)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('tries a GET once more when fetch fails with a TypeError (a gateway answer without CORS headers), but never a POST', async () => {
+  it('tries a GET once more when fetch fails with a TypeError (a gateway answer without CORS headers), but never a non-idempotent POST', async () => {
     vi.useFakeTimers()
     try {
       const fetcher = vi.fn()
@@ -106,13 +106,73 @@ describe('CaseLens API client', () => {
       expect(fetcher).toHaveBeenCalledTimes(2)
 
       fetcher.mockRejectedValue(new TypeError('Failed to fetch'))
-      await expect(api.requestTriage('ticket-1')).rejects.toBeInstanceOf(TypeError)
-      expect(fetcher).toHaveBeenCalledTimes(3)
+      await expect(api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })).rejects.toBeInstanceOf(TypeError)
+      await expect(api.retryFailure('job-1')).rejects.toBeInstanceOf(TypeError)
+      await expect(api.createScenario('provider-retry-demo')).rejects.toBeInstanceOf(TypeError)
+      expect(fetcher).toHaveBeenCalledTimes(5)
 
       const get = api.getProcessing('ticket-1').catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(1_000)
       expect(await get).toBeInstanceOf(TypeError)
-      expect(fetcher).toHaveBeenCalledTimes(5)
+      expect(fetcher).toHaveBeenCalledTimes(7)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // CL-05: the API returns the ticket's existing job when the triage POST arrives twice, so a throttled triage
+  // request (which a browser reports as a TypeError, or a 503) is sent once more instead of failing.
+  it('tries the idempotent triage POST once more after a TypeError or a 503', async () => {
+    vi.useFakeTimers()
+    try {
+      const job = { id: 'job-1', status: 'QUEUED' }
+      const fetcher = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(new Response(JSON.stringify(job), { status: 202 }))
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(job), { status: 202 }))
+      const api = createCaseLensApi('', fetcher)
+
+      const first = api.requestTriage('ticket-1')
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(first).resolves.toEqual(job)
+      expect(fetcher).toHaveBeenCalledTimes(2)
+
+      const second = api.requestTriage('ticket-1')
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(second).resolves.toEqual(job)
+      expect(fetcher).toHaveBeenCalledTimes(4)
+      expect(fetcher.mock.calls.every(([url, init]) => url === '/api/tickets/ticket-1/triage' && init?.method === 'POST')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // CL2-13: the observability reads and the mutations take a signal, so leaving a view or closing the demo stops a
+  // retry they are waiting to send instead of firing it 1 to 5 seconds later with the old token.
+  it.each([
+    ['getEvaluation', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.getEvaluation(signal)],
+    ['getOperationsOverview', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.getOperationsOverview(signal)],
+    ['listFailures', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.listFailures(signal)],
+    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' }, signal)],
+    ['retryFailure', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.retryFailure('job-1', signal)],
+    ['createScenario', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.createScenario('provider-retry-demo', signal)],
+  ])('%s passes its signal to fetch and does not send the retry once it aborts', async (_name, call) => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '3' } }))
+      const api = createCaseLensApi('', fetcher)
+      api.setToken('demo-token')
+      const controller = new AbortController()
+
+      const pending = call(api, controller.signal).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
+      controller.abort()
+      expect(await pending).toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(fetcher).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }

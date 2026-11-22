@@ -181,14 +181,16 @@ export class ApiError extends Error {
   }
 }
 
-// One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on a GET.
-// A POST is never sent twice after a 503, because the first one may have run. A long rate-limit window is not waited out.
-// A GET is also tried once more when fetch itself fails with a TypeError. API Gateway answers its own throttle (429) and
-// errors without CORS headers, so the browser hides that answer and fetch rejects instead of returning the status.
+// One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on an idempotent
+// request. A POST is never sent twice after a 503, because the first one may have run, unless sending it twice is
+// harmless: the triage POST returns the ticket's existing job, so it is idempotent. A long rate-limit window is not
+// waited out. An idempotent request is also tried once more when fetch itself fails with a TypeError. API Gateway
+// answers its own throttle (429) and errors without CORS headers, so the browser hides that answer and fetch rejects
+// instead of returning the status.
 const RETRY_DEFAULT_MS = 1_000
 const RETRY_MAX_MS = 5_000
-function retryDelay(response: Response, method: string): number | null {
-  if (response.status !== 429 && !(response.status === 503 && method === 'GET')) return null
+function retryDelay(response: Response, idempotent: boolean): number | null {
+  if (response.status !== 429 && !(response.status === 503 && idempotent)) return null
   const header = response.headers.get('Retry-After')
   const delay = header === null || header.trim() === '' ? RETRY_DEFAULT_MS : Number(header) * 1_000
   return Number.isFinite(delay) && delay >= 0 && delay <= RETRY_MAX_MS ? delay : null
@@ -206,22 +208,24 @@ function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
 export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseLensApi {
   let token = ''
 
-  async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // idempotent marks a POST the server answers the same way when it arrives twice; every GET is idempotent.
+  async function request<T>(path: string, init: RequestInit = {}, { idempotent = false } = {}): Promise<T> {
     const headers = new Headers(init.headers)
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     if (token) headers.set('Authorization', `Bearer ${token}`)
     const url = `${baseUrl.replace(/\/$/, '')}${path}`
     const method = (init.method ?? 'GET').toUpperCase()
+    const retryable = method === 'GET' || idempotent
     init.signal?.throwIfAborted()
     let response: Response
     try {
       response = await fetcher(url, { ...init, headers })
     } catch (cause: unknown) {
-      if (!(cause instanceof TypeError) || method !== 'GET' || init.signal?.aborted) throw cause
+      if (!(cause instanceof TypeError) || !retryable || init.signal?.aborted) throw cause
       await wait(RETRY_DEFAULT_MS, init.signal)
       response = await fetcher(url, { ...init, headers })
     }
-    const delay = response.ok ? null : retryDelay(response, method)
+    const delay = response.ok ? null : retryDelay(response, retryable)
     if (delay !== null) {
       await wait(delay, init.signal)
       response = await fetcher(url, { ...init, headers })
@@ -249,16 +253,17 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
     getRuntimeSummary: () => request<RuntimeSummary>('/api/demo/runtime'),
     listTickets: () => request<TicketPage>('/api/tickets?page=0&size=50'),
-    createScenario: (scenarioKey) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST' }),
-    requestTriage: (ticketId, signal) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }),
+    // A signal stops a request and its retry wait: the page aborts it when the reviewer leaves the view or the demo.
+    createScenario: (scenarioKey, signal) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST', signal }),
+    requestTriage: (ticketId, signal) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }, { idempotent: true }),
     getProcessing: (ticketId, signal) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`, { signal }),
-    submitFeedback: (ticketId, payload) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
-      method: 'POST', body: JSON.stringify(payload),
+    submitFeedback: (ticketId, payload, signal) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
+      method: 'POST', body: JSON.stringify(payload), signal,
     }),
-    getEvaluation: () => request<EvaluationSummary>('/api/evaluation'),
-    getOperationsOverview: () => request<OperationsOverview>('/api/operations/overview'),
-    listFailures: () => request<FailurePage>('/api/operations/failures?page=0&size=50'),
-    retryFailure: (jobId) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST' }),
+    getEvaluation: (signal) => request<EvaluationSummary>('/api/evaluation', { signal }),
+    getOperationsOverview: (signal) => request<OperationsOverview>('/api/operations/overview', { signal }),
+    listFailures: (signal) => request<FailurePage>('/api/operations/failures?page=0&size=50', { signal }),
+    retryFailure: (jobId, signal) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST', signal }),
   }
 }
 
@@ -269,12 +274,12 @@ export type CaseLensApi = {
   resetDemo: () => Promise<{ seeded: number }>
   getRuntimeSummary: () => Promise<RuntimeSummary>
   listTickets: () => Promise<TicketPage>
-  createScenario: (scenarioKey: string) => Promise<ApiTicket>
+  createScenario: (scenarioKey: string, signal?: AbortSignal) => Promise<ApiTicket>
   requestTriage: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing['job']>
   getProcessing: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing>
-  submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }) => Promise<FeedbackResponse>
-  getEvaluation: () => Promise<EvaluationSummary>
-  getOperationsOverview: () => Promise<OperationsOverview>
-  listFailures: () => Promise<FailurePage>
-  retryFailure: (jobId: string) => Promise<TriageProcessing['job']>
+  submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }, signal?: AbortSignal) => Promise<FeedbackResponse>
+  getEvaluation: (signal?: AbortSignal) => Promise<EvaluationSummary>
+  getOperationsOverview: (signal?: AbortSignal) => Promise<OperationsOverview>
+  listFailures: (signal?: AbortSignal) => Promise<FailurePage>
+  retryFailure: (jobId: string, signal?: AbortSignal) => Promise<TriageProcessing['job']>
 }
