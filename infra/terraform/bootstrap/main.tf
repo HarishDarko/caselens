@@ -16,6 +16,36 @@ locals {
   destroy_role_name = "${local.application_name}-terraform-destroy"
   # The deploy role is a main-stack resource (infra/terraform/main.tf), so the teardown reads and deletes it.
   deploy_role_name = "${local.application_name}-github-deploy"
+
+  # The exact actions the destroy role may use on the application's resources. tests/destroy_role.tftest.hcl
+  # asserts each list, so a wildcard or a new write action fails the test.
+  destroy_actions = {
+    s3_bucket = [
+      "s3:ListBucket", "s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetBucketVersioning",
+      "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment", "s3:GetBucketLogging", "s3:GetLifecycleConfiguration",
+      "s3:GetReplicationConfiguration", "s3:GetEncryptionConfiguration", "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketTagging", "s3:GetBucketPolicy", "s3:GetBucketPublicAccessBlock", "s3:ListBucketVersions",
+      "s3:DeleteBucketPolicy", "s3:PutBucketPublicAccessBlock", "s3:PutEncryptionConfiguration", "s3:PutBucketVersioning",
+      "s3:DeleteBucket",
+    ]
+    s3_object = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+    sqs       = ["sqs:GetQueueAttributes", "sqs:ListQueueTags", "sqs:DeleteQueue"]
+    lambda = [
+      "lambda:GetFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:ListVersionsByFunction", "lambda:GetAlias",
+      "lambda:GetPolicy", "lambda:GetEventSourceMapping", "lambda:ListTags", "lambda:RemovePermission", "lambda:DeleteAlias",
+      "lambda:DeleteEventSourceMapping", "lambda:DeleteFunction",
+    ]
+    logs                           = ["logs:ListTagsForResource", "logs:DeleteLogGroup"]
+    secretsmanager                 = ["secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:DeleteSecret"]
+    events                         = ["events:DescribeRule", "events:ListTagsForResource", "events:ListTargetsByRule", "events:RemoveTargets", "events:DeleteRule"]
+    cloudwatch                     = ["cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource", "cloudwatch:DeleteAlarms"]
+    cloudfront_distribution_read   = ["cloudfront:GetDistribution", "cloudfront:ListTagsForResource"]
+    cloudfront_distribution_change = ["cloudfront:UpdateDistribution", "cloudfront:DeleteDistribution"]
+    iam_role = [
+      "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole",
+      "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole",
+    ]
+  }
 }
 
 data "aws_iam_openid_connect_provider" "github" {
@@ -103,13 +133,32 @@ resource "aws_iam_role_policy" "github_destroy" {
       { Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketLocation"], Resource = "arn:aws:s3:::${var.bucket_name}" },
       { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::${var.bucket_name}/caselens/demo/terraform.tfstate" },
       { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource = "arn:aws:s3:::${var.bucket_name}/caselens/demo/terraform.tfstate.tflock" },
-      { Effect = "Allow", Action = ["s3:*"], Resource = ["arn:aws:s3:::${local.application_name}", "arn:aws:s3:::${local.application_name}/*", "arn:aws:s3:::${local.application_name}-artifacts", "arn:aws:s3:::${local.application_name}-artifacts/*"] },
-      { Effect = "Allow", Action = ["sqs:*"], Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
-      { Effect = "Allow", Action = ["lambda:*"], Resource = ["arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${local.application_name}-*", "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:event-source-mapping:*"] },
-      { Effect = "Allow", Action = ["logs:*"], Resource = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.application_name}-*", "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/${local.application_name}-*"] },
-      { Effect = "Allow", Action = ["secretsmanager:*"], Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.application_name}/*" },
-      { Effect = "Allow", Action = ["events:*"], Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/${local.application_name}-*" },
-      { Effect = "Allow", Action = ["cloudwatch:*"], Resource = "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.application_name}-*" },
+      # Each application grant below is the exact list (local.destroy_actions) of read, delete and disable actions the
+      # AWS provider v5.100.0 calls to refresh and destroy that resource. No create, update, policy, permission or code
+      # changes. Service Authorization Reference pages are named per service:
+      # https://docs.aws.amazon.com/service-authorization/latest/reference/reference_policies_actions-resources-contextkeys.html
+      #
+      # S3 (list_amazons3.html). Refresh: HeadBucket (ListBucket) and the bucket's Get* configuration, tags, policy and
+      # public access block. Destroy: empty every object version (force_destroy), then delete the bucket. Three removals
+      # have no Delete action of their own: AWS authorizes DeletePublicAccessBlock with PutBucketPublicAccessBlock and
+      # DeleteBucketEncryption with PutEncryptionConfiguration, and the provider removes versioning by suspending it
+      # (PutBucketVersioning). The role has no PutBucketPolicy, so it cannot open a bucket to anyone.
+      # https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html
+      { Effect = "Allow", Action = local.destroy_actions.s3_bucket, Resource = ["arn:aws:s3:::${local.application_name}", "arn:aws:s3:::${local.application_name}-artifacts"] },
+      { Effect = "Allow", Action = local.destroy_actions.s3_object, Resource = ["arn:aws:s3:::${local.application_name}/*", "arn:aws:s3:::${local.application_name}-artifacts/*"] },
+      # SQS (list_amazonsqs.html). GetQueueAttributes also serves the wait for deletion.
+      { Effect = "Allow", Action = local.destroy_actions.sqs, Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
+      # Lambda (list_awslambda.html): functions, their aliases and permissions (qualified ARNs match the function
+      # pattern), and the SQS event source mapping. Function tags come from GetFunction; ListTags is for the mapping.
+      { Effect = "Allow", Action = local.destroy_actions.lambda, Resource = ["arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${local.application_name}-*", "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:event-source-mapping:*"] },
+      # CloudWatch Logs (list_amazoncloudwatchlogs.html). DescribeLogGroups is granted on "*" further down.
+      { Effect = "Allow", Action = local.destroy_actions.logs, Resource = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.application_name}-*", "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/${local.application_name}-*"] },
+      # Secrets Manager (list_awssecretsmanager.html). Tags come from DescribeSecret.
+      { Effect = "Allow", Action = local.destroy_actions.secretsmanager, Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.application_name}/*" },
+      # EventBridge (list_amazoneventbridge.html): rules and their targets.
+      { Effect = "Allow", Action = local.destroy_actions.events, Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/${local.application_name}-*" },
+      # CloudWatch (list_amazoncloudwatch.html): metric alarms, described by name.
+      { Effect = "Allow", Action = local.destroy_actions.cloudwatch, Resource = "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.application_name}-*" },
       # The alarm email topic and its subscription (main stack, when alarm_email is set): read them during the
       # destroy plan, then unsubscribe and delete. Only this app's topics; topics passed in are never touched.
       { Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:GetSubscriptionAttributes", "sns:ListSubscriptionsByTopic", "sns:Unsubscribe", "sns:DeleteTopic"], Resource = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
@@ -121,8 +170,19 @@ resource "aws_iam_role_policy" "github_destroy" {
       # response headers policy, and read the managed cache policy the distribution uses. The main stack's IDs live in
       # another state, so each is scoped to its resource type in this account. Every action below takes a resource
       # type except ListCachePolicies (the cache policy data source looks the policy up by name), which needs "*".
+      # The provider's disable, wait and delete flow reads the distribution and its ETag with GetDistribution only.
       # https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncloudfront.html
-      { Effect = "Allow", Action = ["cloudfront:GetDistribution", "cloudfront:ListTagsForResource", "cloudfront:UpdateDistribution", "cloudfront:DeleteDistribution"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*" },
+      { Effect = "Allow", Action = local.destroy_actions.cloudfront_distribution_read, Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*" },
+      # Disabling and deleting change a distribution, so they are limited to this app's own. The bootstrap stack cannot
+      # know the distribution ID (it lives in the main stack's state), but UpdateDistribution and DeleteDistribution
+      # support aws:ResourceTag, and the main stack's default_tags put Project and Environment on the distribution.
+      # This role cannot tag anything, so it cannot bring another distribution into scope.
+      {
+        Effect    = "Allow"
+        Action    = local.destroy_actions.cloudfront_distribution_change
+        Resource  = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*"
+        Condition = { StringEquals = { "aws:ResourceTag/Project" = var.project_name, "aws:ResourceTag/Environment" = var.environment } }
+      },
       { Effect = "Allow", Action = ["cloudfront:GetOriginAccessControl", "cloudfront:DeleteOriginAccessControl"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:origin-access-control/*" },
       { Effect = "Allow", Action = ["cloudfront:GetResponseHeadersPolicy", "cloudfront:DeleteResponseHeadersPolicy"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:response-headers-policy/*" },
       # Managed-CachingOptimized is owned by AWS, not this account, so the account part of its ARN is left open. Read only.
@@ -131,13 +191,13 @@ resource "aws_iam_role_policy" "github_destroy" {
       # IAM on the app's roles (lambda runtime, deploy): only what the refresh reads and the destroy deletes. The
       # provider reads tags from GetRole, so ListRoleTags is not needed. No create, put, attach, pass or trust changes.
       # https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagementiam.html
-      { Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
+      { Effect = "Allow", Action = local.destroy_actions.iam_role, Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
       # The role name pattern above also matches this role. It is not in the application state, so it never needs IAM
       # on itself: deny all of it, so it can never read, rewrite or delete its own policy or trust.
       { Effect = "Deny", Action = ["iam:*"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.destroy_role_name}" },
       # The deploy role is torn down with the app, so it keeps the reads and deletes above. Deny every other IAM action
       # on it, so the destroy role can never change what the deploy role may do.
-      { Effect = "Deny", NotAction = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.deploy_role_name}" },
+      { Effect = "Deny", NotAction = local.destroy_actions.iam_role, Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.deploy_role_name}" },
       # `terraform plan -destroy` first refreshes every resource and reads every data source, so each read below must
       # be allowed or the run stops before anything is deleted. These three list actions have no resource type in
       # the Service Authorization Reference, so AWS accepts them only on "*":
