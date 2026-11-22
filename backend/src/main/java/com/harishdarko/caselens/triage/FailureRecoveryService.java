@@ -5,7 +5,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -18,6 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class FailureRecoveryService {
+    /**
+     * How long SQS can keep redelivering a retryable job's message: maxReceiveCount 5 x 90 s visibility timeout is
+     * 7.5 minutes, plus margin. A RETRYABLE_FAILURE job not updated for this long has had its message moved to the
+     * DLQ, so a reviewer may replay it. If an old message still turns up later, the worker sees the replacement and
+     * acknowledges it as a duplicate (TriageWorker.claim), and the active-job unique index blocks a reclaim anyway.
+     */
+    static final Duration SQS_REDELIVERY_WINDOW = Duration.ofMinutes(10);
     private final TriageJobRepository jobs;
     private final TriageRequestService requests;
     private final TriageResultRepository results;
@@ -36,7 +42,7 @@ public class FailureRecoveryService {
     @Transactional(readOnly = true)
     public Page<TriageJobSnapshot> failures(UUID workspaceId, int page, int size) {
         PageRequest request = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
-        return jobs.findRecoverableFailures(workspaceId, request)
+        return jobs.findRecoverableFailures(workspaceId, clock.instant().minus(SQS_REDELIVERY_WINDOW), request)
                 .map(TriageJob::snapshot);
     }
 
@@ -49,7 +55,7 @@ public class FailureRecoveryService {
         Map<UUID, TriageResult> resultByEvent = storedResults.stream()
                 .collect(java.util.stream.Collectors.toMap(TriageResult::getEventId, result -> result, (left, right) ->
                         left.getCreatedAt().isAfter(right.getCreatedAt()) ? left : right));
-        Map<UUID, ModelInvocation> latestInvocationByTicket = latestInvocations(storedInvocations);
+        JobInvocations jobInvocations = new JobInvocations(storedInvocations);
 
         long fallbackCount = storedResults.stream().filter(result -> result.getDecisionSource() == DecisionSource.RULES_FALLBACK).count();
         long providerFailureCount = storedInvocations.stream().filter(invocation -> !"SUCCESS".equals(invocation.getStatus())).count();
@@ -64,7 +70,7 @@ public class FailureRecoveryService {
                 .sorted(Comparator.comparing(TriageJob::getUpdatedAt).reversed()
                         .thenComparing(TriageJob::getId, Comparator.reverseOrder()))
                 .limit(20)
-                .map(job -> operation(job, resultByEvent.get(job.getEventId()), latestInvocationByTicket.get(job.getTicketId())))
+                .map(job -> operation(job, resultByEvent.get(job.getEventId()), jobInvocations.latestFor(job)))
                 .toList();
 
         Map<String, ProviderAccumulator> byProvider = new TreeMap<>();
@@ -76,19 +82,15 @@ public class FailureRecoveryService {
         return new OperationsOverview(clock.instant(), queue, fallbackCount, providerFailureCount, recent, providers);
     }
 
-    private Map<UUID, ModelInvocation> latestInvocations(List<ModelInvocation> storedInvocations) {
-        Map<UUID, ModelInvocation> latest = new HashMap<>();
-        for (ModelInvocation invocation : storedInvocations) {
-            ModelInvocation previous = latest.get(invocation.getTicketId());
-            if (previous == null || invocation.getEndedAt().isAfter(previous.getEndedAt())) latest.put(invocation.getTicketId(), invocation);
-        }
-        return latest;
-    }
-
+    /**
+     * Latency is null until the job has finished: a queued, processing or failed job has no end to measure to, and
+     * 0 ms would read as an instant answer. Provider and model are null when no provider call was recorded for this
+     * job (for example the synthetic demo failure, which never calls one).
+     */
     private OperationsOverview.RecentOperation operation(TriageJob job, TriageResult result, ModelInvocation invocation) {
-        long latency = result == null
-                ? durationMillis(job.getStartedAt(), job.getCompletedAt())
-                : durationMillis(job.getCreatedAt(), result.getCreatedAt());
+        Long latency = result != null
+                ? durationMillis(job.getCreatedAt(), result.getCreatedAt())
+                : durationMillis(job.getStartedAt(), job.getCompletedAt());
         return new OperationsOverview.RecentOperation(job.getId(), job.getTicketId(), job.getStatus(), job.getAttemptCount(),
                 job.getCreatedAt(), job.getUpdatedAt(), job.getCompletedAt(), job.getLastErrorCode(),
                 invocation == null ? null : invocation.getProvider(),
@@ -96,8 +98,8 @@ public class FailureRecoveryService {
                 result == null ? null : result.getDecisionSource().name(), latency);
     }
 
-    private long durationMillis(Instant start, Instant end) {
-        return start == null || end == null ? 0 : Math.max(0, Duration.between(start, end).toMillis());
+    private Long durationMillis(Instant start, Instant end) {
+        return start == null || end == null ? null : Math.max(0, Duration.between(start, end).toMillis());
     }
 
     private long count(List<TriageJob> storedJobs, TriageJobStatus status) {
@@ -138,9 +140,10 @@ public class FailureRecoveryService {
             throw new IllegalArgumentException("Only failed triage jobs can be retried");
         }
         if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE
-                && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())) {
+                && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())
+                && job.getUpdatedAt().isAfter(clock.instant().minus(SQS_REDELIVERY_WINDOW))) {
             throw new IllegalArgumentException("Retryable jobs remain owned by SQS");
         }
-        return requests.request(workspaceId, job.getTicketId(), correlationId);
+        return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
     }
 }

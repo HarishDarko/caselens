@@ -13,6 +13,7 @@ import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -98,6 +99,54 @@ class TriageWorkerClaimLeaseTest {
         assertThat(job.getStatus()).isEqualTo(TriageJobStatus.COMPLETED);
         assertThat(job.getAttemptCount()).isEqualTo(2);
         assertThat(resultRows(message)).isOne();
+    }
+
+    @Test
+    void aTakeoverClosesTheEarlierWorkersProcessingAttemptAsLeaseExpired() {
+        QueueMessage message = seed();
+        TriageJob claimed = transactions.execute(status -> {
+            jobs.claimForProcessing(message.eventId(), T0); // the first worker claimed it, recorded its attempt, then died
+            TriageJob job = jobs.findByEventId(message.eventId()).orElseThrow();
+            attempts.save(TriageAttempt.processing(job.getId(), job.getAttemptCount(), T0));
+            return job;
+        });
+
+        Instant takeover = T0.plus(TriageJobRepository.CLAIM_LEASE).plusSeconds(1);
+        WorkerResult result = workerAt(takeover).process(message);
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK);
+        List<TriageAttempt> timeline = attempts.findByJobIdOrderByAttemptNumberAsc(claimed.getId());
+        assertThat(timeline).extracting(TriageAttempt::getAttemptNumber).containsExactly(1, 2);
+        assertThat(timeline.get(0).getStatus()).isEqualTo(TriageAttemptStatus.RETRYABLE_FAILURE);
+        assertThat(timeline.get(0).getErrorCode()).isEqualTo("CLAIM_LEASE_EXPIRED");
+        assertThat(timeline.get(0).getCompletedAt()).isEqualTo(takeover);
+        assertThat(timeline.get(1).getStatus()).isEqualTo(TriageAttemptStatus.COMPLETED);
+        assertThat(timeline).noneMatch(attempt -> attempt.getStatus() == TriageAttemptStatus.PROCESSING);
+    }
+
+    @Test
+    void aLateMessageForAReplayedJobIsAcknowledgedWithoutCallingTheProvider() {
+        QueueMessage old = seed();
+        TriageJob replaced = jobs.findByEventId(old.eventId()).orElseThrow();
+        jdbc.update("update triage_job set status = 'RETRYABLE_FAILURE', attempt_count = 5, last_error_code = 'PROVIDER_TIMEOUT'"
+                + " where id = ?", replaced.getId());
+        OutboxEvent replayEvent = OutboxEvent.create(old.workspaceId(), old.ticketId(), "lease-test-replay", T0.plusSeconds(700));
+        transactions.executeWithoutResult(status -> {
+            entityManager.persist(replayEvent);
+            TriageJob replacement = TriageJob.queued(UUID.randomUUID(), replayEvent.getId(), old.workspaceId(), old.ticketId(), 1,
+                    T0.plusSeconds(700));
+            replacement.setReplayedFromJobId(replaced.getId());
+            entityManager.persist(replacement);
+        });
+
+        WorkerResult result = workerAt(T0.plusSeconds(900)).process(old); // a DLQ redrive brings the old message back
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK_DUPLICATE);
+        org.mockito.Mockito.verify(provider, org.mockito.Mockito.never()).analyze(any(), any());
+        TriageJob after = jobs.findByEventId(old.eventId()).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
+        assertThat(after.getAttemptCount()).isEqualTo(5);
+        assertThat(jobs.findByEventId(replayEvent.getId()).orElseThrow().getStatus()).isEqualTo(TriageJobStatus.QUEUED);
     }
 
     @Test

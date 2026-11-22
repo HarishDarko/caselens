@@ -22,6 +22,68 @@ class TicketRedactorTest {
     }
 
     @Test
+    void redactsTheIdentifierThatFollowsADescriptorWord() {
+        assertThat(redactor.redact("Subject x", "My RFID card 04A1B2C3D4 is rejected").message())
+                .isEqualTo("My RFID card [RFID_1] is rejected");
+        assertThat(redactor.redact("Subject x", "RFID token 04A1B2C3 does not work").message())
+                .isEqualTo("RFID token [RFID_1] does not work");
+        assertThat(redactor.redact("Subject x", "payment id number PAY12345 failed").message())
+                .isEqualTo("payment id number [PAYMENT_ID_1] failed");
+        assertThat(redactor.redact("Subject x", "transaction id value TX-998877 failed").message())
+                .isEqualTo("transaction id value [TRANSACTION_ID_1] failed");
+        assertThat(redactor.redact("Subject x", "Driver badge: RFID badge #77AB12 was declined").message())
+                .isEqualTo("Driver badge: RFID badge [RFID_1] was declined");
+        assertThat(redactor.redact("Subject x", "Transaction ID reference code TXN-5512 is missing").message())
+                .isEqualTo("Transaction ID reference code [TRANSACTION_ID_1] is missing");
+        assertThat(redactor.redact("Subject x", "My RFID tag 9F8E7D6C stopped working").message())
+                .isEqualTo("My RFID tag [RFID_1] stopped working");
+        assertThat(redactor.redact("Subject x", "The RFID chip AB12CD34 and RFID fob 77FF0011 fail").message())
+                .isEqualTo("The RFID chip [RFID_1] and RFID fob [RFID_2] fail");
+        assertThat(redactor.redact("Subject x", "RFID id 0011AABB is blocked").message())
+                .isEqualTo("RFID id [RFID_1] is blocked");
+    }
+
+    @Test
+    void redactsAValueAfterIsOrAColon() {
+        assertThat(redactor.redact("Subject x", "My payment id is 12345678 and it failed").message())
+                .isEqualTo("My payment id is [PAYMENT_ID_1] and it failed");
+        assertThat(redactor.redact("Subject x", "Transaction id: TX-55AA failed").message())
+                .isEqualTo("Transaction id [TRANSACTION_ID_1] failed");
+    }
+
+    @Test
+    void redactsIdentifiersWithoutDigitsAsMainDid() {
+        assertThat(redactor.redact("Subject x", "Card RFID ABCDEFGH was declined").message())
+                .isEqualTo("Card RFID [RFID_1] was declined");
+        assertThat(redactor.redact("Subject x", "See transaction id ABCD-EFGH for details").message())
+                .isEqualTo("See transaction id [TRANSACTION_ID_1] for details");
+        assertThat(redactor.redact("Subject x", "Stripe payment id pi_3NxYzAbCdEf failed").message())
+                .isEqualTo("Stripe payment id [PAYMENT_ID_1] failed");
+    }
+
+    @Test
+    void keepsTheSeededRfidTicketReadableAndRedactsItsTokenOnce() {
+        RedactedTicket redacted = redactor.redact("Registered RFID card is rejected",
+                "Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19. The token worked yesterday but authorization "
+                        + "was rejected at CHG-CA-6009 today with status Invalid, while mobile-app authorization still works.");
+
+        assertThat(redacted.subject()).isEqualTo("Registered RFID card is rejected");
+        assertThat(redacted.message()).startsWith("Demo account ACCT-DEMO-882 uses RFID token [RFID_1]. The token worked")
+                .doesNotContain("RFID-DEMO-A19", "[RFID_2]")
+                .contains("CHG-CA-6009");
+    }
+
+    @Test
+    void leavesPlainWordsAfterALabelAlone() {
+        assertThat(redactor.redact("RFID card is rejected", "The payment id missing from the receipt was never sent.").subject())
+                .isEqualTo("RFID card is rejected");
+        assertThat(redactor.redact("Subject x", "The payment id missing from the receipt was never sent.").message())
+                .isEqualTo("The payment id missing from the receipt was never sent.");
+        assertThat(redactor.redact("Subject x", "Your RFID card is rejected and the RFID token expired.").message())
+                .isEqualTo("Your RFID card is rejected and the RFID token expired.");
+    }
+
+    @Test
     void doesNotRedactOrdinaryChargerAndSessionReferences() {
         RedactedTicket redacted = redactor.redact(
                 "Session failed",

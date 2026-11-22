@@ -1,5 +1,8 @@
 package com.harishdarko.caselens.triage;
 
+import com.harishdarko.caselens.common.SensitiveDataSanitizer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
@@ -15,6 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 @Profile("local")
 @ConditionalOnProperty(name = "caselens.queue.enabled", havingValue = "true")
 public class SqsWorkerPoller {
+    private static final Logger log = LoggerFactory.getLogger(SqsWorkerPoller.class);
     private final SqsClient client;
     private final String queueUrl;
     private final TriageWorker worker;
@@ -40,12 +44,23 @@ public class SqsWorkerPoller {
         }
     }
 
+    /** Same rule as the Lambda WorkerHandler: drop only payloads that cannot be decoded; redeliver on any other error. */
     private boolean shouldDelete(Message message) {
+        QueueMessage decoded;
         try {
-            WorkerResult result = worker.process(codec.decode(message.body()));
-            return result.status() != WorkerResultStatus.RETRY;
+            decoded = codec.decode(message.body());
         } catch (IllegalArgumentException malformedPayload) {
+            log.warn("triage.malformed_message messageId={} reason={}", SensitiveDataSanitizer.text(message.messageId()),
+                    SensitiveDataSanitizer.text(malformedPayload.getMessage()));
             return true;
+        }
+        try {
+            return worker.process(decoded).status() != WorkerResultStatus.RETRY;
+        } catch (RuntimeException processingFailure) {
+            log.warn("triage.worker_failed messageId={} eventId={} correlationId={} errorType={}",
+                    SensitiveDataSanitizer.text(message.messageId()), decoded.eventId(), CorrelationIds.normalize(decoded.correlationId()),
+                    processingFailure.getClass().getSimpleName());
+            return false;
         }
     }
 }

@@ -77,6 +77,19 @@ class DemoApiIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("Validation failed"));
 
+        // Whitespace-only text passes @Size but would fail later in triage, so it is rejected here.
+        mvc.perform(post("/api/tickets")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject\":\"Valid subject\",\"message\":\"" + " ".repeat(25) + "\",\"channel\":\"WEB\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("Validation failed"));
+        mvc.perform(post("/api/tickets")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject\":\"       \",\"message\":\"This is a synthetic ticket message long enough.\",\"channel\":\"WEB\"}"))
+                .andExpect(status().isBadRequest());
+
         mvc.perform(get("/api/tickets?size=51").header("Authorization", bearer(token)))
                 .andExpect(status().isBadRequest());
     }

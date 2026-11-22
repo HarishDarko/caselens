@@ -29,6 +29,7 @@ public record OperationsOverview(
         }
     }
 
+    /** latencyMs is null while the job has not completed. provider and modelVersion are null when no call was recorded. */
     public record RecentOperation(
             UUID jobId,
             UUID ticketId,
@@ -41,14 +42,14 @@ public record OperationsOverview(
             String provider,
             String modelVersion,
             String decisionSource,
-            long latencyMs) {
+            Long latencyMs) {
         public RecentOperation {
             jobId = Objects.requireNonNull(jobId);
             ticketId = Objects.requireNonNull(ticketId);
             status = Objects.requireNonNull(status);
             createdAt = Objects.requireNonNull(createdAt);
             updatedAt = Objects.requireNonNull(updatedAt);
-            if (attemptCount < 0 || latencyMs < 0) throw new IllegalArgumentException("Operation values cannot be negative");
+            if (attemptCount < 0 || (latencyMs != null && latencyMs < 0)) throw new IllegalArgumentException("Operation values cannot be negative");
         }
     }
 

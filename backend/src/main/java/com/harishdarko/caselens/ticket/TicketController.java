@@ -4,6 +4,7 @@ import com.harishdarko.caselens.demo.DemoPrincipal;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
@@ -52,8 +53,8 @@ class TicketController {
     }
 
     record CreateTicketRequest(
-            @NotNull @Size(min = 5, max = 160) String subject,
-            @NotNull @Size(min = 20, max = 5000) String message,
+            @NotBlank @Size(min = 5, max = 160) String subject,
+            @NotBlank @Size(min = 20, max = 5000) String message,
             @NotNull TicketChannel channel) {}
 
     record TicketResponse(UUID id, String displayId, String subject, String message, TicketChannel channel,

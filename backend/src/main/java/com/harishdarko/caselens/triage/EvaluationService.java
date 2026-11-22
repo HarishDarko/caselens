@@ -79,7 +79,7 @@ public class EvaluationService {
         List<ModelInvocation> storedInvocations = ticketIds.isEmpty() ? List.of() : invocations.findByTicketIds(ticketIds);
         Map<JobKey, TriageJob> latestJobs = latestJobs(storedJobs);
         List<EvaluationEvent> recentEvents = recentEvents(storedResults, jobsByEvent, latestFeedback, expected, scopedTickets,
-                latestInvocations(storedInvocations));
+                new JobInvocations(storedInvocations));
         return new EvaluationSummary(clock.instant(), storedResults.size(), evaluated,
                 ratio(categoryMatches, evaluated), ratio(urgencyMatches, evaluated), ratio(fullMatches, evaluated),
                 ratio(corrections, storedResults.size()), percentile(latencies, 0.50), percentile(latencies, 0.95),
@@ -89,7 +89,7 @@ public class EvaluationService {
 
     private List<EvaluationEvent> recentEvents(List<TriageResult> storedResults, Map<UUID, TriageJob> jobsByEvent,
             Map<UUID, TriageFeedback> latestFeedback, Map<String, EvaluationGroundTruth> expected,
-            Map<UUID, Ticket> scopedTickets, Map<UUID, ModelInvocation> latestInvocations) {
+            Map<UUID, Ticket> scopedTickets, JobInvocations jobInvocations) {
         return storedResults.stream()
                 .sorted(Comparator.comparing(TriageResult::getCreatedAt).reversed()
                         .thenComparing(TriageResult::getId, Comparator.reverseOrder()))
@@ -98,7 +98,8 @@ public class EvaluationService {
                     TriageJob job = jobsByEvent.get(result.getEventId());
                     Ticket ticket = scopedTickets.get(result.getTicketId());
                     TriageFeedback correction = latestFeedback.get(result.getId());
-                    ModelInvocation invocation = latestInvocations.get(result.getTicketId());
+                    ModelInvocation invocation = job == null ? jobInvocations.latestForEvent(result.getEventId())
+                            : jobInvocations.latestFor(job);
                     return new EvaluationEvent(result.getId(), result.getCreatedAt(),
                             job == null ? 0 : Math.max(0, Duration.between(job.getCreatedAt(), result.getCreatedAt()).toMillis()),
                             invocation == null ? null : invocation.getProvider(),
@@ -108,15 +109,6 @@ public class EvaluationService {
                             correction != null && correction.differsFrom(result));
                 })
                 .toList();
-    }
-
-    private Map<UUID, ModelInvocation> latestInvocations(List<ModelInvocation> storedInvocations) {
-        Map<UUID, ModelInvocation> latest = new HashMap<>();
-        for (ModelInvocation invocation : storedInvocations) {
-            ModelInvocation previous = latest.get(invocation.getTicketId());
-            if (previous == null || invocation.getEndedAt().isAfter(previous.getEndedAt())) latest.put(invocation.getTicketId(), invocation);
-        }
-        return latest;
     }
 
     private Map<JobKey, TriageJob> latestJobs(List<TriageJob> storedJobs) {

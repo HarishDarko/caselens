@@ -20,10 +20,12 @@ import org.junit.jupiter.api.Test;
  * Pins every output of the EV rules (rules fallback provider, semantic validator, priority scorer) on the 9 demo
  * scenarios and on a corpus built from every keyword the three classes use, alone and in ordered pairs, so a
  * change in keyword order or content shows up. The digest was taken on main before the vocabulary moved into the
- * EV pack file. Set -Dcaselens.golden.out=<file> to write the full golden text for a diff.
+ * EV pack file. Set -Dcaselens.golden.out=<file> to write the full golden text for a diff. The CL-09 redactor fix
+ * changed it once: the seeded account-rfid-authorization ticket used to lose "card" from its subject and have its
+ * RFID token split in two, which showed in that scenario's evidence quotes. No label, score or verdict changed.
  */
 class EvRulesCharacterizationTest {
-    private static final String EXPECTED_SHA256 = "9c7e6f61234635ad7fa0e6bb8f54eba1f577fc8eafe5abe79fa12668e48fb088";
+    private static final String EXPECTED_SHA256 = "7cebb7b6010da9b2e4092bdf55eafd71e1a011109c9bf90567d14376f96516dd";
     private static final List<String> TERMS = List.of("refund", "charged", "payment", "billing", "receipt", "authorization",
             "rfid", "account", "login", "sign in", "heartbeat", "network", "offline", "connectivity", "last-seen", "connector",
             "charger", "hardware", "plug", "session", "charging", "charge did not", "never started", "feature", "suggestion",

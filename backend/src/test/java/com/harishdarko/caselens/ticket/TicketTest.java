@@ -35,6 +35,16 @@ class TicketTest {
     }
 
     @Test
+    void rejectsWhitespaceOnlySubjectOrMessage() {
+        assertThatThrownBy(() -> Ticket.create(UUID.randomUUID(), UUID.randomUUID(), "Valid subject", " ".repeat(25),
+                        TicketChannel.WEB, null, Instant.parse("2026-07-11T12:00:00Z")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> Ticket.create(UUID.randomUUID(), UUID.randomUUID(), "\t\t\t\t\t\t",
+                        "This message is definitely long enough.", TicketChannel.WEB, null, Instant.parse("2026-07-11T12:00:00Z")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsMissingWorkspaceAndChannelInTheDomainFactory() {
         assertThatThrownBy(() -> Ticket.create(
                         UUID.randomUUID(), null, "Valid subject", "This message is definitely long enough.",

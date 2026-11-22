@@ -71,6 +71,112 @@ class OutboxWorkflowTest {
     }
 
     @Test
+    void returnsARetryableFailureThatSqsStillOwnsInsteadOfQueuingASecondJob() {
+        Ticket ticket = ticket();
+        TriageJob retryable = failed(TriageJobStatus.RETRYABLE_FAILURE, "PROVIDER_TIMEOUT");
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(retryable));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .request(workspaceId, ticketId, "corr-click-again");
+
+        assertThat(snapshot.jobId()).isEqualTo(retryable.getId());
+        assertThat(snapshot.status()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
+        verify(events, never()).save(any());
+        verify(jobs, never()).save(any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void theTriageButtonStillQueuesANewJobAfterATerminalFailure() {
+        Ticket ticket = ticket();
+        TriageJob terminal = failed(TriageJobStatus.TERMINAL_FAILURE, "INVALID_EVENT");
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(terminal));
+        when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .request(workspaceId, ticketId, "corr-after-terminal");
+
+        assertThat(snapshot.jobId()).isNotEqualTo(terminal.getId());
+        assertThat(snapshot.status()).isEqualTo(TriageJobStatus.QUEUED);
+        var saved = org.mockito.ArgumentCaptor.forClass(TriageJob.class);
+        verify(jobs).save(saved.capture());
+        assertThat(saved.getValue().getReplayedFromJobId()).isEqualTo(terminal.getId());
+    }
+
+    @Test
+    void replayQueuesAReplacementForAnAcknowledgedRetryableFailure() {
+        Ticket ticket = ticket();
+        TriageJob synthetic = failed(TriageJobStatus.RETRYABLE_FAILURE, "SYNTHETIC_PROVIDER_TIMEOUT");
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(synthetic));
+        when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .replay(workspaceId, ticketId, synthetic.getId(), "corr-recovery");
+
+        assertThat(snapshot.jobId()).isNotEqualTo(synthetic.getId());
+        assertThat(snapshot.status()).isEqualTo(TriageJobStatus.QUEUED);
+        var saved = org.mockito.ArgumentCaptor.forClass(TriageJob.class);
+        verify(jobs).save(saved.capture());
+        assertThat(saved.getValue().getReplayedFromJobId()).isEqualTo(synthetic.getId());
+        verify(publisher).publish(any(OutboxEvent.class));
+    }
+
+    @Test
+    void aSecondReplayReturnsTheReplacementInsteadOfQueuingAnother() {
+        Ticket ticket = ticket();
+        TriageJob terminal = failed(TriageJobStatus.TERMINAL_FAILURE, "INVALID_EVENT");
+        TriageJob replacement = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, clock.instant());
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(replacement));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .replay(workspaceId, ticketId, terminal.getId(), "corr-double-click");
+
+        assertThat(snapshot.jobId()).isEqualTo(replacement.getId());
+        verify(events, never()).save(any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void anOldFailureIsNeverReplayedPastANewerJobThatSqsStillOwns() {
+        Ticket ticket = ticket();
+        TriageJob oldTerminal = failed(TriageJobStatus.TERMINAL_FAILURE, "INVALID_EVENT");
+        TriageJob sqsOwned = failed(TriageJobStatus.RETRYABLE_FAILURE, "PROVIDER_TIMEOUT");
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(sqsOwned));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .replay(workspaceId, ticketId, oldTerminal.getId(), "corr-stale-retry");
+
+        assertThat(snapshot.jobId()).isEqualTo(sqsOwned.getId());
+        verify(jobs, never()).save(any());
+        verify(publisher, never()).publish(any());
+    }
+
+    private Ticket ticket() {
+        return Ticket.create(ticketId, workspaceId, "Payment issue",
+                "Payment was captured but the session never started for this ticket.", TicketChannel.WEB, null, clock.instant());
+    }
+
+    private TriageJob failed(TriageJobStatus status, String errorCode) {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, clock.instant());
+        job.claim(clock.instant());
+        if (status == TriageJobStatus.RETRYABLE_FAILURE) job.retryableFailure(errorCode, clock.instant());
+        else job.terminalFailure(errorCode, clock.instant());
+        return job;
+    }
+
+    @Test
     void claimsAJobOnlyOnceForDuplicateDelivery() {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, clock.instant());
 

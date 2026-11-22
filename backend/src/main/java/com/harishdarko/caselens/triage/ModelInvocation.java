@@ -13,6 +13,7 @@ import java.util.UUID;
 public class ModelInvocation {
     @Id private UUID id;
     @Column(name = "ticket_id", nullable = false) private UUID ticketId;
+    @Column(name = "event_id") private UUID eventId;
     @Column(nullable = false, length = 80) private String provider;
     @Column(name = "model_version", nullable = false, length = 80) private String modelVersion;
     @Column(name = "prompt_version", nullable = false, length = 80) private String promptVersion;
@@ -29,6 +30,7 @@ public class ModelInvocation {
     private ModelInvocation(ModelInvocationRecord record) {
         this.id = UUID.randomUUID();
         this.ticketId = Objects.requireNonNull(record.ticketId());
+        this.eventId = record.eventId();
         this.provider = required(record.provider());
         this.modelVersion = required(record.modelVersion());
         this.promptVersion = required(record.promptVersion());
@@ -51,6 +53,7 @@ public class ModelInvocation {
 
     public UUID getId() { return id; }
     public UUID getTicketId() { return ticketId; }
+    public UUID getEventId() { return eventId; }
     public String getProvider() { return provider; }
     public String getModelVersion() { return modelVersion; }
     public String getPromptVersion() { return promptVersion; }

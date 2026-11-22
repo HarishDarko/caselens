@@ -30,18 +30,26 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
             """)
     Page<TriageJob> findUnreplayedFailures(UUID workspaceId, List<TriageJobStatus> statuses, Pageable pageable);
 
+    /**
+     * Failures a reviewer may replay: terminal ones, the acknowledged synthetic demo failure, and retryable ones that
+     * SQS has stopped redelivering (last updated before sqsGaveUpBefore, see FailureRecoveryService.SQS_REDELIVERY_WINDOW).
+     */
     @Query("""
             select job from TriageJob job
             where job.workspaceId = :workspaceId
               and (job.status = com.harishdarko.caselens.triage.TriageJobStatus.TERMINAL_FAILURE
                    or (job.status = com.harishdarko.caselens.triage.TriageJobStatus.RETRYABLE_FAILURE
-                       and job.lastErrorCode = 'SYNTHETIC_PROVIDER_TIMEOUT'))
+                       and (job.lastErrorCode = 'SYNTHETIC_PROVIDER_TIMEOUT' or job.updatedAt < :sqsGaveUpBefore)))
               and not exists (
                   select replacement.id from TriageJob replacement
                   where replacement.replayedFromJobId = job.id
               )
             """)
-    Page<TriageJob> findRecoverableFailures(UUID workspaceId, Pageable pageable);
+    Page<TriageJob> findRecoverableFailures(@Param("workspaceId") UUID workspaceId,
+            @Param("sqsGaveUpBefore") Instant sqsGaveUpBefore, Pageable pageable);
+
+    /** True when a reviewer replay has already queued a replacement for this job. */
+    boolean existsByReplayedFromJobId(UUID replayedFromJobId);
 
     List<TriageJob> findByWorkspaceId(UUID workspaceId);
 

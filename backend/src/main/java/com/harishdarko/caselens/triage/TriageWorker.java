@@ -12,6 +12,7 @@ import tools.jackson.databind.ObjectMapper;
 
 public class TriageWorker {
     private static final Logger log = LoggerFactory.getLogger(TriageWorker.class);
+    static final String CLAIM_LEASE_EXPIRED = "CLAIM_LEASE_EXPIRED";
     private final TriageJobRepository jobs;
     private final com.harishdarko.caselens.ticket.TicketRepository tickets;
     private final TriageResultRepository results;
@@ -96,7 +97,7 @@ public class TriageWorker {
                 throw new SyntheticDemoRetryException();
             }
             decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
-                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())));
+                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())), job.getEventId());
         } catch (RuntimeException failure) {
             return transactions.execute(status -> recordFailure(message, claim, failure));
         }
@@ -111,6 +112,14 @@ public class TriageWorker {
         }
         if (job.getStatus() == TriageJobStatus.COMPLETED) {
             metrics.duplicateDelivery();
+            return Claim.done(WorkerResult.duplicate());
+        }
+        if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE && jobs.existsByReplayedFromJobId(job.getId())) {
+            // A reviewer replayed this job after SQS gave up on it (a DLQ redrive can still bring the old message
+            // back). The replacement owns the ticket now, so this delivery must not call the provider again.
+            metrics.duplicateDelivery();
+            log.info("triage.superseded_delivery correlationId={} workspaceId={} ticketId={} jobId={} eventId={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId());
             return Claim.done(WorkerResult.duplicate());
         }
         if (!job.getWorkspaceId().equals(message.workspaceId()) || !job.getTicketId().equals(message.ticketId())) {
@@ -129,6 +138,7 @@ public class TriageWorker {
             metrics.terminalFailure();
             return Claim.done(WorkerResult.terminal("INVALID_EVENT"));
         }
+        closeAbandonedAttempts(message, job);
         TriageAttempt attempt = attempts == null ? null
                 : attempts.save(TriageAttempt.processing(job.getId(), job.getAttemptCount(), clock.instant()));
 
@@ -146,6 +156,26 @@ public class TriageWorker {
         ticket.processing(clock.instant());
         tickets.save(ticket);
         return new Claim(job, ticket, attempt, null);
+    }
+
+    /**
+     * A claim that took over a lapsed lease leaves the earlier worker's attempt in PROCESSING, because that worker
+     * timed out or died before it could record an outcome (and stillOwned stops it from writing one later). Close
+     * those attempts as retryable failures so the timeline shows what happened instead of two live attempts.
+     */
+    private void closeAbandonedAttempts(QueueMessage message, TriageJob job) {
+        if (attempts == null) return;
+        Instant now = clock.instant();
+        for (TriageAttempt earlier : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId())) {
+            if (earlier.getStatus() != TriageAttemptStatus.PROCESSING || earlier.getAttemptNumber() >= job.getAttemptCount()) {
+                continue;
+            }
+            earlier.fail(TriageAttemptStatus.RETRYABLE_FAILURE, CLAIM_LEASE_EXPIRED, now);
+            attempts.save(earlier);
+            log.warn("triage.claim_lease_expired correlationId={} workspaceId={} ticketId={} jobId={} eventId={} attempt={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId(),
+                    earlier.getAttemptNumber());
+        }
     }
 
     /**
