@@ -123,16 +123,20 @@ class TriageApiIntegrationTest {
         assertThat(candidates).doesNotContain(capped.getId());
         assertThat(candidates.indexOf(fresh.getId())).isLessThan(candidates.indexOf(retried.getId()));
 
-        assertThat(transactions.execute(status -> events.lockUnpublished(fresh.getId()))).isPresent();
+        assertThat(lockInTransaction(fresh.getId())).isPresent();
         assertThat(events.markPublished(fresh.getId(), base.plusSeconds(10))).isOne();
         assertThat(events.markPublished(fresh.getId(), base.plusSeconds(20))).as("already published").isZero();
         assertThat(events.recordPublishFailure(fresh.getId(), "QUEUE_TRANSIENT")).as("published rows keep their state").isZero();
-        assertThat(transactions.execute(status -> events.lockUnpublished(fresh.getId()))).isEmpty();
+        assertThat(lockInTransaction(fresh.getId())).isEmpty();
         OutboxEvent stored = events.findById(fresh.getId()).orElseThrow();
         assertThat(stored.getPublishedAt()).isEqualTo(base.plusSeconds(10));
         assertThat(stored.getPublishAttempts()).isZero();
         assertThat(events.recordPublishFailure(retried.getId(), "QUEUE_TRANSIENT")).isOne();
         assertThat(events.findById(retried.getId()).orElseThrow().getPublishAttempts()).isEqualTo(4);
+    }
+
+    private java.util.Optional<OutboxEvent> lockInTransaction(UUID eventId) {
+        return transactions.execute(status -> events.lockUnpublished(eventId));
     }
 
     private int jobCount(String ticket) {
