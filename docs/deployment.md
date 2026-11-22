@@ -151,6 +151,20 @@ before its snapshot and is reached through the pinned worker alias. Its first
 real synthetic Groq journey completed in 7.27 seconds end to end; the next
 journey completed in 2.69 seconds. Both were `AI_VALIDATED` in one attempt.
 
+API throttle and CORS
+
+The HTTP API stage allows 5 requests a second with a burst of 10 for all
+visitors together, which also caps Lambda and Neon spend if the API is
+flooded. Spring answers CORS for every request that reaches the api function.
+The API has no `cors_configuration`: AWS documents that HTTP API CORS adds the
+configured headers "to the response from an integration", and a throttled 429
+(or a gateway 5xx) never reaches the integration, so the setting is not
+documented to help there. It would also make API Gateway ignore Spring's CORS
+headers, moving origin ownership into a second place. The browser therefore
+sees a gateway 429 as a failed fetch (TypeError), and the frontend retries an
+idempotent GET once after a TypeError, the same way it retries a 429 or 503.
+Raising the throttle is a cost decision, not a fix for this.
+
 ## Neon compute guardrail
 
 The original once-per-minute recovery schedule prevented Neon from reaching its
@@ -202,12 +216,17 @@ teardown workflow and is created by the bootstrap stack, outside the
 application state that it destroys.
 
 After the demo, open **Actions → CaseLens Terraform Destroy**, run it on
-`feat/production-proof`, and type `DESTROY_CASELENS`. The protected `production`
-environment approves the workflow before it receives AWS credentials. The
-workflow then refuses the wrong branch, wrong confirmation, missing state
-configuration, or empty state; it prints the destroy plan and applies only that
-exact saved plan. It sets `force_destroy_storage=true` for this explicit
-teardown so current and versioned demo bucket objects are removed before bucket
-deletion. It removes the application resources but preserves the state bucket
+`main`, and type `DESTROY_CASELENS`. The protected `production` environment
+approves the workflow before it receives AWS credentials. The destroy role
+trusts only jobs in that environment (OIDC subject
+`repo:<owner>/<repo>:environment:production`, the same form as the deploy
+role), so a bootstrap apply is needed after any change to its trust or policy.
+The workflow then refuses the wrong branch, wrong confirmation, missing state
+configuration, or empty state. It first applies a plan targeted at the two
+versioned buckets that only sets `force_destroy=true` in state (the AWS
+provider deletes a bucket with the value saved in state, so the variable alone
+is not enough), then prints the destroy plan and applies only that exact saved
+plan. Current and versioned demo bucket objects are therefore removed before
+bucket deletion. It removes the application resources but preserves the state bucket
 for recovery. Delete the bootstrap stack separately only when the project and
 its Terraform history are no longer needed.

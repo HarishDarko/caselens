@@ -29,7 +29,8 @@ variable "github_repository" {
   default = "HarishDarko/caselens"
 }
 
-variable "github_branch" {
-  type    = string
-  default = "feat/production-proof"
+variable "github_environment" {
+  description = "Protected GitHub environment whose jobs may assume the destroy role (the destroy workflow runs in it)."
+  type        = string
+  default     = "production"
 }

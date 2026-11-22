@@ -11,10 +11,12 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 final class LambdaSecrets {
+    // CASELENS_WEB_ORIGINS is not read from the secret: Terraform owns it (var.web_origins sets it on all three
+    // functions), and a copy in the secret would silently override that value until every version was republished.
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD",
             "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER",
-            "CASELENS_WEB_ORIGINS", "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_ENDPOINT",
+            "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_ENDPOINT",
             "GROQ_API_KEY", "GROQ_MODEL", "GROQ_ENDPOINT");
     private static final Map<String, String> SPRING_PROPERTY_KEYS = Map.ofEntries(
             Map.entry("SPRING_DATASOURCE_URL", "spring.datasource.url"),
@@ -22,7 +24,6 @@ final class LambdaSecrets {
             Map.entry("SPRING_DATASOURCE_PASSWORD", "spring.datasource.password"),
             Map.entry("CASELENS_SESSION_SECRET", "caselens.session-secret"),
             Map.entry("CASELENS_AI_PROVIDER", "caselens.ai-provider"),
-            Map.entry("CASELENS_WEB_ORIGINS", "caselens.web.origins"),
             Map.entry("GEMINI_API_KEY", "caselens.gemini.api-key"),
             Map.entry("GEMINI_MODEL", "caselens.gemini.model"),
             Map.entry("GEMINI_ENDPOINT", "caselens.gemini.endpoint"),

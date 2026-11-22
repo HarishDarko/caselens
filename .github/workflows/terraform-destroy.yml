@@ -38,7 +38,7 @@ jobs:
           test -n "$AWS_REGION"
           test -n "$TERRAFORM_STATE_BUCKET"
           test -n "$DESTROY_ROLE_ARN"
-          test "$GITHUB_REF" = "refs/heads/feat/production-proof"
+          test "$GITHUB_REF" = "refs/heads/main"
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
@@ -55,6 +55,19 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=${TERRAFORM_STATE_BUCKET}" \
             -backend-config="region=${AWS_REGION}"
+
+      # The AWS provider deletes a bucket with the force_destroy value saved in state, not the one in the
+      # configuration, so TF_VAR_force_destroy_storage alone does not empty the versioned buckets: DeleteBucket
+      # then fails with BucketNotEmpty. Write force_destroy=true into state first, and nothing else.
+      - name: Allow the versioned buckets to be emptied
+        working-directory: infra/terraform
+        run: |
+          terraform plan -input=false -no-color -out=storage.tfplan -target=aws_s3_bucket.frontend -target=aws_s3_bucket.artifacts
+          terraform show -no-color storage.tfplan
+          # Only in-place updates of the two buckets (or nothing, when state already says true).
+          unexpected="$(terraform show -json storage.tfplan | jq '[.resource_changes[]? | select(.change.actions != ["no-op"]) | select(.change.actions != ["update"] or (.address != "aws_s3_bucket.frontend" and .address != "aws_s3_bucket.artifacts"))] | length')"
+          test "$unexpected" -eq 0
+          terraform apply -input=false -auto-approve storage.tfplan
 
       - name: Create and inspect destroy plan
         working-directory: infra/terraform

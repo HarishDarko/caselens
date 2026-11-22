@@ -379,6 +379,10 @@ resource "aws_lambda_alias" "relay" {
   function_version = coalesce(var.relay_live_version, aws_lambda_function.relay[0].version)
 }
 
+# No cors_configuration: Spring answers CORS. AWS documents that HTTP API CORS adds headers only to integration
+# responses, so it is not documented to cover the stage's own throttled 429s, and with it set API Gateway ignores
+# the backend's CORS headers. The frontend retries a GET once after the TypeError such a 429 causes in a browser.
+# See docs/deployment.md, "API throttle and CORS".
 resource "aws_apigatewayv2_api" "api" {
   count         = var.deploy_compute ? 1 : 0
   name          = "${local.name}-api"

@@ -174,7 +174,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: [backend, frontend, terraform, security, container]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Three SnapStart versions are published one after another, and each can take a few minutes to become Active.
+    timeout-minutes: 40
     environment: production
     # One production deploy at a time, and never cancelled halfway: a cancelled deploy could leave a new frontend
     # in front of an old API. A second dispatch waits for the first one to finish.
@@ -248,14 +249,49 @@ jobs:
           test -n "$CASELENS_LAMBDA_FUNCTIONS"
           version="$(aws s3api head-object --bucket "$CASELENS_ARTIFACT_BUCKET" --key artifacts/caselens-lambda.jar --query VersionId --output text)"
           test -n "$version" && test "$version" != "None"
-          IFS=',' read -ra functions <<< "$CASELENS_LAMBDA_FUNCTIONS"
-          for function in "${functions[@]}"; do
-            aws lambda update-function-code \
+          # Names are trimmed (a space after a comma would otherwise become part of the name), and the api
+          # function is published first, then worker and relay, then anything else listed.
+          IFS=',' read -ra listed <<< "$CASELENS_LAMBDA_FUNCTIONS"
+          functions=()
+          for name in "${listed[@]}"; do
+            name="$(echo "$name" | xargs)"
+            if [ -n "$name" ]; then functions+=("$name"); fi
+          done
+          test "${#functions[@]}" -gt 0
+          ordered=()
+          for suffix in -api -worker -relay; do
+            for name in "${functions[@]}"; do
+              if [[ "$name" == *"$suffix" ]]; then ordered+=("$name"); fi
+            done
+          done
+          for name in "${functions[@]}"; do
+            if [[ "$name" != *-api && "$name" != *-worker && "$name" != *-relay ]]; then ordered+=("$name"); fi
+          done
+          for function in "${ordered[@]}"; do
+            published="$(aws lambda update-function-code \
               --function-name "$function" \
               --s3-bucket "$CASELENS_ARTIFACT_BUCKET" \
               --s3-key artifacts/caselens-lambda.jar \
               --s3-object-version "$version" \
-              --publish
+              --publish --query Version --output text)"
+            test -n "$published" && test "$published" != "None" && test "$published" != '$LATEST'
+            aws lambda wait function-updated-v2 --function-name "$function"
+            # A SnapStart version takes a few minutes to become Active. Failed (for example an init or migration
+            # error) stops the deploy, so that version is never made a live alias target. GetFunction is the read
+            # the deploy role already has, and with a qualifier it returns that version's configuration.
+            state=""
+            for attempt in $(seq 1 48); do
+              state="$(aws lambda get-function --function-name "$function" --qualifier "$published" --query Configuration.State --output text)"
+              if [ "$state" = "Active" ] || [ "$state" = "Failed" ]; then break; fi
+              sleep 10
+            done
+            if [ "$state" != "Active" ]; then
+              echo "::error::$function version $published is ${state:-unknown}, not Active."
+              aws lambda get-function --function-name "$function" --qualifier "$published" \
+                --query '{State: Configuration.State, Reason: Configuration.StateReason, Code: Configuration.StateReasonCode}' --output json
+              exit 1
+            fi
+            echo "$function version $published is Active."
           done
       - name: Invalidate CloudFront and wait for it
         env:
