@@ -14,6 +14,8 @@ provider "aws" {
 locals {
   application_name  = "${var.project_name}-${var.environment}"
   destroy_role_name = "${local.application_name}-terraform-destroy"
+  # The deploy role is a main-stack resource (infra/terraform/main.tf), so the teardown reads and deletes it.
+  deploy_role_name = "${local.application_name}-github-deploy"
 }
 
 data "aws_iam_openid_connect_provider" "github" {
@@ -111,9 +113,43 @@ resource "aws_iam_role_policy" "github_destroy" {
       # The alarm email topic and its subscription (main stack, when alarm_email is set): read them during the
       # destroy plan, then unsubscribe and delete. Only this app's topics; topics passed in are never touched.
       { Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:GetSubscriptionAttributes", "sns:ListSubscriptionsByTopic", "sns:Unsubscribe", "sns:DeleteTopic"], Resource = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
-      { Effect = "Allow", Action = ["apigateway:*", "cloudfront:*"], Resource = "*" },
-      { Effect = "Allow", Action = ["iam:*"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
-      { Effect = "Allow", Action = ["iam:ListRoles", "iam:GetOpenIDConnectProvider"], Resource = "*" }
+      # API Gateway v2: the destroy only reads (GET) and deletes (DELETE) the HTTP API and its integration, route and
+      # stage, all under /apis/<id> in this region. The provider reads API and stage tags from GetApi and GetStage, so
+      # no /tags path is needed. https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonapigatewaymanagementv2.html
+      { Effect = "Allow", Action = ["apigateway:GET", "apigateway:DELETE"], Resource = "arn:aws:apigateway:${var.aws_region}::/apis/*" },
+      # CloudFront: read, disable (UpdateDistribution) and delete the distribution, its origin access control and its
+      # response headers policy, and read the managed cache policy the distribution uses. The main stack's IDs live in
+      # another state, so each is scoped to its resource type in this account. Every action below takes a resource
+      # type except ListCachePolicies (the cache policy data source looks the policy up by name), which needs "*".
+      # https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncloudfront.html
+      { Effect = "Allow", Action = ["cloudfront:GetDistribution", "cloudfront:ListTagsForResource", "cloudfront:UpdateDistribution", "cloudfront:DeleteDistribution"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/*" },
+      { Effect = "Allow", Action = ["cloudfront:GetOriginAccessControl", "cloudfront:DeleteOriginAccessControl"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:origin-access-control/*" },
+      { Effect = "Allow", Action = ["cloudfront:GetResponseHeadersPolicy", "cloudfront:DeleteResponseHeadersPolicy"], Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:response-headers-policy/*" },
+      # Managed-CachingOptimized is owned by AWS, not this account, so the account part of its ARN is left open. Read only.
+      { Effect = "Allow", Action = ["cloudfront:GetCachePolicy"], Resource = "arn:aws:cloudfront::*:cache-policy/*" },
+      { Effect = "Allow", Action = ["cloudfront:ListCachePolicies"], Resource = "*" },
+      # IAM on the app's roles (lambda runtime, deploy): only what the refresh reads and the destroy deletes. The
+      # provider reads tags from GetRole, so ListRoleTags is not needed. No create, put, attach, pass or trust changes.
+      # https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagementiam.html
+      { Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
+      # The role name pattern above also matches this role. It is not in the application state, so it never needs IAM
+      # on itself: deny all of it, so it can never read, rewrite or delete its own policy or trust.
+      { Effect = "Deny", Action = ["iam:*"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.destroy_role_name}" },
+      # The deploy role is torn down with the app, so it keeps the reads and deletes above. Deny every other IAM action
+      # on it, so the destroy role can never change what the deploy role may do.
+      { Effect = "Deny", NotAction = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.deploy_role_name}" },
+      # `terraform plan -destroy` first refreshes every resource and reads every data source, so each read below must
+      # be allowed or the run stops before anything is deleted. These three list actions have no resource type in
+      # the Service Authorization Reference, so AWS accepts them only on "*":
+      # - logs:DescribeLogGroups: the provider reads aws_cloudwatch_log_group with DescribeLogGroups (name prefix).
+      #   https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncloudwatchlogs.html
+      # - iam:ListOpenIDConnectProviders: data.aws_iam_openid_connect_provider.github is looked up by URL, which
+      #   lists the account's providers first. iam:ListRoles was already here.
+      #   https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagementiam.html
+      { Effect = "Allow", Action = ["logs:DescribeLogGroups", "iam:ListOpenIDConnectProviders", "iam:ListRoles"], Resource = "*" },
+      # GetOpenIDConnectProvider accepts the provider ARN (oidc-provider resource type), so it names only the GitHub
+      # provider instead of "*".
+      { Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider"], Resource = data.aws_iam_openid_connect_provider.github.arn }
     ]
   })
 }
