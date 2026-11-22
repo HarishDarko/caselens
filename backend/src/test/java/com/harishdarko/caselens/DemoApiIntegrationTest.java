@@ -1,5 +1,6 @@
 package com.harishdarko.caselens;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
@@ -40,6 +42,7 @@ class DemoApiIntegrationTest {
     @Autowired ObjectMapper objectMapper;
     @Autowired DemoTokenService tokens;
     @Autowired Clock clock;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
     void createsAnAnonymousSignedSession() throws Exception {
@@ -48,6 +51,33 @@ class DemoApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+    }
+
+    /** CL2-04: the workspace records who opened it, as an opaque key, so its AI calls count against that client. */
+    @Test
+    void aNewWorkspaceRecordsItsOpenersClientKeyAndNotTheAddress() throws Exception {
+        UUID first = openFrom("198.51.100.20");
+        UUID second = openFrom("198.51.100.20");
+        UUID other = openFrom("198.51.100.21");
+
+        String key = clientKey(first);
+        assertThat(key).matches("[0-9a-f]{32}").doesNotContain("198.51");
+        assertThat(clientKey(second)).isEqualTo(key);
+        assertThat(clientKey(other)).isNotEqualTo(key);
+    }
+
+    private UUID openFrom(String address) throws Exception {
+        String body = mvc.perform(post("/api/demo/session").with(request -> {
+                    request.setRemoteAddr(address);
+                    return request;
+                }))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return tokens.verify(objectMapper.readTree(body).path("token").asText()).workspaceId();
+    }
+
+    private String clientKey(UUID workspaceId) {
+        return jdbc.queryForObject("select client_key from demo_workspaces where id = ?", String.class, workspaceId);
     }
 
     @Test

@@ -27,9 +27,15 @@ public class DemoRetentionSweep {
     static final int WORKSPACE_BATCH = DemoWorkspaceCleanup.DEFAULT_BATCH;
     static final int BUCKET_BATCH = 1_000;
     private static final Logger log = LoggerFactory.getLogger(DemoRetentionSweep.class);
+    /**
+     * The outer {@code expires_at} check matters: under READ COMMITTED the subquery's rows come from the statement's
+     * snapshot, so a bucket that a request refreshed into a new window after that snapshot would still be listed.
+     * Re-checking on the outer DELETE makes PostgreSQL test the refreshed row, and a live bucket is left alone.
+     */
     private static final String DELETE_EXPIRED_BUCKETS = """
             DELETE FROM rate_limit_buckets WHERE rate_key IN (
                 SELECT rate_key FROM rate_limit_buckets WHERE expires_at < ? ORDER BY expires_at LIMIT ?)
+            AND expires_at < ?
             """;
     private final DemoWorkspaceCleanup workspaces;
     private final JdbcTemplate jdbc;
@@ -75,7 +81,8 @@ public class DemoRetentionSweep {
         return inBatches("rate_limit_buckets", BUCKET_BATCH, deadline, () -> {
             Integer deleted = transactions.execute(status -> {
                 statementTimeout.apply();
-                return jdbc.update(DELETE_EXPIRED_BUCKETS, Timestamp.from(clock.instant()), BUCKET_BATCH);
+                Timestamp now = Timestamp.from(clock.instant());
+                return jdbc.update(DELETE_EXPIRED_BUCKETS, now, BUCKET_BATCH, now);
             });
             return deleted == null ? 0 : deleted;
         });

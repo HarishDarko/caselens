@@ -7,7 +7,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Function;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -82,14 +85,22 @@ public class TriageConfiguration {
 
     @Bean
     TriageEngine triageEngine(@Qualifier("triageProvider") TriageProvider provider, RulesFallbackProvider fallback,
-            PolicyCatalog policies, Clock clock, JpaModelInvocationRecorder invocationRecorder, AiCallBudget aiCallBudget) {
-        return new TriageEngine(new TicketRedactor(), budgeted(provider, aiCallBudget), fallback, new SemanticValidator(policies),
-                new PriorityScorer(), invocationRecorder, clock);
+            PolicyCatalog policies, Clock clock, JpaModelInvocationRecorder invocationRecorder, AiCallBudget aiCallBudget,
+            DemoWorkspaceAccess workspaces) {
+        return new TriageEngine(new TicketRedactor(), budgeted(provider, aiCallBudget, workspaces::clientKeyOfTicket),
+                fallback, new SemanticValidator(policies), new PriorityScorer(), invocationRecorder, clock);
     }
 
-    /** Paid or quota-bound providers spend the global daily budget; the offline mock provider costs nothing. */
     static TriageProvider budgeted(TriageProvider provider, AiCallBudget budget) {
-        return provider instanceof MockTriageProvider ? provider : new BudgetedTriageProvider(provider, budget);
+        return budgeted(provider, budget, ticketId -> Optional.empty());
+    }
+
+    /**
+     * Paid or quota-bound providers spend the global daily budget and the workspace opener's daily share of it; the
+     * offline mock provider costs nothing.
+     */
+    static TriageProvider budgeted(TriageProvider provider, AiCallBudget budget, Function<UUID, Optional<String>> clientKeys) {
+        return provider instanceof MockTriageProvider ? provider : new BudgetedTriageProvider(provider, budget, clientKeys);
     }
 
     @Bean

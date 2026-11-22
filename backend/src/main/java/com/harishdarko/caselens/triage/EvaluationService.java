@@ -54,7 +54,8 @@ public class EvaluationService {
         int fullMatches = 0;
         int corrections = 0;
         List<Long> latencies = new ArrayList<>();
-        List<UUID> ticketIds = storedResults.stream().map(TriageResult::getTicketId).toList();
+        // A ticket triaged more than once has several results; look each ticket up once.
+        List<UUID> ticketIds = storedResults.stream().map(TriageResult::getTicketId).distinct().toList();
         Map<UUID, Ticket> scopedTickets = ticketIds.isEmpty() ? Map.of()
                 : tickets.findByWorkspaceIdAndIdIn(workspaceId, new HashSet<>(ticketIds)).stream()
                         .collect(java.util.stream.Collectors.toMap(Ticket::getId, ticket -> ticket));

@@ -1,8 +1,10 @@
 package com.harishdarko.caselens.demo;
 
 import java.time.Clock;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -19,6 +21,21 @@ public class DemoWorkspaceAccess {
     @Transactional(readOnly = true)
     public String industryOf(UUID workspaceId) {
         return workspaces.findById(workspaceId).map(DemoWorkspace::getIndustry).orElse(DemoWorkspace.DEFAULT_INDUSTRY);
+    }
+
+    /** The client key of the workspace that owns the ticket, when it has one; the AI share is counted against it. */
+    @Transactional(readOnly = true)
+    public Optional<String> clientKeyOfTicket(UUID ticketId) {
+        return workspaces.findClientKeyByTicketId(ticketId);
+    }
+
+    /**
+     * Holds the workspace row lock until the caller's transaction ends, so a per-workspace cap check and the insert
+     * after it run one at a time for the workspace instead of each seeing the same count.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void lockForUpdate(UUID workspaceId) {
+        workspaces.findByIdForUpdate(workspaceId);
     }
 
     @Transactional(readOnly = true)

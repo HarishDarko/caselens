@@ -2,7 +2,9 @@ package com.harishdarko.caselens.demo;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.harishdarko.caselens.demo.DemoDataController.ScenarioTicketResponse;
+import com.harishdarko.caselens.security.ClientAddresses;
 import com.harishdarko.caselens.triage.PackCatalog;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Clock;
 import java.time.Duration;
@@ -23,22 +25,32 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/demo")
 class DemoSessionController {
-    /** Neon suspends after 5 idle minutes, so one wake-up query a minute per instance is plenty. */
-    static final Duration WARM_UP_INTERVAL = Duration.ofMinutes(1);
+    /**
+     * At most one wake-up query per instance in this long. Neon suspends after 5 idle minutes, so each wake-up keeps
+     * the free compute running for about 6 minutes (the query, the pool's 60 s idle connection, then 5 idle minutes).
+     * With a short interval, anything that polls this anonymous GET keeps the database awake for good: always on at
+     * 0.25 CU is about 182 CU-hours a month against the free plan's 100. At 30 minutes the worst case is about 6 of
+     * every 30 minutes awake per instance, about 36 CU-hours a month, while a visitor arriving after a quiet spell
+     * still finds the database waking before the first click. Busy periods do not need it: real requests keep the
+     * database awake anyway.
+     */
+    static final Duration WARM_UP_INTERVAL = Duration.ofMinutes(30);
     private final DemoSessionService sessions;
     private final PackCatalog packs;
     private final DemoScenarios scenarios;
     private final JdbcOperations jdbc;
     private final Clock clock;
+    private final ClientAddresses clientAddresses;
     private final AtomicReference<Instant> lastWarmUp = new AtomicReference<>(Instant.MIN);
 
     DemoSessionController(DemoSessionService sessions, PackCatalog packs, DemoScenarios scenarios, JdbcOperations jdbc,
-            Clock clock) {
+            Clock clock, ClientAddresses clientAddresses) {
         this.sessions = sessions;
         this.packs = packs;
         this.scenarios = scenarios;
         this.jdbc = jdbc;
         this.clock = clock;
+        this.clientAddresses = clientAddresses;
     }
 
     /**
@@ -71,19 +83,21 @@ class DemoSessionController {
      * Creates a workspace. The body is optional; without an industry the workspace is EV charging, as before. With
      * {@code seed=true} it also seeds the demo tickets and returns them with the runtime summary, so the page opens a
      * workspace in one call instead of four steps. Without it the answer is the bare session, as before; an API from
-     * before this change ignores the parameter in the same way, and the page then seeds through /reset.
+     * before this change ignores the parameter in the same way, and the page then seeds through /reset. The workspace
+     * records the caller's client key, so its AI calls count against that client's daily share of the AI budget.
      */
     @PostMapping("/session")
     SessionResponse create(@RequestBody(required = false) SessionRequest request,
-            @RequestParam(defaultValue = "false") boolean seed) {
+            @RequestParam(defaultValue = "false") boolean seed, HttpServletRequest httpRequest) {
         String industry = request == null || request.industry() == null || request.industry().isBlank()
                 ? DemoWorkspace.DEFAULT_INDUSTRY : request.industry();
         if (!packs.ids().contains(industry)) throw new ConstraintViolationException("Unknown industry", Set.of());
+        String clientKey = clientAddresses.clientKey(httpRequest);
         if (!seed) {
-            DemoSessionService.DemoSession session = sessions.create(industry);
+            DemoSessionService.DemoSession session = sessions.create(industry, clientKey);
             return new SessionResponse(session.token(), session.expiresAt(), session.industry(), null, null);
         }
-        DemoSessionService.OpenedWorkspace opened = sessions.openSeeded(industry);
+        DemoSessionService.OpenedWorkspace opened = sessions.openSeeded(industry, clientKey);
         DemoSessionService.DemoSession session = opened.session();
         return new SessionResponse(session.token(), session.expiresAt(), session.industry(),
                 opened.tickets().stream().map(ScenarioTicketResponse::from).toList(), opened.runtime());

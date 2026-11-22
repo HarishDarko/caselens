@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import static org.mockito.Mockito.times;
 
+import com.harishdarko.caselens.security.ClientAddresses;
 import com.harishdarko.caselens.triage.PackCatalog;
 import java.time.Clock;
 import java.time.Duration;
@@ -23,7 +24,8 @@ class DemoSessionWarmUpTest {
     private final DemoScenarios scenarios = new DemoScenarios(DemoScenarios.fromClasspath(packs.ids()), mock(DemoWorkspaceAccess.class));
     private final JdbcOperations jdbc = mock(JdbcOperations.class);
     private final MutableClock clock = new MutableClock(Instant.parse("2040-07-11T12:00:00Z"));
-    private final DemoSessionController controller = new DemoSessionController(null, packs, scenarios, jdbc, clock);
+    private final DemoSessionController controller = new DemoSessionController(null, packs, scenarios, jdbc, clock,
+            new ClientAddresses(false, "test-session-secret-that-is-at-least-thirty-two-bytes"));
 
     @Test
     void theIndustryListAlsoWakesTheDatabaseWithOneCheapQuery() {
@@ -43,6 +45,21 @@ class DemoSessionWarmUpTest {
 
         clock.advance(Duration.ofSeconds(1));
         controller.options();
+        verify(jdbc, times(2)).queryForObject("select 1", Integer.class);
+    }
+
+    /**
+     * CL2-11: Neon's free compute suspends after 5 idle minutes. A crawler polling this anonymous GET once a minute
+     * must not keep it awake around the clock (about 182 of the 100 free CU-hours a month), so the wake-up interval
+     * is well past the idle timeout and an hour of polling wakes the database at most twice.
+     */
+    @Test
+    void aSteadyPollerWakesTheDatabaseRarelyEnoughForNeonToScaleToZero() {
+        assertThat(DemoSessionController.WARM_UP_INTERVAL).isGreaterThanOrEqualTo(Duration.ofMinutes(30));
+        for (int minute = 0; minute < 60; minute++) {
+            controller.options();
+            clock.advance(Duration.ofMinutes(1));
+        }
         verify(jdbc, times(2)).queryForObject("select 1", Integer.class);
     }
 

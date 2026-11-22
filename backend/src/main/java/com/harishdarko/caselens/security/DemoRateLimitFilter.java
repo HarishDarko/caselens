@@ -18,22 +18,25 @@ import tools.jackson.databind.ObjectMapper;
 
 final class DemoRateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(DemoRateLimitFilter.class);
-    /** An IPv6 address is at most 45 characters; anything longer is not an address and is cut. */
-    static final int MAX_CLIENT_ADDRESS_LENGTH = 64;
+    static final int MAX_CLIENT_ADDRESS_LENGTH = ClientAddresses.MAX_CLIENT_ADDRESS_LENGTH;
     private static final String TRIAGE_PATH = "/api/tickets/[^/]+/triage";
     private static final String FEEDBACK_PATH = "/api/tickets/[^/]+/feedback";
     private final RateLimitService limits;
     private final ObjectMapper objectMapper;
-    private final boolean trustGatewayClientIp;
+    private final ClientAddresses addresses;
     private final Limits perMinute;
 
     /** Requests per minute for each kind of POST. */
     record Limits(int session, int triage, int mutation, int ticket, int feedback) {}
 
     DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, boolean trustGatewayClientIp, Limits perMinute) {
+        this(limits, objectMapper, new ClientAddresses(trustGatewayClientIp), perMinute);
+    }
+
+    DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, ClientAddresses addresses, Limits perMinute) {
         this.limits = limits;
         this.objectMapper = objectMapper;
-        this.trustGatewayClientIp = trustGatewayClientIp;
+        this.addresses = addresses;
         this.perMinute = perMinute;
     }
 
@@ -82,13 +85,7 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
     }
 
     String clientAddress(HttpServletRequest request) {
-        String address = request.getRemoteAddr();
-        if (trustGatewayClientIp) {
-            String gatewayAddress = request.getHeader("X-CaseLens-Client-Ip");
-            if (gatewayAddress != null && !gatewayAddress.isBlank()) address = gatewayAddress.trim();
-        }
-        if (address == null) return "unknown";
-        return address.length() > MAX_CLIENT_ADDRESS_LENGTH ? address.substring(0, MAX_CLIENT_ADDRESS_LENGTH) : address;
+        return addresses.address(request);
     }
 
     record Bucket(String key, int limit) {}
