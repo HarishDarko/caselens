@@ -706,6 +706,24 @@ test('says plainly when the API refuses a correction (409), without claiming whi
   expect(screen.queryByText(/409|not valid|Try again in a few seconds/)).not.toBeInTheDocument()
 })
 
+test('says the workspace is full when the API refuses a correction for the workspace cap', async () => {
+  const backend = mockBackend()
+  stubOver(backend, (url) => url.includes('/feedback')
+    ? response({ type: 'urn:caselens:problem:workspace-limit', code: 'workspace-limit', detail: 'This demo workspace holds at most 100 feedback entries.' }, 409)
+    : undefined)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Lower than the model said.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This demo workspace has reached its limit. Start a new demo to keep going.'))
+  expect(screen.queryByText(/conflicts with the current triage result/)).not.toBeInTheDocument()
+})
+
 test('keeps the original urgency apart from the saved correction, and shows the priority and suggested reply', async () => {
   const fetchMock = mockBackend()
   render(<App />)

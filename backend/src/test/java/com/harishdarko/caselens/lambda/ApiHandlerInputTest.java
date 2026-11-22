@@ -87,6 +87,26 @@ class ApiHandlerInputTest {
     }
 
     @Test
+    void theBadRequestCarriesCorsHeadersForAnAllowedOriginOnly() throws Exception {
+        ApiHandler withOrigins = new ApiHandler((method, uri, headers, body) -> {
+            throw new IllegalStateException("not reached");
+        }, () -> "http://127.0.0.1:8080", ObjectMapper::new, () -> java.util.Set.of("https://caselens.harishdarko.com"));
+        String event = """
+                {"rawPath":"/api/tickets/|","requestContext":{"http":{"method":"GET"}},"headers":{"origin":"%s"}}
+                """;
+
+        JsonNode allowed = invoke(withOrigins, event.formatted("https://caselens.harishdarko.com"));
+        JsonNode other = invoke(withOrigins, event.formatted("https://elsewhere.example"));
+
+        assertBadRequest(allowed);
+        assertThat(allowed.path("headers").path("Access-Control-Allow-Origin").asText())
+                .isEqualTo("https://caselens.harishdarko.com");
+        assertThat(allowed.path("headers").path("Vary").asText()).isEqualTo("Origin");
+        assertBadRequest(other);
+        assertThat(other.path("headers").has("Access-Control-Allow-Origin")).isFalse();
+    }
+
+    @Test
     void stillForwardsAnOrdinaryRequest() throws Exception {
         JsonNode response = invoke("""
                 {"rawPath":"/api/tickets","rawQueryString":"page=0&size=20",
@@ -100,8 +120,12 @@ class ApiHandlerInputTest {
     }
 
     private JsonNode invoke(String event) throws Exception {
+        return invoke(handler, event);
+    }
+
+    private JsonNode invoke(ApiHandler target, String event) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        handler.handleRequest(new ByteArrayInputStream(event.getBytes(StandardCharsets.UTF_8)), output, null);
+        target.handleRequest(new ByteArrayInputStream(event.getBytes(StandardCharsets.UTF_8)), output, null);
         return mapper.readTree(output.toByteArray());
     }
 

@@ -47,6 +47,13 @@ final class LambdaSpringContext {
         return get().getBean(ObjectMapper.class);
     }
 
+    /** The origins Spring's CORS configuration allows (caselens.web.origins, set by Terraform). */
+    static java.util.Set<String> webOrigins() {
+        String origins = get().getEnvironment().getProperty("caselens.web.origins", "");
+        return java.util.Arrays.stream(origins.split(",")).map(String::trim).filter(origin -> !origin.isBlank())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
     static HttpClient httpClient() {
         return HTTP_CLIENT;
     }

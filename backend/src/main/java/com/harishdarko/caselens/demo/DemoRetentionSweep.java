@@ -8,17 +8,19 @@ import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Purges data that has outlived its use: expired demo workspaces (with everything that cascades from them) and expired
  * rate-limit buckets. Lambda freezes threads between invocations, so an in-JVM timer cannot do this there; the relay
  * function, which EventBridge already runs every 30 minutes, calls {@link #sweep(Duration)} instead.
  *
- * <p>Work happens in batches, each its own short transaction, until a batch comes back short or the time budget is
- * used. Whatever is left waits for the next run.
+ * <p>Work happens in batches, each its own short transaction with a statement timeout, while the time budget lasts and
+ * each batch comes back full. Whatever is left waits for the next run. The sweep never throws.
  */
 @Component
 public class DemoRetentionSweep {
@@ -31,22 +33,28 @@ public class DemoRetentionSweep {
             """;
     private final DemoWorkspaceCleanup workspaces;
     private final JdbcTemplate jdbc;
+    private final TransactionOperations transactions;
+    private final LocalStatementTimeout statementTimeout;
     private final Clock clock;
     private final LongSupplier nanoTime;
 
     @Autowired
-    public DemoRetentionSweep(DemoWorkspaceCleanup workspaces, JdbcTemplate jdbc, Clock clock) {
-        this(workspaces, jdbc, clock, System::nanoTime);
+    public DemoRetentionSweep(DemoWorkspaceCleanup workspaces, JdbcTemplate jdbc,
+            PlatformTransactionManager transactionManager, Clock clock) {
+        this(workspaces, jdbc, new TransactionTemplate(transactionManager), clock, System::nanoTime);
     }
 
-    DemoRetentionSweep(DemoWorkspaceCleanup workspaces, JdbcTemplate jdbc, Clock clock, LongSupplier nanoTime) {
+    DemoRetentionSweep(DemoWorkspaceCleanup workspaces, JdbcTemplate jdbc, TransactionOperations transactions,
+            Clock clock, LongSupplier nanoTime) {
         this.workspaces = workspaces;
         this.jdbc = jdbc;
+        this.transactions = transactions;
+        this.statementTimeout = new LocalStatementTimeout(jdbc, DemoWorkspaceCleanup.STATEMENT_TIMEOUT);
         this.clock = clock;
         this.nanoTime = nanoTime;
     }
 
-    /** Purges workspaces, then rate-limit buckets, within one shared time budget. */
+    /** Purges workspaces, then rate-limit buckets, within one shared time budget. A zero budget does nothing. */
     public Result sweep(Duration budget) {
         long deadline = nanoTime.getAsLong() + budget.toNanos();
         int deletedWorkspaces = purgeExpiredWorkspaces(deadline);
@@ -64,21 +72,27 @@ public class DemoRetentionSweep {
     }
 
     private int purgeExpiredRateLimitBuckets(long deadline) {
-        return inBatches("rate_limit_buckets", BUCKET_BATCH, deadline,
-                () -> jdbc.update(DELETE_EXPIRED_BUCKETS, Timestamp.from(clock.instant()), BUCKET_BATCH));
+        return inBatches("rate_limit_buckets", BUCKET_BATCH, deadline, () -> {
+            Integer deleted = transactions.execute(status -> {
+                statementTimeout.apply();
+                return jdbc.update(DELETE_EXPIRED_BUCKETS, Timestamp.from(clock.instant()), BUCKET_BATCH);
+            });
+            return deleted == null ? 0 : deleted;
+        });
     }
 
-    /** Runs at least one batch, then more while each batch comes back full and the deadline has not passed. */
+    /** Starts a batch only before the deadline, and another only when the last one came back full. */
     private int inBatches(String target, int batchSize, long deadline, IntSupplier batch) {
         int total = 0;
         try {
-            int deleted;
-            do {
+            int deleted = batchSize;
+            while (deleted >= batchSize && nanoTime.getAsLong() < deadline) {
                 deleted = batch.getAsInt();
                 total += deleted;
-            } while (deleted >= batchSize && nanoTime.getAsLong() < deadline);
-        } catch (DataAccessException failure) {
-            // One failed target must not stop the other or fail the relay; the next run tries again.
+            }
+        } catch (RuntimeException failure) {
+            // Any failure (a query or statement timeout, no connection, a failed commit) must not stop the other
+            // target or fail the relay; the next run tries again.
             log.error("retention.sweep_failed target={} deletedBeforeFailure={} error={}", target, total,
                     failure.getClass().getSimpleName());
         }

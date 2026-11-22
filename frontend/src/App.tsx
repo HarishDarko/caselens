@@ -38,6 +38,7 @@ const SESSION_ENDED_TEXT = 'Your demo session has ended. Close the demo and open
 // The API answers every refused correction with the same 409 (an unchanged result, a result that is not the latest,
 // or one that belongs to another ticket), so the sentence covers all of them.
 const CORRECTION_CONFLICT_TEXT = 'This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'
+const WORKSPACE_LIMIT_TEXT = 'This demo workspace has reached its limit. Start a new demo to keep going.'
 const SESSION_ENDED_BANNER_TEXT = 'Your demo session has ended. Start a new demo to keep exploring.'
 
 /** A sentence written for the visitor, shown as it is. */
@@ -62,6 +63,7 @@ function plainError(cause: unknown, fallback: string, conflict = 'That change do
   if (cause instanceof ApiError) {
     if (cause.status === 401) return SESSION_ENDED_TEXT
     if (cause.status === 404) return 'That item is no longer in this demo workspace. Close the demo and open a new one.'
+    if (cause.status === 409 && cause.code === 'workspace-limit') return WORKSPACE_LIMIT_TEXT
     if (cause.status === 409) return conflict
     if (cause.status === 429) return 'The demo is busy right now. Wait a few seconds and try again.'
     if (cause.status >= 500) return 'The CaseLens service had a problem. Try again in a few seconds.'

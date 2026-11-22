@@ -60,7 +60,9 @@ class WorkspaceLimitsApiIntegrationTest {
         mvc.perform(post("/api/tickets").header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON).content(TICKET))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.title").value("Workspace limit reached"));
+                .andExpect(jsonPath("$.title").value("Workspace limit reached"))
+                .andExpect(jsonPath("$.type").value("urn:caselens:problem:workspace-limit"))
+                .andExpect(jsonPath("$.code").value("workspace-limit"));
         mvc.perform(post("/api/demo/scenarios/charger-offline-site-wide").header("Authorization", "Bearer " + token))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("Workspace limit reached"));
@@ -85,7 +87,8 @@ class WorkspaceLimitsApiIntegrationTest {
         mvc.perform(feedback(token, ticketId, original.getId(), "HIGH")).andExpect(status().isCreated());
         mvc.perform(feedback(token, ticketId, original.getId(), "LOW"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.title").value("Workspace limit reached"));
+                .andExpect(jsonPath("$.title").value("Workspace limit reached"))
+                .andExpect(jsonPath("$.code").value("workspace-limit"));
     }
 
     private org.springframework.test.web.servlet.RequestBuilder feedback(String token, UUID ticketId, UUID resultId,

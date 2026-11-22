@@ -166,13 +166,18 @@ export type SessionOptions = { defaultIndustry: string; industries: Industry[] }
 // An API from before that change returns the bare session, without tickets and runtime.
 export type DemoSession = { token: string; expiresAt: string; industry?: string; tickets?: ApiTicket[]; runtime?: RuntimeSummary }
 
-/** An error answer from the API. The message is the server's detail; the page shows its own plain sentence. */
+/**
+ * An error answer from the API. The message is the server's detail; the page shows its own plain sentence. The code,
+ * when the problem body has one, tells answers with the same status apart (for example "workspace-limit" on a 409).
+ */
 export class ApiError extends Error {
   readonly status: number
-  constructor(message: string, status: number) {
+  readonly code: string | null
+  constructor(message: string, status: number, code: string | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -223,11 +228,13 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     }
     if (!response.ok) {
       let detail = `Request failed with status ${response.status}`
+      let code: string | null = null
       try {
-        const problem = await response.json() as { detail?: string }
+        const problem = await response.json() as { detail?: string; code?: string }
         if (problem.detail) detail = problem.detail
+        if (typeof problem.code === 'string') code = problem.code
       } catch { /* Preserve the status-only error when the body is not JSON. */ }
-      throw new ApiError(detail, response.status)
+      throw new ApiError(detail, response.status, code)
     }
     if (response.status === 204) return undefined as T
     return response.json() as Promise<T>

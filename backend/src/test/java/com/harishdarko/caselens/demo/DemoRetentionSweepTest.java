@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.TransactionOperations;
 
 class DemoRetentionSweepTest {
     private final DemoWorkspaceCleanup workspaces = mock(DemoWorkspaceCleanup.class);
@@ -39,8 +42,8 @@ class DemoRetentionSweepTest {
 
     @Test
     void stopsStartingBatchesOnceTheTimeBudgetIsUsed() {
-        // Every batch is full and takes 4 seconds, so a 10-second budget allows three workspace batches and then
-        // one bucket batch (each target always gets its first batch).
+        // Every batch is full and takes 4 seconds, so a 10-second budget allows workspace batches at 0, 4 and 8
+        // seconds. At 12 seconds the budget is spent, so no bucket batch starts.
         when(workspaces.deleteExpired(DemoRetentionSweep.WORKSPACE_BATCH)).thenAnswer(invocation -> {
             nanos.addAndGet(Duration.ofSeconds(4).toNanos());
             return DemoRetentionSweep.WORKSPACE_BATCH;
@@ -50,8 +53,25 @@ class DemoRetentionSweepTest {
         DemoRetentionSweep.Result result = sweep().sweep(Duration.ofSeconds(10));
 
         verify(workspaces, times(3)).deleteExpired(DemoRetentionSweep.WORKSPACE_BATCH);
-        verify(jdbc, times(1)).update(anyString(), any(Object[].class));
-        assertThat(result.rateLimitBuckets()).isEqualTo(DemoRetentionSweep.BUCKET_BATCH);
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+        assertThat(result.rateLimitBuckets()).isZero();
+    }
+
+    @Test
+    void aZeroBudgetStartsNoBatchAtAll() {
+        assertThat(sweep().sweep(java.time.Duration.ZERO)).isEqualTo(new DemoRetentionSweep.Result(0, 0));
+
+        verify(workspaces, never()).deleteExpired(org.mockito.ArgumentMatchers.anyInt());
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void transactionFailuresNeverEscapeTheSweep() {
+        when(workspaces.deleteExpired(DemoRetentionSweep.WORKSPACE_BATCH))
+                .thenThrow(new CannotCreateTransactionException("no connection"));
+        when(jdbc.update(anyString(), any(Object[].class))).thenThrow(new TransactionSystemException("commit failed"));
+
+        assertThat(sweep().sweep(Duration.ofSeconds(10))).isEqualTo(new DemoRetentionSweep.Result(0, 0));
     }
 
     @Test
@@ -73,6 +93,6 @@ class DemoRetentionSweepTest {
     }
 
     private DemoRetentionSweep sweep() {
-        return new DemoRetentionSweep(workspaces, jdbc, clock, nanos::get);
+        return new DemoRetentionSweep(workspaces, jdbc, TransactionOperations.withoutTransaction(), clock, nanos::get);
     }
 }

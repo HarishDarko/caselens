@@ -17,10 +17,18 @@ class ApiExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "Not found", "Ticket not found");
     }
 
+    /** The problem type and code a client checks to tell a workspace cap apart from other 409 answers. */
+    static final java.net.URI WORKSPACE_LIMIT_TYPE = java.net.URI.create("urn:caselens:problem:workspace-limit");
+    static final String WORKSPACE_LIMIT_CODE = "workspace-limit";
+
     @ExceptionHandler(WorkspaceLimitExceededException.class)
     ResponseEntity<ProblemDetail> workspaceLimit(WorkspaceLimitExceededException exception) {
-        return problem(HttpStatus.CONFLICT, "Workspace limit reached", "This demo workspace holds at most "
-                + exception.limit() + " " + exception.item() + ". Reset the workspace or start a new demo.");
+        ResponseEntity<ProblemDetail> response = problem(HttpStatus.CONFLICT, "Workspace limit reached",
+                "This demo workspace holds at most " + exception.limit() + " " + exception.item()
+                        + ". Reset the workspace or start a new demo.");
+        response.getBody().setType(WORKSPACE_LIMIT_TYPE);
+        response.getBody().setProperty("code", WORKSPACE_LIMIT_CODE);
+        return response;
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
