@@ -113,7 +113,23 @@ resource "aws_iam_role_policy" "github_destroy" {
       { Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:GetSubscriptionAttributes", "sns:ListSubscriptionsByTopic", "sns:Unsubscribe", "sns:DeleteTopic"], Resource = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
       { Effect = "Allow", Action = ["apigateway:*", "cloudfront:*"], Resource = "*" },
       { Effect = "Allow", Action = ["iam:*"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
-      { Effect = "Allow", Action = ["iam:ListRoles", "iam:GetOpenIDConnectProvider"], Resource = "*" }
+      # `terraform plan -destroy` first refreshes every resource and reads every data source, so each read below must
+      # be allowed or the run stops before anything is deleted. These three list actions have no resource type in
+      # the Service Authorization Reference, so AWS accepts them only on "*":
+      # - logs:DescribeLogGroups: the provider reads aws_cloudwatch_log_group with DescribeLogGroups (name prefix).
+      #   https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncloudwatchlogs.html
+      # - iam:ListOpenIDConnectProviders: data.aws_iam_openid_connect_provider.github is looked up by URL, which
+      #   lists the account's providers first. iam:ListRoles was already here.
+      #   https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsidentityandaccessmanagementiam.html
+      { Effect = "Allow", Action = ["logs:DescribeLogGroups", "iam:ListOpenIDConnectProviders", "iam:ListRoles"], Resource = "*" },
+      # cloudwatch:DescribeAlarms is alarm-scoped in the reference (and granted above through cloudwatch:*), but AWS
+      # requires "*" whenever composite alarms can be returned. The provider asks only for metric alarms by name, so
+      # this read-only grant is a safety margin.
+      # https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_DescribeAlarms.html
+      { Effect = "Allow", Action = ["cloudwatch:DescribeAlarms"], Resource = "*" },
+      # GetOpenIDConnectProvider accepts the provider ARN (oidc-provider resource type), so it names only the GitHub
+      # provider instead of "*".
+      { Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider"], Resource = data.aws_iam_openid_connect_provider.github.arn }
     ]
   })
 }
