@@ -82,6 +82,31 @@ class FailureRecoveryServiceTest {
         verify(requests, never()).request(any(), any(), any());
     }
 
+    @Test
+    void replaysARetryableFailureOnceSqsHasGivenUpOnIt() {
+        UUID workspaceId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-22T12:00:00Z");
+        TriageJob recent = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minusSeconds(900));
+        recent.claim(now.minusSeconds(120));
+        recent.retryableFailure("PROVIDER_TIMEOUT", now.minusSeconds(60));
+        TriageJob abandoned = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minusSeconds(1800));
+        abandoned.claim(now.minusSeconds(700));
+        abandoned.retryableFailure("PROVIDER_TIMEOUT", now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
+        when(jobs.findByIdAndWorkspaceId(recent.getId(), workspaceId)).thenReturn(Optional.of(recent));
+        when(jobs.findByIdAndWorkspaceId(abandoned.getId(), workspaceId)).thenReturn(Optional.of(abandoned));
+        when(requests.replay(workspaceId, abandoned.getTicketId(), abandoned.getId(), "corr")).thenReturn(abandoned.snapshot());
+        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
+                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> service.retry(workspaceId, recent.getId(), "corr"))
+                .hasMessage("Retryable jobs remain owned by SQS");
+        service.retry(workspaceId, abandoned.getId(), "corr");
+
+        verify(requests).replay(workspaceId, abandoned.getTicketId(), abandoned.getId(), "corr");
+    }
+
     private static TriageJob failedJob(UUID workspaceId, String errorCode) {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
                 Instant.now());

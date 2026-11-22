@@ -31,7 +31,9 @@ public final class RelayHandler implements RequestStreamHandler {
 
     @Override
     public void handleRequest(InputStream input, OutputStream output, Context context) throws IOException {
-        int published = relay.publishBatch(BATCH_SIZE);
+        // Stop before the 30 s function timeout: 25 slow SQS calls would not fit.
+        int published = relay.publishBatch(BATCH_SIZE,
+                () -> context == null ? Long.MAX_VALUE : context.getRemainingTimeInMillis());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("published", published);
         result.put("status", "OK");

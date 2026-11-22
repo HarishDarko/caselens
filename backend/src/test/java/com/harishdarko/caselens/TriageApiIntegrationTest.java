@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.harishdarko.caselens.triage.OutboxEvent;
 import com.harishdarko.caselens.triage.OutboxEventRepository;
-import com.harishdarko.caselens.triage.OutboxRelay;
 import com.harishdarko.caselens.triage.TriageJobRepository;
 import java.util.List;
 import java.util.UUID;
@@ -111,18 +110,41 @@ class TriageApiIntegrationTest {
     }
 
     @Test
-    void theRelayTriesFreshEventsFirstSkipsCappedOnesAndNeverRewritesAPublishedRow() {
+    void aRetryableFailureThatSqsGaveUpOnCanBeReplayed() throws Exception {
+        String token = session();
+        String ticket = createTicket(token);
+        String jobId = objectMapper.readTree(mvc.perform(post("/api/tickets/{id}/triage", ticket)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString()).get("jobId").asText();
+        // Last touched 11 minutes ago: past maxReceiveCount x visibility timeout, so the message is in the DLQ.
+        jdbc.update("update triage_job set status = 'RETRYABLE_FAILURE', attempt_count = 5, last_error_code = 'PROVIDER_TIMEOUT',"
+                + " created_at = ?, updated_at = ? where id = ?", java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(720)),
+                java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(660)), UUID.fromString(jobId));
+
+        mvc.perform(get("/api/operations/failures").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(jobId));
+        mvc.perform(post("/api/operations/failures/{jobId}/retry", jobId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isAccepted());
+        mvc.perform(post("/api/operations/failures/{jobId}/retry", jobId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isAccepted());
+        assertThat(jobCount(ticket)).as("a second click returns the one replacement").isEqualTo(2);
+    }
+
+    @Test
+    void theRelayTriesFreshEventsFirstNeverDropsOneAndNeverRewritesAPublishedRow() {
         java.time.Instant base = java.time.Instant.parse("2020-01-01T00:00:00Z");
-        OutboxEvent capped = events.save(OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "relay-capped", base));
+        OutboxEvent failing = events.save(OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "relay-failing", base));
         OutboxEvent retried = events.save(OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "relay-retried", base.plusSeconds(1)));
         OutboxEvent fresh = events.save(OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "relay-fresh", base.plusSeconds(2)));
-        jdbc.update("update outbox_event set publish_attempts = ? where id = ?", OutboxRelay.MAX_PUBLISH_ATTEMPTS, capped.getId());
+        jdbc.update("update outbox_event set publish_attempts = 500 where id = ?", failing.getId());
         jdbc.update("update outbox_event set publish_attempts = 3 where id = ?", retried.getId());
 
-        List<UUID> candidates = events.findPublishCandidates(100, OutboxRelay.MAX_PUBLISH_ATTEMPTS).stream()
-                .map(OutboxEvent::getId).toList();
-        assertThat(candidates).doesNotContain(capped.getId());
+        List<UUID> candidates = events.findPublishCandidates(100).stream().map(OutboxEvent::getId).toList();
+        assertThat(candidates).as("an event is never abandoned").contains(failing.getId());
         assertThat(candidates.indexOf(fresh.getId())).isLessThan(candidates.indexOf(retried.getId()));
+        assertThat(candidates.indexOf(retried.getId())).isLessThan(candidates.indexOf(failing.getId()));
 
         assertThat(lockInTransaction(fresh.getId())).isPresent();
         assertThat(events.markPublished(fresh.getId(), base.plusSeconds(10))).isOne();

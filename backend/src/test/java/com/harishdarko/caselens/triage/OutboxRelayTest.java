@@ -2,6 +2,7 @@ package com.harishdarko.caselens.triage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -34,7 +35,7 @@ class OutboxRelayTest {
     void publishesEachEventInItsOwnTransactionAndRecordsOutcomesWithConditionalUpdates() {
         OutboxEvent success = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-1", clock.instant());
         OutboxEvent failed = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-2", clock.instant());
-        when(events.findPublishCandidates(20, OutboxRelay.MAX_PUBLISH_ATTEMPTS))
+        when(events.findPublishCandidates(20))
                 .thenReturn(List.of(success, failed));
         when(events.lockUnpublished(success.getId())).thenReturn(Optional.of(success));
         when(events.lockUnpublished(failed.getId())).thenReturn(Optional.of(failed));
@@ -54,7 +55,7 @@ class OutboxRelayTest {
     @Test
     void skipsAnEventThatWasPublishedOrLockedSinceTheCandidateQuery() {
         OutboxEvent taken = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-taken", clock.instant());
-        when(events.findPublishCandidates(25, OutboxRelay.MAX_PUBLISH_ATTEMPTS)).thenReturn(List.of(taken));
+        when(events.findPublishCandidates(25)).thenReturn(List.of(taken));
         when(events.lockUnpublished(taken.getId())).thenReturn(Optional.empty());
 
         int published = new OutboxRelay(events, publisher, clock).publishBatch(25);
@@ -62,6 +63,25 @@ class OutboxRelayTest {
         assertThat(published).isZero();
         verify(publisher, never()).publish(any());
         verify(events, never()).markPublished(any(), any());
+    }
+
+    @Test
+    void stopsStartingPublishesWhenTheLambdaIsCloseToItsTimeout() {
+        OutboxEvent first = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-first", clock.instant());
+        OutboxEvent second = OutboxEvent.create(UUID.randomUUID(), UUID.randomUUID(), "corr-second", clock.instant());
+        when(events.findPublishCandidates(25)).thenReturn(List.of(first, second));
+        when(events.lockUnpublished(first.getId())).thenReturn(Optional.of(first));
+        java.util.concurrent.atomic.AtomicLong remaining = new java.util.concurrent.atomic.AtomicLong(20_000);
+        doAnswer(invocation -> {
+            remaining.set(7_000); // the first SQS call was slow
+            return null;
+        }).when(publisher).publish(first);
+
+        int published = new OutboxRelay(events, publisher, clock).publishBatch(25, remaining::get);
+
+        assertThat(published).isOne();
+        verify(publisher, never()).publish(second);
+        verify(events, never()).lockUnpublished(second.getId());
     }
 
     /** Runs each callback directly and counts how many transactions the relay asked for. */

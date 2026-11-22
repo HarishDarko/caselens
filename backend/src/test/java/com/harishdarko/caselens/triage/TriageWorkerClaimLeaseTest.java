@@ -125,6 +125,31 @@ class TriageWorkerClaimLeaseTest {
     }
 
     @Test
+    void aLateMessageForAReplayedJobIsAcknowledgedWithoutCallingTheProvider() {
+        QueueMessage old = seed();
+        TriageJob replaced = jobs.findByEventId(old.eventId()).orElseThrow();
+        jdbc.update("update triage_job set status = 'RETRYABLE_FAILURE', attempt_count = 5, last_error_code = 'PROVIDER_TIMEOUT'"
+                + " where id = ?", replaced.getId());
+        OutboxEvent replayEvent = OutboxEvent.create(old.workspaceId(), old.ticketId(), "lease-test-replay", T0.plusSeconds(700));
+        transactions.executeWithoutResult(status -> {
+            entityManager.persist(replayEvent);
+            TriageJob replacement = TriageJob.queued(UUID.randomUUID(), replayEvent.getId(), old.workspaceId(), old.ticketId(), 1,
+                    T0.plusSeconds(700));
+            replacement.setReplayedFromJobId(replaced.getId());
+            entityManager.persist(replacement);
+        });
+
+        WorkerResult result = workerAt(T0.plusSeconds(900)).process(old); // a DLQ redrive brings the old message back
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK_DUPLICATE);
+        org.mockito.Mockito.verify(provider, org.mockito.Mockito.never()).analyze(any(), any());
+        TriageJob after = jobs.findByEventId(old.eventId()).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
+        assertThat(after.getAttemptCount()).isEqualTo(5);
+        assertThat(jobs.findByEventId(replayEvent.getId()).orElseThrow().getStatus()).isEqualTo(TriageJobStatus.QUEUED);
+    }
+
+    @Test
     void aDeliveryForACompletedJobIsADuplicate() {
         QueueMessage message = seed();
         assertThat(workerAt(T0).process(message).status()).isEqualTo(WorkerResultStatus.ACK);

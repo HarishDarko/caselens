@@ -137,7 +137,7 @@ class LambdaHandlerContractTest {
     void relayPublishesOneBatchAndReportsTheCount() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         OutboxRelay relay = mock(OutboxRelay.class);
-        when(relay.publishBatch(RelayHandler.BATCH_SIZE)).thenReturn(3);
+        when(relay.publishBatch(org.mockito.ArgumentMatchers.eq(RelayHandler.BATCH_SIZE), any())).thenReturn(3);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         new RelayHandler(() -> mapper, () -> relay)

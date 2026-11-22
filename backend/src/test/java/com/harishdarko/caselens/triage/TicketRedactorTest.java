@@ -35,6 +35,30 @@ class TicketRedactorTest {
                 .isEqualTo("Driver badge: RFID badge [RFID_1] was declined");
         assertThat(redactor.redact("Subject x", "Transaction ID reference code TXN-5512 is missing").message())
                 .isEqualTo("Transaction ID reference code [TRANSACTION_ID_1] is missing");
+        assertThat(redactor.redact("Subject x", "My RFID tag 9F8E7D6C stopped working").message())
+                .isEqualTo("My RFID tag [RFID_1] stopped working");
+        assertThat(redactor.redact("Subject x", "The RFID chip AB12CD34 and RFID fob 77FF0011 fail").message())
+                .isEqualTo("The RFID chip [RFID_1] and RFID fob [RFID_2] fail");
+        assertThat(redactor.redact("Subject x", "RFID id 0011AABB is blocked").message())
+                .isEqualTo("RFID id [RFID_1] is blocked");
+    }
+
+    @Test
+    void redactsAValueAfterIsOrAColon() {
+        assertThat(redactor.redact("Subject x", "My payment id is 12345678 and it failed").message())
+                .isEqualTo("My payment id is [PAYMENT_ID_1] and it failed");
+        assertThat(redactor.redact("Subject x", "Transaction id: TX-55AA failed").message())
+                .isEqualTo("Transaction id [TRANSACTION_ID_1] failed");
+    }
+
+    @Test
+    void redactsIdentifiersWithoutDigitsAsMainDid() {
+        assertThat(redactor.redact("Subject x", "Card RFID ABCDEFGH was declined").message())
+                .isEqualTo("Card RFID [RFID_1] was declined");
+        assertThat(redactor.redact("Subject x", "See transaction id ABCD-EFGH for details").message())
+                .isEqualTo("See transaction id [TRANSACTION_ID_1] for details");
+        assertThat(redactor.redact("Subject x", "Stripe payment id pi_3NxYzAbCdEf failed").message())
+                .isEqualTo("Stripe payment id [PAYMENT_ID_1] failed");
     }
 
     @Test
@@ -50,11 +74,13 @@ class TicketRedactorTest {
     }
 
     @Test
-    void leavesWordsWithoutADigitAfterALabelAlone() {
+    void leavesPlainWordsAfterALabelAlone() {
         assertThat(redactor.redact("RFID card is rejected", "The payment id missing from the receipt was never sent.").subject())
                 .isEqualTo("RFID card is rejected");
         assertThat(redactor.redact("Subject x", "The payment id missing from the receipt was never sent.").message())
                 .isEqualTo("The payment id missing from the receipt was never sent.");
+        assertThat(redactor.redact("Subject x", "Your RFID card is rejected and the RFID token expired.").message())
+                .isEqualTo("Your RFID card is rejected and the RFID token expired.");
     }
 
     @Test

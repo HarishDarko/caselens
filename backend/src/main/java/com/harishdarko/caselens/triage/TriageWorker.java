@@ -114,6 +114,14 @@ public class TriageWorker {
             metrics.duplicateDelivery();
             return Claim.done(WorkerResult.duplicate());
         }
+        if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE && jobs.existsByReplayedFromJobId(job.getId())) {
+            // A reviewer replayed this job after SQS gave up on it (a DLQ redrive can still bring the old message
+            // back). The replacement owns the ticket now, so this delivery must not call the provider again.
+            metrics.duplicateDelivery();
+            log.info("triage.superseded_delivery correlationId={} workspaceId={} ticketId={} jobId={} eventId={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId());
+            return Claim.done(WorkerResult.duplicate());
+        }
         if (!job.getWorkspaceId().equals(message.workspaceId()) || !job.getTicketId().equals(message.ticketId())) {
             job.terminalFailure("INVALID_EVENT", clock.instant());
             jobs.save(job);

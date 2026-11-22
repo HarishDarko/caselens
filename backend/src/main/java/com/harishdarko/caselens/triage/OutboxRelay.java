@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,12 +18,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * short transaction: lock that one row (SKIP LOCKED, so two relays never publish the same row at once), send it, and
  * record the outcome with a conditional update that only touches a row that is still unpublished. A slow SQS call
  * therefore holds one row lock for at most the SQS client's call timeout, never the whole batch. Events are tried
- * fewest attempts first, and an event that failed MAX_PUBLISH_ATTEMPTS times is no longer picked, so a row that
- * keeps failing cannot hold back newer events.
+ * fewest attempts first, so a row that keeps failing cannot hold back newer events, and no event is ever dropped:
+ * an unpublished event stays a candidate until a publish succeeds. The batch stops early when the caller's time
+ * budget (the Lambda's remaining time) runs low, so a slow SQS cannot run the relay into its timeout.
  */
 @Service
 public class OutboxRelay {
-    public static final int MAX_PUBLISH_ATTEMPTS = 10;
+    /** Stop starting new publishes below this much remaining time: one SQS call can take up to 6 s (CL-18). */
+    static final long MIN_REMAINING_MILLIS = 8_000;
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
     private final OutboxEventRepository events;
     private final OutboxPublisher publisher;
@@ -54,10 +57,20 @@ public class OutboxRelay {
     }
 
     public int publishBatch(int limit) {
+        return publishBatch(limit, () -> Long.MAX_VALUE);
+    }
+
+    /** Publishes up to limit events, starting no new publish once remainingMillis drops below MIN_REMAINING_MILLIS. */
+    public int publishBatch(int limit, LongSupplier remainingMillis) {
         int published = 0;
-        List<UUID> candidates = events.findPublishCandidates(Math.max(1, Math.min(limit, 100)), MAX_PUBLISH_ATTEMPTS)
-                .stream().map(OutboxEvent::getId).toList();
+        List<UUID> candidates = events.findPublishCandidates(Math.max(1, Math.min(limit, 100))).stream()
+                .map(OutboxEvent::getId).toList();
         for (UUID eventId : candidates) {
+            if (remainingMillis.getAsLong() < MIN_REMAINING_MILLIS) {
+                log.warn("triage.outbox_relay_time_low published={} left={}", published,
+                        candidates.size() - candidates.indexOf(eventId));
+                break;
+            }
             if (Boolean.TRUE.equals(transactions.execute(status -> publishOne(eventId)))) published++;
         }
         return published;
@@ -83,11 +96,7 @@ public class OutboxRelay {
     private void recordFailure(OutboxEvent event, String errorCode) {
         events.recordPublishFailure(event.getId(), errorCode);
         metrics.outboxFailed();
-        int attempts = event.getPublishAttempts() + 1;
-        if (attempts >= MAX_PUBLISH_ATTEMPTS) {
-            log.error("triage.outbox_relay_gave_up eventId={} attempts={} errorCode={}", event.getId(), attempts, errorCode);
-        } else {
-            log.warn("triage.outbox_relay_failed eventId={} attempts={} errorCode={}", event.getId(), attempts, errorCode);
-        }
+        log.warn("triage.outbox_relay_failed eventId={} attempts={} errorCode={}", event.getId(),
+                event.getPublishAttempts() + 1, errorCode);
     }
 }

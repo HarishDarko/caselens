@@ -17,6 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class FailureRecoveryService {
+    /**
+     * How long SQS can keep redelivering a retryable job's message: maxReceiveCount 5 x 90 s visibility timeout is
+     * 7.5 minutes, plus margin. A RETRYABLE_FAILURE job not updated for this long has had its message moved to the
+     * DLQ, so a reviewer may replay it. If an old message still turns up later, the worker sees the replacement and
+     * acknowledges it as a duplicate (TriageWorker.claim), and the active-job unique index blocks a reclaim anyway.
+     */
+    static final Duration SQS_REDELIVERY_WINDOW = Duration.ofMinutes(10);
     private final TriageJobRepository jobs;
     private final TriageRequestService requests;
     private final TriageResultRepository results;
@@ -35,7 +42,7 @@ public class FailureRecoveryService {
     @Transactional(readOnly = true)
     public Page<TriageJobSnapshot> failures(UUID workspaceId, int page, int size) {
         PageRequest request = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "updatedAt"));
-        return jobs.findRecoverableFailures(workspaceId, request)
+        return jobs.findRecoverableFailures(workspaceId, clock.instant().minus(SQS_REDELIVERY_WINDOW), request)
                 .map(TriageJob::snapshot);
     }
 
@@ -133,7 +140,8 @@ public class FailureRecoveryService {
             throw new IllegalArgumentException("Only failed triage jobs can be retried");
         }
         if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE
-                && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())) {
+                && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())
+                && job.getUpdatedAt().isAfter(clock.instant().minus(SQS_REDELIVERY_WINDOW))) {
             throw new IllegalArgumentException("Retryable jobs remain owned by SQS");
         }
         return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
