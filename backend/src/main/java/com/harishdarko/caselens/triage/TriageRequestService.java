@@ -19,6 +19,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class TriageRequestService {
     private static final Logger log = LoggerFactory.getLogger(TriageRequestService.class);
     private static final int CONTENT_VERSION = 1;
+    static final String SQS_DELIVERY_EXHAUSTED = "SQS_DELIVERY_EXHAUSTED";
     private final TicketRepository tickets;
     private final OutboxEventRepository events;
     private final TriageJobRepository jobs;
@@ -75,10 +76,12 @@ public class TriageRequestService {
 
     /**
      * Reviewer recovery. Only FailureRecoveryService.retry calls this, after it has checked that the failed job is
-     * one SQS no longer owns (terminal, or the acknowledged synthetic demo failure). A replacement is queued only
-     * while that failed job is still the ticket's latest job; otherwise the latest job is returned unchanged. The
-     * ticket row lock serializes this with request(), so a double click queues one replacement, and an old failure
-     * can never be replayed past a newer job that SQS still owns.
+     * one SQS no longer owns (terminal, the acknowledged synthetic demo failure, or a stranded QUEUED or PROCESSING
+     * job whose message went to the DLQ). A replacement is queued only while that job is still the ticket's latest
+     * job; otherwise the latest job is returned unchanged. The ticket row lock serializes this with request(), so a
+     * double click queues one replacement, and an old failure can never be replayed past a newer job that SQS still
+     * owns. A stranded job is first closed as TERMINAL_FAILURE (SQS_DELIVERY_EXHAUSTED) by a conditional update, so a
+     * late or redriven original message is acknowledged as a duplicate before any provider call.
      */
     @Transactional
     TriageJobSnapshot replay(UUID workspaceId, UUID ticketId, UUID failedJobId, String correlationId) {
@@ -87,10 +90,35 @@ public class TriageRequestService {
         Ticket ticket = tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)
                 .orElseThrow(TicketNotFoundException::new);
         TriageJob latest = latestJob(workspaceId, ticketId).orElseThrow(TicketNotFoundException::new);
+        if (!latest.getId().equals(failedJobId)) return latest.snapshot();
         boolean failed = latest.getStatus() == TriageJobStatus.TERMINAL_FAILURE
                 || latest.getStatus() == TriageJobStatus.RETRYABLE_FAILURE;
-        if (!latest.getId().equals(failedJobId) || !failed) return latest.snapshot();
+        if (failed) return enqueue(ticket, workspaceId, ticketId, safeCorrelationId, latest.getId());
+        if (!closeStranded(latest, safeCorrelationId)) return latest.snapshot();
         return enqueue(ticket, workspaceId, ticketId, safeCorrelationId, latest.getId());
+    }
+
+    /**
+     * Closes a stranded QUEUED or PROCESSING job and its open attempts. Returns false, changing nothing, when the job
+     * is not stranded at the moment its row is locked (a worker claimed it, or it moved on).
+     */
+    private boolean closeStranded(TriageJob job, String correlationId) {
+        if (job.getStatus() != TriageJobStatus.QUEUED && job.getStatus() != TriageJobStatus.PROCESSING) return false;
+        Instant now = clock.instant();
+        int closed = jobs.closeStranded(job.getId(), SQS_DELIVERY_EXHAUSTED, now,
+                now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW), now.minus(TriageJobRepository.CLAIM_LEASE));
+        if (closed != 1) return false;
+        if (attempts != null) {
+            for (TriageAttempt attempt : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId())) {
+                if (attempt.getStatus() != TriageAttemptStatus.PROCESSING) continue;
+                attempt.fail(TriageAttemptStatus.TERMINAL_FAILURE, SQS_DELIVERY_EXHAUSTED, now);
+                attempts.save(attempt);
+            }
+        }
+        metrics.terminalFailure();
+        log.warn("triage.stranded_job_closed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} status={}",
+                correlationId, job.getWorkspaceId(), job.getTicketId(), job.getId(), job.getEventId(), job.getStatus());
+        return true;
     }
 
     private java.util.Optional<TriageJob> latestJob(UUID workspaceId, UUID ticketId) {
@@ -127,7 +155,14 @@ public class TriageRequestService {
                 metrics.outboxFailed();
                 log.warn("triage.outbox_publish_failed eventId={} errorCode=QUEUE_TRANSIENT", event.getId());
             }
-            persistAfterCommit(event);
+            try {
+                persistAfterCommit(event);
+            } catch (RuntimeException failure) {
+                // The job and its outbox row committed already, so the caller gets the queued job, not a 500. The
+                // relay reconciles the outbox row (it republishes rows without published_at, and the worker treats
+                // a second delivery of a finished job as a duplicate). Only the exception type is logged.
+                log.warn("triage.outbox_persist_failed eventId={} error={}", event.getId(), failure.getClass().getSimpleName());
+            }
         };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

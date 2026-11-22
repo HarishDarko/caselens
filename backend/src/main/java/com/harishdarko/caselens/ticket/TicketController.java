@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
@@ -52,9 +53,22 @@ class TicketController {
         return TicketPageResponse.from(service.list(principal.workspaceId(), page, size, status, channel));
     }
 
+    /** At least 5 characters once surrounding whitespace is stripped. */
+    static final String VISIBLE_5 = "(?sU)\\s*\\S.{3,}\\S\\s*";
+    /** At least 20 characters once surrounding whitespace is stripped. */
+    static final String VISIBLE_20 = "(?sU)\\s*\\S.{18,}\\S\\s*";
+
+    /**
+     * The length limits also hold after surrounding whitespace is stripped (the patterns), so a padded "  OK  " subject
+     * cannot pass @Size on its spaces and leave the rules fallback nothing to quote as evidence.
+     */
     record CreateTicketRequest(
-            @NotBlank @Size(min = 5, max = 160) String subject,
-            @NotBlank @Size(min = 20, max = 5000) String message,
+            @NotBlank @Size(min = 5, max = 160)
+            @Pattern(regexp = VISIBLE_5, message = "must have at least 5 characters besides surrounding whitespace")
+            String subject,
+            @NotBlank @Size(min = 20, max = 5000)
+            @Pattern(regexp = VISIBLE_20, message = "must have at least 20 characters besides surrounding whitespace")
+            String message,
             @NotNull TicketChannel channel) {}
 
     record TicketResponse(UUID id, String displayId, String subject, String message, TicketChannel channel,

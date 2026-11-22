@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.IntSupplier;
+import java.util.function.LongSupplier;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -16,6 +17,16 @@ import tools.jackson.databind.node.ObjectNode;
 public final class GeminiTriageProvider implements TriageProvider {
     private static final String PROMPT_VERSION = "triage-v2";
     private static final int MAX_RESPONSE_CHARS = 65_536;
+    /**
+     * Total time one analyze call may spend on the provider, retry included. The worker Lambda times out at 60 s and
+     * also needs time for the claim before the call and the saves after it, so a slow 5xx or 429 followed by a slow
+     * retry must not run past that. Each attempt's timeout is cut to what is left of this budget, less the connect
+     * allowance, and the retry is skipped when less than MIN_RETRY_TIMEOUT would be left for it.
+     */
+    static final Duration CALL_BUDGET = Duration.ofSeconds(45);
+    static final Duration CONNECT_ALLOWANCE = Duration.ofSeconds(2);
+    static final Duration MIN_RETRY_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration MIN_FIRST_TIMEOUT = Duration.ofSeconds(1);
     private final URI endpoint;
     private final String apiKey;
     private final String model;
@@ -23,10 +34,19 @@ public final class GeminiTriageProvider implements TriageProvider {
     private final ObjectMapper mapper;
     private final Duration requestTimeout;
     private final IntSupplier retryDelayMillis;
+    private final Duration callBudget;
+    private final LongSupplier nanoTime;
     private final PromptBuilder promptBuilder = new PromptBuilder(PROMPT_VERSION);
 
     public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
             ObjectMapper mapper, Duration requestTimeout, IntSupplier retryDelayMillis) {
+        this(endpoint, apiKey, model, client, mapper, requestTimeout, retryDelayMillis, CALL_BUDGET, System::nanoTime);
+    }
+
+    GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client, ObjectMapper mapper,
+            Duration requestTimeout, IntSupplier retryDelayMillis, Duration callBudget, LongSupplier nanoTime) {
+        this.callBudget = Objects.requireNonNull(callBudget);
+        this.nanoTime = Objects.requireNonNull(nanoTime);
         this.endpoint = Objects.requireNonNull(endpoint);
         this.apiKey = required(apiKey, "Gemini API key");
         this.model = required(model, "Gemini model");
@@ -40,15 +60,9 @@ public final class GeminiTriageProvider implements TriageProvider {
     public ProviderCall analyze(TriageRequest request, RedactedTicket redactedTicket) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(redactedTicket);
+        long started = nanoTime.getAsLong();
         String body = requestBody(request, redactedTicket);
-        HttpRequest httpRequest = HttpRequest.newBuilder(endpoint)
-                .timeout(requestTimeout)
-                .header("Content-Type", "application/json")
-                .header("x-goog-api-key", apiKey)
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = sendWithOneTransientRetry(httpRequest);
+        HttpResponse<String> response = sendWithOneTransientRetry(body, started);
         if (response.body().length() > MAX_RESPONSE_CHARS) {
             throw new ProviderCallException("Gemini provider response was too large", "RESPONSE_TOO_LARGE");
         }
@@ -67,15 +81,35 @@ public final class GeminiTriageProvider implements TriageProvider {
         }
     }
 
-    private HttpResponse<String> sendWithOneTransientRetry(HttpRequest request) {
+    private HttpRequest httpRequest(String body, Duration timeout) {
+        return HttpRequest.newBuilder(endpoint)
+                .timeout(timeout)
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+    }
+
+    /** The configured request timeout, cut to what is left of the call budget after the connect allowance. */
+    Duration attemptTimeout(long started) {
+        Duration elapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - started));
+        Duration left = callBudget.minus(elapsed).minus(CONNECT_ALLOWANCE);
+        return left.compareTo(requestTimeout) < 0 ? left : requestTimeout;
+    }
+
+    private HttpResponse<String> sendWithOneTransientRetry(String body, long started) {
+        Duration timeout = attemptTimeout(started);
+        if (timeout.compareTo(MIN_FIRST_TIMEOUT) < 0) timeout = MIN_FIRST_TIMEOUT;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = client.send(httpRequest(body, timeout), HttpResponse.BodyHandlers.ofString());
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) return response;
                 if (attempt == 0 && (status == 429 || status >= 500)) {
                     pauseBeforeRetry();
-                    continue;
+                    timeout = attemptTimeout(started);
+                    // Too little budget left for a useful retry: fail now so the rules fallback still has time.
+                    if (timeout.equals(requestTimeout) || timeout.compareTo(MIN_RETRY_TIMEOUT) >= 0) continue;
                 }
                 if (status == 401 || status == 403) {
                     throw new ProviderCallException("Gemini provider request was rejected", "AUTHENTICATION_FAILURE");

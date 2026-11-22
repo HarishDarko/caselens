@@ -23,9 +23,13 @@ import org.junit.jupiter.api.Test;
  * EV pack file. Set -Dcaselens.golden.out=<file> to write the full golden text for a diff. The CL-09 redactor fix
  * changed it once: the seeded account-rfid-authorization ticket used to lose "card" from its subject and have its
  * RFID token split in two, which showed in that scenario's evidence quotes. No label, score or verdict changed.
+ * The CL2-07 redactor fix changed it a second time: "payment reference(s)" became a label, so the seeded
+ * payment-captured-session-not-started and duplicate-charge-refund tickets now quote [PAYMENT_ID_1] (and
+ * [PAYMENT_ID_2]) where they used to quote PAY-DEMO-7319, PAY-DEMO-1004 and PAY-DEMO-1005. Only those two "rules="
+ * lines differ (the evidence quote text); every label, policy, score and verdict is the same.
  */
 class EvRulesCharacterizationTest {
-    private static final String EXPECTED_SHA256 = "7cebb7b6010da9b2e4092bdf55eafd71e1a011109c9bf90567d14376f96516dd";
+    private static final String EXPECTED_SHA256 = "874e06f68b1a4cc46fc20544d7a87b1258705688e5908a184d97a2bc38b45527";
     private static final List<String> TERMS = List.of("refund", "charged", "payment", "billing", "receipt", "authorization",
             "rfid", "account", "login", "sign in", "heartbeat", "network", "offline", "connectivity", "last-seen", "connector",
             "charger", "hardware", "plug", "session", "charging", "charge did not", "never started", "feature", "suggestion",

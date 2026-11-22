@@ -84,6 +84,48 @@ class TicketRedactorTest {
     }
 
     @Test
+    void closesTheRoundTwoLeaks() {
+        // CL2-07 probe strings: a separator before the descriptor, a comma, lowercase values after a colon.
+        assertThat(redactor.redact("Subject x", "payment id: ref PAY-99821 failed").message())
+                .isEqualTo("payment id ref [PAYMENT_ID_1] failed");
+        assertThat(redactor.redact("Subject x", "RFID, card 04A1B2C3D4 was declined").message())
+                .isEqualTo("RFID card [RFID_1] was declined");
+        assertThat(redactor.redact("Subject x", "RFID: deadbeef was declined").message())
+                .isEqualTo("RFID [RFID_1] was declined");
+        assertThat(redactor.redact("Subject x", "payment id: abcdefgh was declined").message())
+                .isEqualTo("payment id [PAYMENT_ID_1] was declined");
+        assertThat(redactor.redact("Subject x", "My RFID deadbeef01 stopped").message())
+                .isEqualTo("My RFID [RFID_1] stopped");
+        // Already redacted before this change (the reviewer's first example was wrong); it stays redacted.
+        assertThat(redactor.redact("Subject x", "RFID: token RFID-DEMO-A19 failed").message())
+                .isEqualTo("RFID token [RFID_1] failed")
+                .doesNotContain("A19");
+    }
+
+    @Test
+    void redactsTheSeededPaymentReferenceFixtures() {
+        assertThat(redactor.redact("Subject x", "connector 2 accepted payment reference PAY-DEMO-7319 for session "
+                + "SESSION-DEMO-88421 at 14:06 UTC").message())
+                .isEqualTo("connector 2 accepted payment reference [PAYMENT_ID_1] for session SESSION-DEMO-88421 at 14:06 UTC");
+        assertThat(redactor.redact("Subject x", "the statement contains payment references PAY-DEMO-1004 and "
+                + "PAY-DEMO-1005 for the same CAD 18.40 amount.").message())
+                .isEqualTo("the statement contains payment references [PAYMENT_ID_1] and [PAYMENT_ID_2] for the same CAD 18.40 amount.");
+        assertThat(redactor.redact("Subject x", "payment ref PAY-1001, PAY-1002 or PAY-1001 at CHG-CA-1042").message())
+                .isEqualTo("payment ref [PAYMENT_ID_1], [PAYMENT_ID_2] or [PAYMENT_ID_1] at CHG-CA-1042");
+        // A listed value from another family is not swept up with the payment reference.
+        assertThat(redactor.redact("Subject x", "payment reference PAY-DEMO-7319 and CHG-CA-1042 failed").message())
+                .isEqualTo("payment reference [PAYMENT_ID_1] and CHG-CA-1042 failed");
+    }
+
+    @Test
+    void stillLeavesPlainWordsAfterADescriptorOrIsAlone() {
+        assertThat(redactor.redact("Subject x", "RFID: card rejected at the site").message())
+                .isEqualTo("RFID: card rejected at the site");
+        assertThat(redactor.redact("Subject x", "The payment reference was missing").message())
+                .isEqualTo("The payment reference was missing");
+    }
+
+    @Test
     void doesNotRedactOrdinaryChargerAndSessionReferences() {
         RedactedTicket redacted = redactor.redact(
                 "Session failed",

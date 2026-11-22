@@ -61,7 +61,25 @@ final class RuleBasedTriageProvider implements TriageProvider {
         if (sentence != null && !sentence.equals(subjectQuote)) {
             result.add(new EvidenceItem(sentence, "The message provides direct operational evidence."));
         }
+        if (result.isEmpty()) {
+            // The subject and the first sentence were both too short to quote (for example a padded "  OK  " subject
+            // and a message starting "1. ..."). ProviderTriageResult needs at least one evidence item, so quote the
+            // whole message, and as a last resort the raw subject or message, which are verbatim by construction.
+            String fallback = firstQuotable(quote(message), raw(subject), raw(message));
+            if (fallback != null) result.add(new EvidenceItem(fallback, "The message provides direct operational evidence."));
+        }
         return result.subList(0, Math.min(result.size(), 2));
+    }
+
+    private static String firstQuotable(String... candidates) {
+        for (String candidate : candidates) if (candidate != null) return candidate;
+        return null;
+    }
+
+    /** The text unstripped, cut to the quote limit, or null when it is blank or too short for an EvidenceItem. */
+    private static String raw(String value) {
+        String cut = value.length() > MAX_QUOTE_LENGTH ? value.substring(0, MAX_QUOTE_LENGTH) : value;
+        return cut.isBlank() || cut.length() < MIN_QUOTE_LENGTH ? null : cut;
     }
 
     /**

@@ -48,6 +48,27 @@ class TriageWorkerTest {
     }
 
     @Test
+    void acknowledgesALateMessageForAStrandedJobThatWasClosedAndReplayedWithoutCallingTheProvider() {
+        // CL2-03: a reviewer replay closed the stranded job as SQS_DELIVERY_EXHAUSTED; then a DLQ redrive (or a
+        // late relay publish) delivers the original message. The claim fails, so no provider call is made.
+        TriageJob closed = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        closed.terminalFailure(TriageRequestService.SQS_DELIVERY_EXHAUSTED, clock.instant());
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(closed));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(0);
+        java.util.concurrent.atomic.AtomicInteger providerCalls = new java.util.concurrent.atomic.AtomicInteger();
+        TriageProvider countingProvider = (request, redacted) -> {
+            providerCalls.incrementAndGet();
+            return new MockTriageProvider().analyze(request, redacted);
+        };
+
+        WorkerResult result = worker(countingProvider).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
+
+        assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK_DUPLICATE);
+        assertThat(providerCalls).hasValue(0);
+        verify(tickets, never()).findByIdAndWorkspaceId(any(), any());
+    }
+
+    @Test
     void terminallyRejectsMessageThatDoesNotMatchTheStoredJobScope() {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
         when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));

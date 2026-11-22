@@ -163,6 +163,68 @@ class OutboxWorkflowTest {
         verify(publisher, never()).publish(any());
     }
 
+    @Test
+    void replayClosesAStrandedJobAndQueuesOneReplacement() {
+        Ticket ticket = ticket();
+        TriageJob stranded = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1,
+                clock.instant().minusSeconds(1800));
+        stranded.claim(clock.instant().minusSeconds(1200));
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(stranded));
+        when(jobs.closeStranded(stranded.getId(), "SQS_DELIVERY_EXHAUSTED", clock.instant(),
+                clock.instant().minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW),
+                clock.instant().minus(TriageJobRepository.CLAIM_LEASE))).thenReturn(1);
+        when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .replay(workspaceId, ticketId, stranded.getId(), "corr-stranded");
+
+        assertThat(snapshot.jobId()).isNotEqualTo(stranded.getId());
+        assertThat(snapshot.status()).isEqualTo(TriageJobStatus.QUEUED);
+        var saved = org.mockito.ArgumentCaptor.forClass(TriageJob.class);
+        verify(jobs).save(saved.capture());
+        assertThat(saved.getValue().getReplayedFromJobId()).isEqualTo(stranded.getId());
+    }
+
+    @Test
+    void replayLeavesAJobAWorkerClaimedFirstAlone() {
+        Ticket ticket = ticket();
+        TriageJob queued = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1,
+                clock.instant().minusSeconds(1800));
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
+                .thenReturn(Optional.of(queued));
+        when(jobs.closeStranded(any(), any(), any(), any(), any())).thenReturn(0);
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .replay(workspaceId, ticketId, queued.getId(), "corr-race");
+
+        assertThat(snapshot.jobId()).isEqualTo(queued.getId());
+        verify(jobs, never()).save(any());
+        verify(publisher, never()).publish(any());
+    }
+
+    @Test
+    void aDatabaseErrorAfterCommitDoesNotFailTheRequestForACommittedJob() {
+        // CL2-05: the publish succeeded but recording published_at failed. The job is committed, so the caller gets
+        // it; the relay reconciles the outbox row later.
+        Ticket ticket = ticket();
+        when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        when(events.save(any(OutboxEvent.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("connection lost"));
+        when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
+                .request(workspaceId, ticketId, "corr-after-commit");
+
+        assertThat(snapshot.status()).isEqualTo(TriageJobStatus.QUEUED);
+        verify(publisher).publish(any(OutboxEvent.class));
+        verify(events, org.mockito.Mockito.times(2)).save(any(OutboxEvent.class));
+    }
+
     private Ticket ticket() {
         return Ticket.create(ticketId, workspaceId, "Payment issue",
                 "Payment was captured but the session never started for this ticket.", TicketChannel.WEB, null, clock.instant());

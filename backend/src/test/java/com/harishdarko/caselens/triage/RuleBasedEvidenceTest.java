@@ -35,6 +35,35 @@ class RuleBasedEvidenceTest {
         assertThat(shortMessage.evidence()).extracting(EvidenceItem::quote).containsExactly("Charger offline");
     }
 
+    @Test
+    void alwaysQuotesAtLeastOneEvidenceItemWhenTheSubjectAndFirstSentenceAreTooShort() {
+        // CL2-02 probe: a padded subject under 3 visible characters and a message whose first "sentence" is "1.".
+        String message = "1. Every charger at the site shows offline since this morning.";
+        ProviderTriageResult numbered = analyze("  OK  ", message);
+        assertThat(numbered.evidence()).extracting(EvidenceItem::quote).containsExactly(message);
+
+        ProviderTriageResult lettered = analyze("Hi   ", "A. B is broken and the screen stays dark.");
+        assertThat(lettered.evidence()).extracting(EvidenceItem::quote)
+                .containsExactly("A. B is broken and the screen stays dark.");
+
+        // Nothing quotable after stripping either field: the raw padded subject is still verbatim ticket text.
+        ProviderTriageResult tiny = analyze("  OK  ", "ok" + " ".repeat(25));
+        assertThat(tiny.evidence()).extracting(EvidenceItem::quote).containsExactly("  OK  ");
+    }
+
+    @Test
+    void theRulesFallbackNoLongerFailsTheJobOnTheProbeTicket() {
+        TriageEngine engine = new TriageEngine((request, ticket) -> {
+            throw new ProviderCallException("down", "PROVIDER_IO");
+        }, new RulesFallbackProvider(), new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer());
+
+        TriageDecision decision = engine.triage(new TriageRequest(UUID.randomUUID(), "  OK  ",
+                "1. Every charger at the site shows offline since this morning.", TicketChannel.WEB, 0));
+
+        assertThat(decision.decisionSource()).isEqualTo(DecisionSource.RULES_FALLBACK);
+        assertThat(decision.evidence()).hasSize(1);
+    }
+
     private ProviderTriageResult analyze(String subject, String message) {
         TriageRequest request = new TriageRequest(UUID.randomUUID(), subject, message, TicketChannel.WEB, 0);
         return rules.analyze(request, redactor.redact(subject, message)).result();

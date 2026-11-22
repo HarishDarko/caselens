@@ -31,15 +31,21 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
     Page<TriageJob> findUnreplayedFailures(UUID workspaceId, List<TriageJobStatus> statuses, Pageable pageable);
 
     /**
-     * Failures a reviewer may replay: terminal ones, the acknowledged synthetic demo failure, and retryable ones that
-     * SQS has stopped redelivering (last updated before sqsGaveUpBefore, see FailureRecoveryService.SQS_REDELIVERY_WINDOW).
+     * Failures a reviewer may replay: terminal ones, the acknowledged synthetic demo failure, retryable ones that SQS
+     * has stopped redelivering (last updated before sqsGaveUpBefore, see FailureRecoveryService.SQS_REDELIVERY_WINDOW),
+     * and stranded QUEUED or PROCESSING jobs not updated for that long. A stranded job's message went to the DLQ
+     * after maxReceiveCount failed deliveries (for example the database was unreachable), so nothing else will move it.
+     * A PROCESSING job's claim lease is far shorter than the window, so such a job has no live worker either.
      */
     @Query("""
             select job from TriageJob job
             where job.workspaceId = :workspaceId
               and (job.status = com.harishdarko.caselens.triage.TriageJobStatus.TERMINAL_FAILURE
                    or (job.status = com.harishdarko.caselens.triage.TriageJobStatus.RETRYABLE_FAILURE
-                       and (job.lastErrorCode = 'SYNTHETIC_PROVIDER_TIMEOUT' or job.updatedAt < :sqsGaveUpBefore)))
+                       and (job.lastErrorCode = 'SYNTHETIC_PROVIDER_TIMEOUT' or job.updatedAt < :sqsGaveUpBefore))
+                   or (job.status in (com.harishdarko.caselens.triage.TriageJobStatus.QUEUED,
+                                      com.harishdarko.caselens.triage.TriageJobStatus.PROCESSING)
+                       and job.updatedAt < :sqsGaveUpBefore))
               and not exists (
                   select replacement.id from TriageJob replacement
                   where replacement.replayedFromJobId = job.id
@@ -78,6 +84,27 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
             """, nativeQuery = true)
     int claimForProcessing(@Param("eventId") UUID eventId, @Param("now") Instant now,
             @Param("staleBefore") Instant staleBefore);
+
+    /**
+     * Closes a stranded QUEUED or PROCESSING job before a reviewer replay queues its replacement. It is one
+     * conditional UPDATE, so it only changes a job that is still stranded when the row is locked: not updated since
+     * staleBefore and, when PROCESSING, with a claim lease that ended before leaseEndedBefore. A worker that claims
+     * the job first makes this return 0 (the replay then returns the job unchanged). Once it returns 1, the job is
+     * TERMINAL_FAILURE, so a late or redriven original message fails the claim and is acknowledged as a duplicate
+     * before any provider call (TriageWorker.claimNotTaken). It also takes the job out of the active-job unique index,
+     * which would otherwise block the replacement. It keeps the persistence context, so the locked ticket the replay
+     * holds stays managed.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            UPDATE triage_job
+               SET status = 'TERMINAL_FAILURE', last_error_code = :errorCode, updated_at = :now
+             WHERE id = :jobId
+               AND updated_at < :staleBefore
+               AND (status = 'QUEUED' OR (status = 'PROCESSING' AND started_at < :leaseEndedBefore))
+            """, nativeQuery = true)
+    int closeStranded(@Param("jobId") UUID jobId, @Param("errorCode") String errorCode, @Param("now") Instant now,
+            @Param("staleBefore") Instant staleBefore, @Param("leaseEndedBefore") Instant leaseEndedBefore);
 
     /**
      * Guard for the worker's final writes: matches only while the job is still PROCESSING under the attempt this worker
