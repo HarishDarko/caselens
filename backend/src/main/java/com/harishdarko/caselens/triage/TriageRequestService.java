@@ -20,6 +20,7 @@ public class TriageRequestService {
     private static final Logger log = LoggerFactory.getLogger(TriageRequestService.class);
     private static final int CONTENT_VERSION = 1;
     static final String SQS_DELIVERY_EXHAUSTED = "SQS_DELIVERY_EXHAUSTED";
+    static final String STRANDED_UNPUBLISHED = "STRANDED_UNPUBLISHED";
     private final TicketRepository tickets;
     private final OutboxEventRepository events;
     private final TriageJobRepository jobs;
@@ -80,8 +81,8 @@ public class TriageRequestService {
      * job whose message went to the DLQ). A replacement is queued only while that job is still the ticket's latest
      * job; otherwise the latest job is returned unchanged. The ticket row lock serializes this with request(), so a
      * double click queues one replacement, and an old failure can never be replayed past a newer job that SQS still
-     * owns. A stranded job is first closed as TERMINAL_FAILURE (SQS_DELIVERY_EXHAUSTED) by a conditional update, so a
-     * late or redriven original message is acknowledged as a duplicate before any provider call.
+     * owns. A stranded job is first closed as TERMINAL_FAILURE (SQS_DELIVERY_EXHAUSTED, or STRANDED_UNPUBLISHED when
+     * its message was never published) by a conditional update, so a late, relayed or redriven original message is acknowledged as a duplicate before any provider call.
      */
     @Transactional
     TriageJobSnapshot replay(UUID workspaceId, UUID ticketId, UUID failedJobId, String correlationId) {
@@ -105,20 +106,33 @@ public class TriageRequestService {
     private boolean closeStranded(TriageJob job, String correlationId) {
         if (job.getStatus() != TriageJobStatus.QUEUED && job.getStatus() != TriageJobStatus.PROCESSING) return false;
         Instant now = clock.instant();
-        int closed = jobs.closeStranded(job.getId(), SQS_DELIVERY_EXHAUSTED, now,
+        String errorCode = strandedErrorCode(job);
+        int closed = jobs.closeStranded(job.getId(), errorCode, now,
                 now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW), now.minus(TriageJobRepository.CLAIM_LEASE));
         if (closed != 1) return false;
         if (attempts != null) {
             for (TriageAttempt attempt : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId())) {
                 if (attempt.getStatus() != TriageAttemptStatus.PROCESSING) continue;
-                attempt.fail(TriageAttemptStatus.TERMINAL_FAILURE, SQS_DELIVERY_EXHAUSTED, now);
+                attempt.fail(TriageAttemptStatus.TERMINAL_FAILURE, errorCode, now);
                 attempts.save(attempt);
             }
         }
         metrics.terminalFailure();
-        log.warn("triage.stranded_job_closed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} status={}",
-                correlationId, job.getWorkspaceId(), job.getTicketId(), job.getId(), job.getEventId(), job.getStatus());
+        log.warn("triage.stranded_job_closed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} status={} errorCode={}",
+                correlationId, job.getWorkspaceId(), job.getTicketId(), job.getId(), job.getEventId(), job.getStatus(),
+                errorCode);
         return true;
+    }
+
+    /**
+     * Why a stranded job is closed. SQS_DELIVERY_EXHAUSTED means its message was published and SQS gave up on it
+     * (it is in the DLQ). STRANDED_UNPUBLISHED means the first publish failed and the outbox relay (every 30 minutes
+     * in production) had not sent it yet, so the message never reached SQS. If the relay sends it later, the worker
+     * acknowledges it as a duplicate of the closed job.
+     */
+    private String strandedErrorCode(TriageJob job) {
+        boolean published = events.findById(job.getEventId()).map(event -> event.getPublishedAt() != null).orElse(true);
+        return published ? SQS_DELIVERY_EXHAUSTED : STRANDED_UNPUBLISHED;
     }
 
     private java.util.Optional<TriageJob> latestJob(UUID workspaceId, UUID ticketId) {

@@ -25,13 +25,14 @@ public final class TicketRedactor {
             + "\\s*(?:([:#-])|(is)(?![A-Za-z0-9_]))?\\s*"
             + "([A-Za-z0-9_][A-Za-z0-9_-]{3,})");
     /**
-     * More identifiers in a list after a redacted one: "payment references PAY-1004 and PAY-1005". Only a candidate
-     * with a digit and the same leading letters as the redacted identifier counts (see sameFamily), so "PAY-1 and
-     * CHG-CA-1042" keeps the charger.
+     * More identifiers in a list right after a redacted one: "payment references PAY-1004 and PAY-1005". Only a
+     * candidate with the same shape as the redacted identifier counts (see sameFamily), so "PAY-1001 and CHG-1042"
+     * keeps the charger and "04A1B2C3D4 and 2024 sessions" keeps the year.
      */
     private static final Pattern LIST_TAIL = Pattern.compile(
             "(?i)(?:\\s*,\\s*(?:(?:and|or)\\s+)?|\\s+(?:and|or|&)\\s+)([A-Za-z0-9_][A-Za-z0-9_-]{3,})");
     private static final Pattern LEADING_LETTERS = Pattern.compile("^[A-Za-z]*");
+    /** 8 or more lowercase hex characters ("deadbeef01"): an identifier even without a digit. */
     private static final Pattern LOWERCASE_HEX = Pattern.compile("[0-9a-f]{8,}");
     private static final Pattern PHONE = Pattern.compile(
             "(?<!\\w)(?:\\+?1[\\s.-]?)?(?:\\(?\\d{3}\\)?[\\s.-]?)\\d{3}[\\s.-]?\\d{4}(?!\\w)");
@@ -62,8 +63,7 @@ public final class TicketRedactor {
         while (position < input.length() && match.find(position)) {
             output.append(input, position, match.start());
             String candidate = match.group(5);
-            boolean afterSeparator = match.group(3) != null && !"-".equals(match.group(3)) && match.group(2).isBlank();
-            if (!looksLikeIdentifier(candidate, afterSeparator)) {
+            if (!looksLikeIdentifier(candidate)) {
                 output.append(match.group());
                 position = match.end();
                 continue;
@@ -87,32 +87,37 @@ public final class TicketRedactor {
         return output.toString();
     }
 
-    static boolean looksLikeIdentifier(String candidate) {
-        return looksLikeIdentifier(candidate, false);
-    }
-
     /**
      * After an explicit label, a candidate is an identifier unless it reads as a plain word: a descriptor word, or a
      * word with lowercase letters and no digit, underscore or hyphen ("RFID card is rejected", "payment id missing").
-     * So "04A1B2C3D4", "RFID-DEMO-A19", "ABCDEFGH", "ABCD-EFGH" and "pi_3NxYz" are all redacted. A lowercase word is
-     * still an identifier when a ":" or "#" puts it right after the label ("RFID: deadbeef", "payment id: abcdefgh"),
-     * or when it is 8 or more lowercase hex characters ("RFID deadbeef01").
+     * So "04A1B2C3D4", "RFID-DEMO-A19", "ABCDEFGH", "ABCD-EFGH" and "pi_3NxYz" are all redacted, and so is 8 or more
+     * lowercase hex ("RFID: deadbeef"). A separator does not change this: "RFID: declined at every charger" and
+     * "payment reference: pending" stay readable, because the classifiers need those words.
      */
-    static boolean looksLikeIdentifier(String candidate, boolean afterSeparator) {
+    static boolean looksLikeIdentifier(String candidate) {
         if (DESCRIPTOR.matcher(candidate).matches()) return false;
         if (candidate.chars().anyMatch(c -> Character.isDigit(c) || c == '_' || c == '-')) return true;
-        if (afterSeparator || LOWERCASE_HEX.matcher(candidate).matches()) return true;
+        if (LOWERCASE_HEX.matcher(candidate).matches()) return true;
         return candidate.equals(candidate.toUpperCase(Locale.ROOT));
     }
 
-    /** A listed identifier with a digit and the same leading letters as the redacted one ("PAY-DEMO-1004", "PAY-DEMO-1005"). */
+    /**
+     * A listed value of the same shape as the redacted identifier: a digit, the same length, the same character class
+     * (letter, digit or the same punctuation) at each position, and the same leading letters. "PAY-DEMO-1004" and
+     * "PAY-DEMO-1005" match; "55123" and "2026-11-22", or "04A1B2C3D4" and "2024", do not.
+     */
     private static boolean sameFamily(String redacted, String listed) {
         if (listed.chars().noneMatch(Character::isDigit)) return false;
+        if (!shape(redacted).equals(shape(listed))) return false;
         Matcher prefix = LEADING_LETTERS.matcher(redacted);
         String letters = prefix.find() ? prefix.group() : "";
-        if (letters.isEmpty()) return Character.isDigit(listed.charAt(0));
-        return listed.regionMatches(true, 0, letters, 0, letters.length())
-                && (listed.length() == letters.length() || !Character.isLetter(listed.charAt(letters.length())));
+        return listed.regionMatches(true, 0, letters, 0, letters.length());
+    }
+
+    private static String shape(String value) {
+        StringBuilder shape = new StringBuilder(value.length());
+        for (char c : value.toCharArray()) shape.append(Character.isLetter(c) ? 'A' : Character.isDigit(c) ? '9' : c);
+        return shape.toString();
     }
 
     private String replace(String input, Pattern pattern, Function<Matcher, String> replacement) {

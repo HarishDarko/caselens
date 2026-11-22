@@ -67,8 +67,11 @@ before the claim) or PROCESSING (the worker timed out or lost the database
 after the claim). Once such a job has not been updated for the full redelivery
 window (10 minutes), the operations failures list shows it and its retry
 button works, with no DLQ access needed. The retry locks the ticket, closes the
-old job and any open attempt as `TERMINAL_FAILURE` with
-`SQS_DELIVERY_EXHAUSTED`, and queues one replacement. A double click returns
+old job and any open attempt as `TERMINAL_FAILURE`, and queues one
+replacement. The error code says why: `SQS_DELIVERY_EXHAUSTED` when the
+message was published and SQS gave up on it, `STRANDED_UNPUBLISHED` when the
+first publish failed and the 30 minute outbox relay had not sent it yet (that
+message never reached SQS or the DLQ). A double click returns
 that replacement. If the original message comes back later (a redrive, or the
 outbox relay publishing a row that missed its first publish), the worker
 acknowledges it as a duplicate, so the ticket is triaged once.

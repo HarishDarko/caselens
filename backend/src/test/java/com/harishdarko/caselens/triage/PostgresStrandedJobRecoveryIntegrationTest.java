@@ -56,6 +56,7 @@ class PostgresStrandedJobRecoveryIntegrationTest {
 
     @Test
     void replaysAStrandedQueuedJobOnceAndAcksTheLateOriginalMessage() {
+        // This seed's message was never published (the relay had not sent it), so it closes as STRANDED_UNPUBLISHED.
         Instant now = Instant.now();
         Seed seed = seed(now.minus(Duration.ofMinutes(20)), null);
 
@@ -67,7 +68,7 @@ class PostgresStrandedJobRecoveryIntegrationTest {
         assertThat(replacement.status()).isEqualTo(TriageJobStatus.QUEUED);
         TriageJob closed = jobs.findById(seed.jobId()).orElseThrow();
         assertThat(closed.getStatus()).isEqualTo(TriageJobStatus.TERMINAL_FAILURE);
-        assertThat(closed.getLastErrorCode()).isEqualTo("SQS_DELIVERY_EXHAUSTED");
+        assertThat(closed.getLastErrorCode()).isEqualTo("STRANDED_UNPUBLISHED");
         assertThat(jobs.findById(replacement.jobId()).orElseThrow().getReplayedFromJobId()).isEqualTo(seed.jobId());
         // A late or redriven original message cannot claim the closed job, so the worker acks it as a duplicate.
         Integer claimed = transactions.execute(status -> jobs.claimForProcessing(seed.eventId(), Instant.now()));
@@ -85,7 +86,10 @@ class PostgresStrandedJobRecoveryIntegrationTest {
         TriageJobSnapshot replacement = recovery.retry(seed.workspaceId(), seed.jobId(), "corr-processing");
 
         assertThat(replacement.jobId()).isNotEqualTo(seed.jobId());
-        assertThat(jobs.findById(seed.jobId()).orElseThrow().getStatus()).isEqualTo(TriageJobStatus.TERMINAL_FAILURE);
+        TriageJob closed = jobs.findById(seed.jobId()).orElseThrow();
+        assertThat(closed.getStatus()).isEqualTo(TriageJobStatus.TERMINAL_FAILURE);
+        // A claimed job's message was delivered, so SQS gave up on it: it is in the DLQ.
+        assertThat(closed.getLastErrorCode()).isEqualTo("SQS_DELIVERY_EXHAUSTED");
         List<TriageAttempt> timeline = attempts.findByJobIdOrderByAttemptNumberAsc(seed.jobId());
         assertThat(timeline).singleElement().satisfies(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TriageAttemptStatus.TERMINAL_FAILURE);
@@ -121,6 +125,7 @@ class PostgresStrandedJobRecoveryIntegrationTest {
             entityManager.persist(Ticket.create(ticketId, workspaceId, "Charger offline",
                     "Every charger at the site shows offline since this morning.", TicketChannel.WEB, null, createdAt));
             OutboxEvent event = OutboxEvent.create(workspaceId, ticketId, "stranded", createdAt);
+            if (claimedAt != null) event.markPublished(createdAt);
             entityManager.persist(event);
             TriageJob job = TriageJob.queued(UUID.randomUUID(), event.getId(), workspaceId, ticketId, 1, createdAt);
             if (claimedAt != null) job.claim(claimedAt);
