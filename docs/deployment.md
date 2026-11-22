@@ -151,6 +151,20 @@ before its snapshot and is reached through the pinned worker alias. Its first
 real synthetic Groq journey completed in 7.27 seconds end to end; the next
 journey completed in 2.69 seconds. Both were `AI_VALIDATED` in one attempt.
 
+API throttle and CORS
+
+The HTTP API stage allows 5 requests a second with a burst of 10 for all
+visitors together, which also caps Lambda and Neon spend if the API is
+flooded. Spring answers CORS for every request that reaches the api function.
+The API has no `cors_configuration`: AWS documents that HTTP API CORS adds the
+configured headers "to the response from an integration", and a throttled 429
+(or a gateway 5xx) never reaches the integration, so the setting is not
+documented to help there. It would also make API Gateway ignore Spring's CORS
+headers, moving origin ownership into a second place. The browser therefore
+sees a gateway 429 as a failed fetch (TypeError), and the frontend retries an
+idempotent GET once after a TypeError, the same way it retries a 429 or 503.
+Raising the throttle is a cost decision, not a fix for this.
+
 ## Neon compute guardrail
 
 The original once-per-minute recovery schedule prevented Neon from reaching its
@@ -178,12 +192,33 @@ terraform -chdir=infra/terraform/bootstrap apply `
   -var="bucket_name=<globally-unique-state-bucket>"
 ```
 
-Read the bootstrap output and save the destroy role ARN as the protected
-GitHub **environment** secret `AWS_DESTROY_ROLE_ARN`:
+The destroy workflow runs in its own GitHub environment, `production-destroy`,
+not in `production`. The destroy role trusts only that environment's OIDC
+subject (`repo:<owner>/<repo>:environment:production-destroy`), so the deploy
+job, which runs in `production`, cannot assume it. Create the environment with
+a required reviewer and `main` as its only deployment branch, then give it the
+variables and the destroy role ARN the workflow reads:
 
-```powershell
-terraform -chdir=infra/terraform/bootstrap output -raw github_destroy_role_arn
+```bash
+repo=HarishDarko/caselens
+reviewer_id="$(gh api users/HarishDarko --jq .id)"
+gh api -X PUT "repos/$repo/environments/production-destroy" --input - <<EOF
+{"reviewers":[{"type":"User","id":$reviewer_id}],"prevent_self_review":false,
+ "deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+EOF
+gh api -X POST "repos/$repo/environments/production-destroy/deployment-branch-policies" -f name=main -f type=branch
+for name in AWS_REGION CASELENS_TERRAFORM_STATE_BUCKET; do
+  gh variable set "$name" --env production-destroy --repo "$repo" \
+    --body "$(gh variable get "$name" --env production --repo "$repo")"
+done
+gh secret set AWS_DESTROY_ROLE_ARN --env production-destroy --repo "$repo" \
+  --body "$(terraform -chdir=infra/terraform/bootstrap output -raw github_destroy_role_arn)"
+gh secret delete AWS_DESTROY_ROLE_ARN --env production --repo "$repo"
 ```
+
+`prevent_self_review` stays false because the owner is the only reviewer and
+also starts the workflow. The role ARN does not change when the bootstrap
+stack is re-applied, so the secret can be set before or after that apply.
 
 Then initialize the application stack with that bucket before planning or
 applying it:
@@ -197,17 +232,21 @@ terraform -chdir=infra/terraform init `
 Set the same bucket name as the GitHub repository variable
 `CASELENS_TERRAFORM_STATE_BUCKET`. The existing `AWS_DEPLOY_ROLE_ARN` secret
 continues to serve normal artifact publication. The separate
-`AWS_DESTROY_ROLE_ARN` environment secret is used only by the protected
-teardown workflow and is created by the bootstrap stack, outside the
-application state that it destroys.
+`AWS_DESTROY_ROLE_ARN` secret lives only in the `production-destroy`
+environment, is used only by the teardown workflow, and names a role created by
+the bootstrap stack, outside the application state that it destroys.
 
 After the demo, open **Actions → CaseLens Terraform Destroy**, run it on
-`feat/production-proof`, and type `DESTROY_CASELENS`. The protected `production`
-environment approves the workflow before it receives AWS credentials. The
-workflow then refuses the wrong branch, wrong confirmation, missing state
-configuration, or empty state; it prints the destroy plan and applies only that
-exact saved plan. It sets `force_destroy_storage=true` for this explicit
-teardown so current and versioned demo bucket objects are removed before bucket
-deletion. It removes the application resources but preserves the state bucket
+`main`, and type `DESTROY_CASELENS`. The job waits for the required reviewer
+of the `production-destroy` environment to approve it before it receives AWS
+credentials. The destroy role trusts only jobs in that environment, so a
+bootstrap apply is needed after any change to its trust or policy.
+The workflow then refuses the wrong branch, wrong confirmation, missing state
+configuration, or empty state. It first applies a plan targeted at the two
+versioned buckets that only sets `force_destroy=true` in state (the AWS
+provider deletes a bucket with the value saved in state, so the variable alone
+is not enough), then prints the destroy plan and applies only that exact saved
+plan. Current and versioned demo bucket objects are therefore removed before
+bucket deletion. It removes the application resources but preserves the state bucket
 for recovery. Delete the bootstrap stack separately only when the project and
 its Terraform history are no longer needed.

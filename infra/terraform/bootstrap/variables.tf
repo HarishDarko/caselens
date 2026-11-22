@@ -29,7 +29,13 @@ variable "github_repository" {
   default = "HarishDarko/caselens"
 }
 
-variable "github_branch" {
-  type    = string
-  default = "feat/production-proof"
+variable "destroy_environment" {
+  description = "GitHub environment used only by the destroy workflow. It must differ from the deploy environment."
+  type        = string
+  default     = "production-destroy"
+
+  validation {
+    condition     = var.destroy_environment != "production"
+    error_message = "destroy_environment must not be the deploy environment (production), or the deploy job could assume the destroy role."
+  }
 }

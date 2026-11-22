@@ -17,7 +17,8 @@ class LambdaSecretsTest {
             "SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD",
             "CASELENS_SESSION_SECRET", "CASELENS_AI_PROVIDER", "GROQ_API_KEY",
             "spring.datasource.url", "spring.datasource.username", "spring.datasource.password",
-            "caselens.session-secret", "caselens.ai-provider", "caselens.groq.api-key"
+            "caselens.session-secret", "caselens.ai-provider", "caselens.groq.api-key",
+            "CASELENS_WEB_ORIGINS", "caselens.web.origins"
     };
 
     @AfterEach
@@ -36,6 +37,7 @@ class LambdaSecretsTest {
                          "CASELENS_SESSION_SECRET":"session-secret",
                          "CASELENS_AI_PROVIDER":"groq",
                          "GROQ_API_KEY":"provider-secret",
+                         "CASELENS_WEB_ORIGINS":"https://not-from-terraform.example",
                          "RAW_PROVIDER_RESPONSE":"must-not-load"}
                         """).build());
 
@@ -52,5 +54,9 @@ class LambdaSecretsTest {
         assertThat(System.getProperty("CASELENS_DEMO_PASSCODE")).isNull();
         assertThat(System.getProperty("caselens.demo-passcode")).isNull();
         assertThat(LambdaSecrets.allowedKeys()).contains("GROQ_API_KEY");
+        // Terraform sets the browser origins on the functions; the secret must not override them.
+        assertThat(LambdaSecrets.allowedKeys()).doesNotContain("CASELENS_WEB_ORIGINS");
+        assertThat(System.getProperty("CASELENS_WEB_ORIGINS")).isNull();
+        assertThat(System.getProperty("caselens.web.origins")).isNull();
     }
 }

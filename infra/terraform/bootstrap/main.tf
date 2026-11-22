@@ -68,6 +68,11 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
 }
 
 
+# Only the destroy job may assume this role. It runs in its own GitHub environment (production-destroy, with a
+# required reviewer and main as the only deployment branch), so its OIDC subject is
+# repo:<owner>/<repo>:environment:production-destroy. The deploy job runs in "production" and sends a different
+# subject, so it cannot assume this role. A branch subject (repo:...:ref:refs/heads/...) is never sent for a job
+# with an environment, and trusting one would let a workflow skip the reviewer.
 resource "aws_iam_role" "github_destroy" {
   name = local.destroy_role_name
 
@@ -80,7 +85,7 @@ resource "aws_iam_role" "github_destroy" {
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/${var.github_branch}"
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:${var.destroy_environment}"
         }
       }
     }]
@@ -103,6 +108,9 @@ resource "aws_iam_role_policy" "github_destroy" {
       { Effect = "Allow", Action = ["secretsmanager:*"], Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.application_name}/*" },
       { Effect = "Allow", Action = ["events:*"], Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/${local.application_name}-*" },
       { Effect = "Allow", Action = ["cloudwatch:*"], Resource = "arn:aws:cloudwatch:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alarm:${local.application_name}-*" },
+      # The alarm email topic and its subscription (main stack, when alarm_email is set): read them during the
+      # destroy plan, then unsubscribe and delete. Only this app's topics; topics passed in are never touched.
+      { Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:GetSubscriptionAttributes", "sns:ListSubscriptionsByTopic", "sns:Unsubscribe", "sns:DeleteTopic"], Resource = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.application_name}-*" },
       { Effect = "Allow", Action = ["apigateway:*", "cloudfront:*"], Resource = "*" },
       { Effect = "Allow", Action = ["iam:*"], Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.application_name}-*" },
       { Effect = "Allow", Action = ["iam:ListRoles", "iam:GetOpenIDConnectProvider"], Resource = "*" }
