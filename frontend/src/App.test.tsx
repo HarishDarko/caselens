@@ -832,3 +832,98 @@ test('keeps the stage text of a ticket still in triage when another ticket finis
   expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.')
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
+
+// CL2-09: a scenario's triage poll can last two minutes. Only that ticket waits; other tickets stay usable.
+test('keeps other tickets usable while a loaded scenario waits for triage', async () => {
+  mockSeededBackend([apiTicket], {
+    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
+    'ticket-a105': () => pendingJob('QUEUED'),
+  })
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
+  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
+  // The scenario buttons stay off while its ticket is in triage, so the scenario is not loaded twice.
+  expect(screen.getByRole('button', { name: 'Run controlled retry demo' })).toBeDisabled()
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled()
+  expect(screen.getByLabelText('Review note')).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+})
+
+// CL2-14: the ticket rows stay clickable while a correction is being saved. A save that finishes after the reviewer
+// opened another ticket updates its own ticket and never says "Correction saved" on the other one.
+test('shows "Correction saved" only on the ticket whose correction was saved', async () => {
+  let finishSave: (value: Response) => void = () => undefined
+  const seeded = mockSeededBackend([chargerTicket, apiTicket], {
+    'ticket-a104': () => completedProcessing('ticket-a104', 40, 'LOW'),
+    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
+  })
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/feedback')
+    ? new Promise<Response>((resolve) => { finishSave = resolve })
+    : seeded(input, init))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The payment case needs a faster answer.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+  await waitFor(() => expect(calls(fetchMock, '/feedback')).toBe(1))
+
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
+  await waitFor(() => expect(document.querySelector('.detail-subject h3')).toHaveTextContent('Every charger at the demo site appears offline'))
+  await act(async () => { finishSave(response({ id: 'feedback-1' }, 201)) })
+
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
+  expect(screen.queryByText('Correction saved. Evaluation metrics updated.')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  expect(screen.getByText('Original triage urgency: Low.')).toBeInTheDocument()
+})
+
+// CL2-13: a throttled live read waits up to 5 seconds before its retry. Leaving the view or closing the demo aborts it,
+// so the retry is never sent with the old token.
+test('stops a throttled Evaluation read from retrying once the reviewer leaves the view', async () => {
+  // The seeded open reads nothing from Evaluation, so only the live read is throttled.
+  const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/evaluation') ? new Response('', { status: 429, headers: { 'Retry-After': '3' } }) : undefined)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  await advance(1_000)
+  expect(calls(fetchMock, '/api/evaluation')).toBe(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+  await advance(10_000)
+
+  expect(calls(fetchMock, '/api/evaluation')).toBe(1)
+})
+
+test('stops throttled Operations reads from retrying when the demo closes', async () => {
+  const throttled = () => new Response('', { status: 429, headers: { 'Retry-After': '3' } })
+  const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/operations/overview') || url.includes('/api/operations/failures') ? throttled() : undefined)
+  render(<App />)
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await advance(1_000)
+  const failureReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/operations/failures')).length
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(1)
+  expect(failureReads()).toBe(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+  await advance(10_000)
+
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(1)
+  expect(failureReads()).toBe(1)
+})
