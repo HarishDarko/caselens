@@ -76,6 +76,87 @@ class OperationsOverviewServiceTest {
     }
 
     @Test
+    void reportsNoLatencyUntilAJobHasCompleted() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageJob completed = job(workspaceId, UUID.randomUUID(), ticketId);
+        completed.claim(NOW.minusSeconds(2));
+        completed.complete(NOW);
+        TriageJob queued = job(workspaceId, UUID.randomUUID(), UUID.randomUUID());
+        TriageJob processing = job(workspaceId, UUID.randomUUID(), UUID.randomUUID());
+        processing.claim(NOW.minusSeconds(1));
+        TriageJob retryable = job(workspaceId, UUID.randomUUID(), UUID.randomUUID());
+        retryable.claim(NOW.minusSeconds(5));
+        retryable.retryableFailure("SYNTHETIC_PROVIDER_TIMEOUT", NOW.minusSeconds(4));
+        TriageJob terminal = job(workspaceId, UUID.randomUUID(), UUID.randomUUID());
+        terminal.claim(NOW.minusSeconds(4));
+        terminal.terminalFailure("INVALID_EVENT", NOW.minusSeconds(3));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(completed, queued, processing, retryable, terminal));
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(
+                result(completed.getEventId(), workspaceId, ticketId, DecisionSource.AI_VALIDATED)));
+        when(invocations.findByTicketIds(any())).thenReturn(List.of());
+
+        OperationsOverview overview = service.overview(workspaceId);
+
+        assertThat(operation(overview, completed).latencyMs()).isEqualTo(10_000L);
+        assertThat(List.of(queued, processing, retryable, terminal))
+                .allSatisfy(job -> assertThat(operation(overview, job).latencyMs()).isNull());
+        assertThat(operation(overview, retryable).provider()).isNull();
+    }
+
+    @Test
+    void aReplayKeepsEachJobsOwnProviderTelemetry() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageJob original = job(workspaceId, UUID.randomUUID(), ticketId);
+        original.claim(NOW.minusSeconds(9));
+        original.terminalFailure("SEMANTIC_VALIDATION", NOW.minusSeconds(8));
+        TriageJob replay = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, NOW.minusSeconds(5));
+        replay.setReplayedFromJobId(original.getId());
+        replay.claim(NOW.minusSeconds(4));
+        replay.complete(NOW.minusSeconds(1));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(invocations.findByTicketIds(any())).thenReturn(List.of(
+                invocation(ticketId, original.getEventId(), "groq", NOW.minusSeconds(9), NOW.minusSeconds(8)),
+                invocation(ticketId, replay.getEventId(), "gemini", NOW.minusSeconds(4), NOW.minusSeconds(2))));
+
+        OperationsOverview overview = service.overview(workspaceId);
+
+        assertThat(operation(overview, original).provider()).isEqualTo("groq");
+        assertThat(operation(overview, replay).provider()).isEqualTo("gemini");
+    }
+
+    @Test
+    void matchesInvocationsRecordedBeforeTheEventIdColumnByTheJobsLifetime() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageJob original = job(workspaceId, UUID.randomUUID(), ticketId);
+        original.claim(NOW.minusSeconds(9));
+        original.terminalFailure("SEMANTIC_VALIDATION", NOW.minusSeconds(8));
+        TriageJob replay = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, NOW.minusSeconds(5));
+        replay.claim(NOW.minusSeconds(4));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
+        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(invocations.findByTicketIds(any())).thenReturn(List.of(
+                invocation(ticketId, null, "groq", NOW.minusSeconds(9), NOW.minusSeconds(8))));
+
+        OperationsOverview overview = service.overview(workspaceId);
+
+        assertThat(operation(overview, original).provider()).isEqualTo("groq");
+        assertThat(operation(overview, replay).provider()).as("the replay has not called a provider yet").isNull();
+    }
+
+    private static OperationsOverview.RecentOperation operation(OperationsOverview overview, TriageJob job) {
+        return overview.recent().stream().filter(operation -> operation.jobId().equals(job.getId())).findFirst().orElseThrow();
+    }
+
+    private static ModelInvocation invocation(UUID ticketId, UUID eventId, String provider, Instant started, Instant ended) {
+        return ModelInvocation.from(new ModelInvocationRecord(ticketId, eventId, provider, provider + "-model", "triage-v1",
+                started, ended, java.time.Duration.between(started, ended).toMillis(), "SUCCESS", null, 10L, 5L));
+    }
+
+    @Test
     void limitsRecentActivityToTwentyNewestJobs() {
         UUID workspaceId = UUID.randomUUID();
         List<TriageJob> jobsInWorkspace = java.util.stream.IntStream.range(0, 25)

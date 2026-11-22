@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class TriageEngine {
     private static final String FALLBACK_WARNING = "AI provider result unavailable or invalid";
@@ -36,6 +37,14 @@ public final class TriageEngine {
     }
 
     public TriageDecision triage(TriageRequest request) {
+        return triage(request, null);
+    }
+
+    /**
+     * Triage for one queued job. The event id is stored on each model-invocation record, so the telemetry of a
+     * replayed job never relabels the job it replaced.
+     */
+    public TriageDecision triage(TriageRequest request, UUID eventId) {
         Objects.requireNonNull(request);
         RedactedTicket redacted = redactor.redact(request.subject(), request.message());
         Instant started = clock.instant();
@@ -44,12 +53,12 @@ public final class TriageEngine {
             ProviderTriageResult providerResult = providerCall.result();
             ValidatedProviderResult validated = validator.validate(providerResult, redacted, request.pack());
             Instant ended = clock.instant();
-            recordSafely(request, primaryProvider.providerName(), providerResult.modelVersion(), providerResult.promptVersion(), started, ended, "SUCCESS", null,
+            recordSafely(request, eventId, primaryProvider.providerName(), providerResult.modelVersion(), providerResult.promptVersion(), started, ended, "SUCCESS", null,
                     providerCall.inputTokens(), providerCall.outputTokens());
             return decision(request, validated.providerResult(), validated.reliabilitySignal(), DecisionSource.AI_VALIDATED);
         } catch (RuntimeException failure) {
             Instant ended = clock.instant();
-            recordSafely(request, primaryProvider.providerName(), primaryProvider.modelVersion(), primaryProvider.promptVersion(),
+            recordSafely(request, eventId, primaryProvider.providerName(), primaryProvider.modelVersion(), primaryProvider.promptVersion(),
                     started, ended, "FAILURE", safeErrorCode(failure), null, null);
             ProviderTriageResult fallbackResult = fallbackProvider.analyze(request, redacted).result();
             List<String> warnings = new ArrayList<>(fallbackResult.warnings());
@@ -72,12 +81,12 @@ public final class TriageEngine {
                 result.modelVersion(), result.promptVersion());
     }
 
-    private void recordSafely(TriageRequest request, String provider, String modelVersion, String promptVersion, Instant started, Instant ended,
+    private void recordSafely(TriageRequest request, UUID eventId, String provider, String modelVersion, String promptVersion, Instant started, Instant ended,
             String status, String errorCode, Long inputTokens, Long outputTokens) {
         try {
-            invocationRecorder.record(new ModelInvocationRecord(request.ticketId(), provider, modelVersion, promptVersion,
-                    started, ended, Math.max(0, Duration.between(started, ended).toMillis()), status, errorCode,
-                    inputTokens, outputTokens));
+            invocationRecorder.record(new ModelInvocationRecord(request.ticketId(), eventId, provider, modelVersion,
+                    promptVersion, started, ended, Math.max(0, Duration.between(started, ended).toMillis()), status,
+                    errorCode, inputTokens, outputTokens));
         } catch (RuntimeException ignored) {
             // Invocation persistence must not turn a valid triage decision into a provider fallback.
         }

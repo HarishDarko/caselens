@@ -2,6 +2,9 @@ package com.harishdarko.caselens.lambda;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
+import com.harishdarko.caselens.common.SensitiveDataSanitizer;
+import com.harishdarko.caselens.triage.CorrelationIds;
+import com.harishdarko.caselens.triage.QueueMessage;
 import com.harishdarko.caselens.triage.QueueMessageCodec;
 import com.harishdarko.caselens.triage.TriageWorker;
 import com.harishdarko.caselens.triage.WorkerResultStatus;
@@ -13,10 +16,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 public final class WorkerHandler implements RequestStreamHandler {
+    private static final Logger log = LoggerFactory.getLogger(WorkerHandler.class);
     private final ObjectMapper mapper;
     private final TriageWorker worker;
     private final QueueMessageCodec codec;
@@ -38,15 +44,32 @@ public final class WorkerHandler implements RequestStreamHandler {
         mapper.writeValue(output, Map.of("batchItemFailures", failures));
     }
 
+    /**
+     * Only a payload that cannot be decoded is dropped: retrying it can never succeed. Anything that goes wrong while
+     * processing a decoded message (a database error, a bug, an IllegalArgumentException from deeper code) is
+     * reported back as a batch item failure, so SQS redelivers it and, after maxReceiveCount, moves it to the DLQ
+     * where the alarm sees it, instead of acknowledging it silently.
+     */
     static List<Map<String, String>> retryableFailures(JsonNode records, QueueMessageCodec codec, TriageWorker worker) {
         List<Map<String, String>> failures = new ArrayList<>();
         for (JsonNode record : records) {
             String messageId = record.path("messageId").asText();
+            QueueMessage message;
             try {
-                var result = worker.process(codec.decode(record.path("body").asText()));
-                if (result.status() == WorkerResultStatus.RETRY) failures.add(Map.of("itemIdentifier", messageId));
+                message = codec.decode(record.path("body").asText());
             } catch (IllegalArgumentException malformedPayload) {
-                // Malformed messages are terminal and must not be retried forever.
+                log.warn("triage.malformed_message messageId={} reason={}", SensitiveDataSanitizer.text(messageId),
+                        SensitiveDataSanitizer.text(malformedPayload.getMessage()));
+                continue;
+            }
+            try {
+                var result = worker.process(message);
+                if (result.status() == WorkerResultStatus.RETRY) failures.add(Map.of("itemIdentifier", messageId));
+            } catch (RuntimeException processingFailure) {
+                log.warn("triage.worker_failed messageId={} eventId={} correlationId={} errorType={}",
+                        SensitiveDataSanitizer.text(messageId), message.eventId(), CorrelationIds.normalize(message.correlationId()),
+                        processingFailure.getClass().getSimpleName());
+                failures.add(Map.of("itemIdentifier", messageId));
             }
         }
         return failures;

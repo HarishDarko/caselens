@@ -47,6 +47,21 @@ class SqsWorkerPollerTest {
     }
 
     @Test
+    void leavesAMessageVisibleWhenProcessingThrows() {
+        String body = """
+                {"schemaVersion":1,"eventId":"%s","workspaceId":"%s","ticketId":"%s","correlationId":"corr"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        Message message = Message.builder().body(body).receiptHandle("receipt-error").build();
+        when(client.receiveMessage(any(ReceiveMessageRequest.class)))
+                .thenReturn(ReceiveMessageResponse.builder().messages(message).build());
+        when(worker.process(any(QueueMessage.class))).thenThrow(new IllegalArgumentException("thrown while processing"));
+
+        new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
+
+        verify(client, never()).deleteMessage(any(DeleteMessageRequest.class));
+    }
+
+    @Test
     void deletesMalformedPoisonMessagesWithoutCallingTheWorker() {
         Message message = Message.builder().body("{\"message\":\"ticket body\"}").receiptHandle("receipt-bad").build();
         when(client.receiveMessage(any(ReceiveMessageRequest.class)))

@@ -41,7 +41,7 @@ class PostgresMigrationIntegrationTest {
                 .load();
 
         flyway.migrate();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("7");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("8");
 
         try (Connection connection = DriverManager.getConnection(
                 POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -65,10 +65,18 @@ class PostgresMigrationIntegrationTest {
                     "SELECT column_name FROM information_schema.columns WHERE table_name = 'model_invocations'")) {
                 List<String> names = new ArrayList<>();
                 while (columns.next()) names.add(columns.getString(1));
-                assertThat(names).contains("ticket_id", "provider", "model_version", "prompt_version",
+                assertThat(names).contains("ticket_id", "event_id", "provider", "model_version", "prompt_version",
                         "started_at", "ended_at", "latency_ms", "status", "sanitized_error_code",
                         "input_tokens", "output_tokens");
                 assertThat(names).doesNotContain("raw_ticket", "request_body", "raw_response", "api_key");
+            }
+
+            // V8 is expand only: the previous application version inserts invocations without event_id.
+            try (ResultSet eventId = statement.executeQuery("SELECT is_nullable, column_default FROM information_schema.columns "
+                    + "WHERE table_name = 'model_invocations' AND column_name = 'event_id'")) {
+                assertThat(eventId.next()).isTrue();
+                assertThat(eventId.getString(1)).isEqualTo("YES");
+                assertThat(eventId.getString(2)).isNull();
             }
 
             try (ResultSet tables = statement.executeQuery(

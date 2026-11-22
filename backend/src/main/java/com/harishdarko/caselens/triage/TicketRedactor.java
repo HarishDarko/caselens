@@ -10,8 +10,17 @@ import java.util.regex.Pattern;
 public final class TicketRedactor {
     private static final Pattern EMAIL = Pattern.compile("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", Pattern.CASE_INSENSITIVE);
     private static final Pattern CARD = Pattern.compile("(?<!\\d)(?:\\d[ -]?){13,19}(?!\\d)");
+    /**
+     * A labelled identifier: the label, up to two optional descriptor words ("RFID card", "payment id number",
+     * "transaction id ref code"), an optional separator, then the identifier. The identifier must hold a digit, so a
+     * plain word after the label ("RFID card is rejected") is left alone, and the value after a descriptor
+     * ("RFID card 04A1B2C3D4") is the part that gets redacted.
+     */
     private static final Pattern LABELLED_TOKEN = Pattern.compile(
-            "(?i)\\b(payment\\s*id|transaction\\s*id|rfid)\\s*[:#-]?\\s*([A-Z0-9-]{4,})");
+            "(?i)\\b(payment\\s*id|transaction\\s*id|rfid)"
+            + "((?:\\s+(?:tokens?|cards?|badges?|numbers?|no\\.?|ref|reference|codes?|value)(?![A-Z0-9]))"
+            + "(?:\\s+(?:number|no\\.?|code|value)(?![A-Z0-9]))?)?"
+            + "\\s*[:#-]?\\s*((?=[A-Z0-9-]*[0-9])[A-Z0-9-]{4,})");
     private static final Pattern PHONE = Pattern.compile(
             "(?<!\\w)(?:\\+?1[\\s.-]?)?(?:\\(?\\d{3}\\)?[\\s.-]?)\\d{3}[\\s.-]?\\d{4}(?!\\w)");
 
@@ -29,7 +38,8 @@ public final class TicketRedactor {
             String label = match.group(1);
             String type = label.toLowerCase(Locale.ROOT).startsWith("transaction") ? "TRANSACTION_ID"
                     : label.toLowerCase(Locale.ROOT).startsWith("payment") ? "PAYMENT_ID" : "RFID";
-            return label + " " + state.placeholder(type, match.group(2));
+            String descriptor = match.group(2) == null ? "" : " " + match.group(2).strip().replaceAll("\\s+", " ");
+            return label + descriptor + " " + state.placeholder(type, match.group(3));
         });
         return replace(result, PHONE, match -> state.placeholder("PHONE", digitsOnly(match.group())));
     }

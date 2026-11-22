@@ -62,6 +62,38 @@ class LambdaHandlerContractTest {
     }
 
     @Test
+    void reportsProcessingErrorsForRedeliveryInsteadOfAcknowledgingThem() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        UUID illegalArgument = UUID.randomUUID();
+        UUID databaseDown = UUID.randomUUID();
+        UUID completed = UUID.randomUUID();
+        TriageWorker worker = mock(TriageWorker.class);
+        when(worker.process(any())).thenAnswer(invocation -> {
+            UUID eventId = ((com.harishdarko.caselens.triage.QueueMessage) invocation.getArgument(0)).eventId();
+            if (eventId.equals(illegalArgument)) throw new IllegalArgumentException("thrown deep inside processing");
+            if (eventId.equals(databaseDown)) throw new IllegalStateException("database unavailable");
+            return WorkerResult.ack();
+        });
+        JsonNode records = mapper.readTree("""
+                {"Records":[
+                  {"messageId":"iae-1","body":%s},
+                  {"messageId":"db-1","body":%s},
+                  {"messageId":"ok-1","body":%s},
+                  {"messageId":"malformed-1","body":"{}"}
+                ]}
+                """.formatted(body(mapper, illegalArgument), body(mapper, databaseDown), body(mapper, completed)))
+                .path("Records");
+
+        assertThat(WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker))
+                .containsExactly(Map.of("itemIdentifier", "iae-1"), Map.of("itemIdentifier", "db-1"));
+    }
+
+    private static String body(ObjectMapper mapper, UUID eventId) throws Exception {
+        return mapper.writeValueAsString("{\"schemaVersion\":1,\"eventId\":\"%s\",\"workspaceId\":\"%s\",\"ticketId\":\"%s\",\"correlationId\":\"corr\"}"
+                .formatted(eventId, UUID.randomUUID(), UUID.randomUUID()));
+    }
+
+    @Test
     void workerBootstrapsSpringDependenciesWhenLambdaConstructsTheHandler() {
         ObjectMapper mapper = new ObjectMapper();
         TriageWorker worker = mock(TriageWorker.class);

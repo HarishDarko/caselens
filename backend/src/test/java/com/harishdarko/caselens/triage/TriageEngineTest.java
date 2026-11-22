@@ -40,6 +40,19 @@ class TriageEngineTest {
     }
 
     @Test
+    void recordsTheJobsEventIdOnEachInvocation() {
+        AtomicReference<ModelInvocationRecord> invocation = new AtomicReference<>();
+        TriageEngine engine = new TriageEngine(new TicketRedactor(), new MockTriageProvider(), new RulesFallbackProvider(),
+                new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer(), invocation::set, Clock.systemUTC());
+        UUID eventId = UUID.randomUUID();
+
+        engine.triage(request, eventId);
+
+        assertThat(invocation.get().eventId()).isEqualTo(eventId);
+        assertThat(invocation.get().ticketId()).isEqualTo(request.ticketId());
+    }
+
+    @Test
     void doesNotTurnAValidDecisionIntoFallbackWhenInvocationRecordingFails() {
         TriageEngine engine = new TriageEngine(new TicketRedactor(), new MockTriageProvider(), new RulesFallbackProvider(),
                 new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer(), ignored -> {

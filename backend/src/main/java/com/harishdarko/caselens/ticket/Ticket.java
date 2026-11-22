@@ -35,6 +35,9 @@ public class Ticket {
         Objects.requireNonNull(message, "Ticket message is required");
         this.channel = Objects.requireNonNull(channel, "Ticket channel is required");
         Objects.requireNonNull(now, "Ticket timestamp is required");
+        if (subject.isBlank() || message.isBlank()) {
+            throw new IllegalArgumentException("Ticket subject and message must not be blank");
+        }
         if (subject.length() < 5 || subject.length() > 160) {
             throw new IllegalArgumentException("Ticket subject must contain 5 to 160 characters");
         }

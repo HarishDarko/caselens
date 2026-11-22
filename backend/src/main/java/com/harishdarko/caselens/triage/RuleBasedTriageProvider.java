@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 
 final class RuleBasedTriageProvider implements TriageProvider {
+    private static final int MIN_QUOTE_LENGTH = 3;
+    private static final int MAX_QUOTE_LENGTH = 400;
     private final String modelVersion;
     private final String promptVersion;
 
@@ -53,10 +55,23 @@ final class RuleBasedTriageProvider implements TriageProvider {
 
     private List<EvidenceItem> evidence(String subject, String message, String text, Category category) {
         List<EvidenceItem> result = new ArrayList<>();
-        result.add(new EvidenceItem(subject, "The subject identifies the reported support impact."));
-        String sentence = message.split("(?<=[.!?])\\s+", 2)[0];
-        if (sentence.length() >= 3 && !sentence.equals(subject)) result.add(new EvidenceItem(sentence, "The message provides direct operational evidence."));
+        String subjectQuote = quote(subject);
+        if (subjectQuote != null) result.add(new EvidenceItem(subjectQuote, "The subject identifies the reported support impact."));
+        String sentence = quote(message.strip().split("(?<=[.!?])\\s+", 2)[0]);
+        if (sentence != null && !sentence.equals(subjectQuote)) {
+            result.add(new EvidenceItem(sentence, "The message provides direct operational evidence."));
+        }
         return result.subList(0, Math.min(result.size(), 2));
+    }
+
+    /**
+     * An evidence quote: the text trimmed and cut to the EvidenceItem limit. Cutting keeps a contiguous run of the
+     * ticket text, so the quote stays verbatim. Returns null for text too short to quote, which is skipped.
+     */
+    private static String quote(String value) {
+        String trimmed = value.strip();
+        if (trimmed.length() > MAX_QUOTE_LENGTH) trimmed = trimmed.substring(0, MAX_QUOTE_LENGTH).stripTrailing();
+        return trimmed.length() < MIN_QUOTE_LENGTH ? null : trimmed;
     }
 
     private List<String> policies(PackRules pack, String text, Category category) {

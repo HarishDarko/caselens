@@ -2,6 +2,7 @@ package com.harishdarko.caselens.triage;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 
@@ -49,7 +50,7 @@ class FailureRecoveryServiceTest {
         TriageJob synthetic = failedJob(workspaceId, "SYNTHETIC_PROVIDER_TIMEOUT");
         when(jobs.findByIdAndWorkspaceId(automatic.getId(), workspaceId)).thenReturn(Optional.of(automatic));
         when(jobs.findByIdAndWorkspaceId(synthetic.getId(), workspaceId)).thenReturn(Optional.of(synthetic));
-        when(requests.request(workspaceId, synthetic.getTicketId(), "corr")).thenReturn(synthetic.snapshot());
+        when(requests.replay(workspaceId, synthetic.getTicketId(), synthetic.getId(), "corr")).thenReturn(synthetic.snapshot());
         FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
                 java.time.Clock.systemUTC());
 
@@ -58,7 +59,27 @@ class FailureRecoveryServiceTest {
                 .hasMessage("Retryable jobs remain owned by SQS");
 
         service.retry(workspaceId, synthetic.getId(), "corr");
-        verify(requests).request(workspaceId, synthetic.getTicketId(), "corr");
+        // Recovery uses the replay path; the triage button's request() would return the failed job unchanged.
+        verify(requests).replay(workspaceId, synthetic.getTicketId(), synthetic.getId(), "corr");
+        verify(requests, never()).request(any(), any(), any());
+        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(automatic.getId()), any());
+    }
+
+    @Test
+    void replaysATerminalFailureThroughTheReplayPath() {
+        UUID workspaceId = UUID.randomUUID();
+        TriageJob terminal = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                Instant.now());
+        terminal.claim(Instant.now());
+        terminal.terminalFailure("INVALID_EVENT", Instant.now());
+        when(jobs.findByIdAndWorkspaceId(terminal.getId(), workspaceId)).thenReturn(Optional.of(terminal));
+        when(requests.replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr")).thenReturn(terminal.snapshot());
+
+        new FailureRecoveryService(jobs, requests, results, invocations, java.time.Clock.systemUTC())
+                .retry(workspaceId, terminal.getId(), "corr");
+
+        verify(requests).replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr");
+        verify(requests, never()).request(any(), any(), any());
     }
 
     private static TriageJob failedJob(UUID workspaceId, String errorCode) {
