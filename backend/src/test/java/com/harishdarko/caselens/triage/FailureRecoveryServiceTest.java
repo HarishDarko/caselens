@@ -107,6 +107,40 @@ class FailureRecoveryServiceTest {
         verify(requests).replay(workspaceId, abandoned.getTicketId(), abandoned.getId(), "corr");
     }
 
+    @Test
+    void replaysAQueuedOrProcessingJobOnlyOnceItIsStranded() {
+        UUID workspaceId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-22T12:00:00Z");
+        TriageJob freshQueued = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minusSeconds(120));
+        TriageJob liveProcessing = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minusSeconds(900));
+        liveProcessing.claim(now.minusSeconds(30));
+        TriageJob strandedQueued = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
+        TriageJob strandedProcessing = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                now.minusSeconds(1800));
+        strandedProcessing.claim(now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
+        for (TriageJob job : java.util.List.of(freshQueued, liveProcessing, strandedQueued, strandedProcessing)) {
+            when(jobs.findByIdAndWorkspaceId(job.getId(), workspaceId)).thenReturn(Optional.of(job));
+        }
+        when(requests.replay(any(), any(), any(), any())).thenReturn(strandedQueued.snapshot());
+        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
+                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> service.retry(workspaceId, freshQueued.getId(), "corr"))
+                .hasMessage("Active triage jobs remain owned by SQS");
+        assertThatThrownBy(() -> service.retry(workspaceId, liveProcessing.getId(), "corr"))
+                .hasMessage("Active triage jobs remain owned by SQS");
+        service.retry(workspaceId, strandedQueued.getId(), "corr");
+        service.retry(workspaceId, strandedProcessing.getId(), "corr");
+
+        verify(requests).replay(workspaceId, strandedQueued.getTicketId(), strandedQueued.getId(), "corr");
+        verify(requests).replay(workspaceId, strandedProcessing.getTicketId(), strandedProcessing.getId(), "corr");
+        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(freshQueued.getId()), any());
+        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(liveProcessing.getId()), any());
+    }
+
     private static TriageJob failedJob(UUID workspaceId, String errorCode) {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
                 Instant.now());

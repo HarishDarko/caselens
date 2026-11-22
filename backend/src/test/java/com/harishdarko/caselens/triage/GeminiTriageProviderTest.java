@@ -88,6 +88,44 @@ class GeminiTriageProviderTest {
                 .isEqualTo("RESPONSE_TOO_LARGE");
     }
 
+    @Test
+    void skipsTheRetryWhenTooLittleOfTheCallBudgetIsLeft() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/interactions", exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 503, "slow and unavailable");
+        });
+        server.start();
+        // The first attempt "takes" 40 s of the 45 s budget, so 3 s would be left for a retry: not enough.
+        AtomicInteger clockReads = new AtomicInteger();
+        GeminiTriageProvider provider = new GeminiTriageProvider(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
+                "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(30), () -> 0, GeminiTriageProvider.CALL_BUDGET,
+                () -> clockReads.getAndIncrement() < 2 ? 0L : Duration.ofSeconds(40).toNanos());
+
+        assertThatThrownBy(() -> provider.analyze(request(), new RedactedTicket(
+                "Payment accepted", "Payment accepted but session never started.")))
+                .isInstanceOf(ProviderCallException.class)
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_503");
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void cutsEachAttemptTimeoutToTheRemainingCallBudget() {
+        long[] now = {0};
+        GeminiTriageProvider provider = new GeminiTriageProvider(URI.create("http://localhost:1/v1/interactions"),
+                "secret-key", "gemini-3.5-flash", HttpClient.newHttpClient(), new ObjectMapper(), Duration.ofSeconds(30),
+                () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> now[0]);
+
+        assertThat(provider.attemptTimeout(0)).isEqualTo(Duration.ofSeconds(30));
+        now[0] = Duration.ofSeconds(32).toNanos();
+        // 45 s budget - 32 s spent - 2 s connect allowance: the retry gets 11 s, so the whole call stays under 60 s.
+        assertThat(provider.attemptTimeout(0)).isEqualTo(Duration.ofSeconds(11));
+    }
+
     private GeminiTriageProvider provider() {
         return new GeminiTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
                 "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),

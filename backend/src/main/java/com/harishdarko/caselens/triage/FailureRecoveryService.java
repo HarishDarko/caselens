@@ -22,6 +22,7 @@ public class FailureRecoveryService {
      * 7.5 minutes, plus margin. A RETRYABLE_FAILURE job not updated for this long has had its message moved to the
      * DLQ, so a reviewer may replay it. If an old message still turns up later, the worker sees the replacement and
      * acknowledges it as a duplicate (TriageWorker.claim), and the active-job unique index blocks a reclaim anyway.
+     * The same window marks a QUEUED or PROCESSING job as stranded (see stranded): its message is in the DLQ.
      */
     static final Duration SQS_REDELIVERY_WINDOW = Duration.ofMinutes(10);
     private final TriageJobRepository jobs;
@@ -135,6 +136,12 @@ public class FailureRecoveryService {
         if (job.getStatus() == TriageJobStatus.COMPLETED) {
             throw new IllegalArgumentException("Completed triage jobs cannot be retried");
         }
+        if (job.getStatus() == TriageJobStatus.QUEUED || job.getStatus() == TriageJobStatus.PROCESSING) {
+            // A stranded job: its message went to the DLQ (see TriageJobRepository.findRecoverableFailures). The
+            // replay closes it under the ticket lock and queues one replacement.
+            if (!stranded(job)) throw new IllegalArgumentException("Active triage jobs remain owned by SQS");
+            return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
+        }
         if (job.getStatus() != TriageJobStatus.RETRYABLE_FAILURE
                 && job.getStatus() != TriageJobStatus.TERMINAL_FAILURE) {
             throw new IllegalArgumentException("Only failed triage jobs can be retried");
@@ -145,5 +152,21 @@ public class FailureRecoveryService {
             throw new IllegalArgumentException("Retryable jobs remain owned by SQS");
         }
         return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
+    }
+
+    /**
+     * A QUEUED or PROCESSING job not updated for the whole redelivery window. Every claim and every final write
+     * updates the job, and a PROCESSING job's lease (TriageJobRepository.CLAIM_LEASE) is far shorter than the window,
+     * so no worker holds it and SQS has no delivery of its message left.
+     */
+    static boolean stranded(TriageJob job, Instant now) {
+        boolean active = job.getStatus() == TriageJobStatus.QUEUED || job.getStatus() == TriageJobStatus.PROCESSING;
+        if (!active || !job.getUpdatedAt().isBefore(now.minus(SQS_REDELIVERY_WINDOW))) return false;
+        return job.getStatus() == TriageJobStatus.QUEUED || job.getStartedAt() == null
+                || job.getStartedAt().isBefore(now.minus(TriageJobRepository.CLAIM_LEASE));
+    }
+
+    private boolean stranded(TriageJob job) {
+        return stranded(job, clock.instant());
     }
 }
