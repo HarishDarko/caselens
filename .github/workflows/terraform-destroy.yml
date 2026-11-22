@@ -19,7 +19,9 @@ jobs:
   destroy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
+    # Its own environment: a required reviewer approves every run, only main may deploy to it, and the destroy
+    # role trusts only this environment's OIDC subject (the deploy job's "production" subject cannot assume it).
+    environment: production-destroy
     permissions:
       id-token: write
       contents: read

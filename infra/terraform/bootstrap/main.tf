@@ -68,10 +68,11 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
 }
 
 
-# The destroy job runs in the protected GitHub environment, so its OIDC subject is
-# repo:<owner>/<repo>:environment:<name>, the same form the deploy role in ../main.tf trusts.
-# A branch subject (repo:...:ref:refs/heads/...) is never sent for a job with an environment, and trusting
-# one would let a workflow skip the environment's approval.
+# Only the destroy job may assume this role. It runs in its own GitHub environment (production-destroy, with a
+# required reviewer and main as the only deployment branch), so its OIDC subject is
+# repo:<owner>/<repo>:environment:production-destroy. The deploy job runs in "production" and sends a different
+# subject, so it cannot assume this role. A branch subject (repo:...:ref:refs/heads/...) is never sent for a job
+# with an environment, and trusting one would let a workflow skip the reviewer.
 resource "aws_iam_role" "github_destroy" {
   name = local.destroy_role_name
 
@@ -84,7 +85,7 @@ resource "aws_iam_role" "github_destroy" {
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:${var.github_environment}"
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:environment:${var.destroy_environment}"
         }
       }
     }]

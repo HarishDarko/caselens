@@ -174,8 +174,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: [backend, frontend, terraform, security, container]
     runs-on: ubuntu-latest
-    # Three SnapStart versions are published one after another, and each can take a few minutes to become Active.
-    timeout-minutes: 40
+    # Worst case, in minutes: per function, function-updated-v2 waits up to 5 (300 checks a second apart) and the
+    # version State poll up to 8 (48 x 10 s), about 13.5 with the API calls, so 3 x 13.5 = 40.5 for three functions.
+    # The CloudFront invalidation waiter adds up to 10 (30 x 20 s), the site check up to 2, and the downloads, S3
+    # sync and asset cleanup about 3. That is about 55.5, so 60 leaves a margin without hiding a hung step for long.
+    timeout-minutes: 60
     environment: production
     # One production deploy at a time, and never cancelled halfway: a cancelled deploy could leave a new frontend
     # in front of an old API. A second dispatch waits for the first one to finish.
@@ -274,7 +277,11 @@ jobs:
               --s3-key artifacts/caselens-lambda.jar \
               --s3-object-version "$version" \
               --publish --query Version --output text)"
-            test -n "$published" && test "$published" != "None" && test "$published" != '$LATEST'
+            # An && chain does not stop a bash -e step when an early test fails, so check explicitly.
+            if [ -z "$published" ] || [ "$published" = "None" ] || [ "$published" = '$LATEST' ]; then
+              echo "::error::Publishing $function returned no version number (got '${published}')."
+              exit 1
+            fi
             aws lambda wait function-updated-v2 --function-name "$function"
             # A SnapStart version takes a few minutes to become Active. Failed (for example an init or migration
             # error) stops the deploy, so that version is never made a live alias target. GetFunction is the read

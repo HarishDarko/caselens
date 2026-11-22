@@ -29,8 +29,13 @@ variable "github_repository" {
   default = "HarishDarko/caselens"
 }
 
-variable "github_environment" {
-  description = "Protected GitHub environment whose jobs may assume the destroy role (the destroy workflow runs in it)."
+variable "destroy_environment" {
+  description = "GitHub environment used only by the destroy workflow. It must differ from the deploy environment."
   type        = string
-  default     = "production"
+  default     = "production-destroy"
+
+  validation {
+    condition     = var.destroy_environment != "production"
+    error_message = "destroy_environment must not be the deploy environment (production), or the deploy job could assume the destroy role."
+  }
 }
