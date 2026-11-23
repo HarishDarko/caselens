@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
 
@@ -22,11 +22,15 @@ const sessionOptions = {
 }
 
 type PollStep = 'QUEUED' | 'PROCESSING' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE' | 'SYNTHETIC_FAILURE' | 429
-type BackendOptions = { syntheticFailure?: boolean; pendingProcessingPolls?: number; pollSteps?: PollStep[]; industriesStatus?: number; sessionStatuses?: number[]; laterEvaluation?: () => Promise<Response> }
+type BackendOptions = { syntheticFailure?: boolean; pendingProcessingPolls?: number; pollSteps?: PollStep[]; industriesStatus?: number; industries?: unknown; sessionStatuses?: number[]; laterEvaluation?: () => Promise<Response> }
 
-function pendingJob(status: string, lastErrorCode: string | null = null) {
-  return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status, attemptCount: status === 'QUEUED' ? 0 : 1, startedAt: null, completedAt: null, lastErrorCode, attempts: [] }, result: null })
+function pendingJob(status: string, lastErrorCode: string | null = null, ticketId = 'ticket-a102') {
+  return response({ job: { id: 'job-1', eventId: 'event-1', ticketId, status, attemptCount: status === 'QUEUED' ? 0 : 1, startedAt: null, completedAt: null, lastErrorCode, attempts: [] }, result: null })
 }
+
+// A result as the API sends it before recorded results: no recorded, fallbackReason, labels or policies.
+const legacyResult = { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [{ code: 'URGENCY_CRITICAL', points: 55, explanation: 'Critical urgency baseline' }, { code: 'SLA_RISK_HIGH', points: 20, explanation: 'High risk of breaching the response target' }], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' }
+const completedJob = { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }
 
 // The session POST may carry a query string (?seed=true asks the API to seed the workspace in the same call).
 function isSessionPost(url: string, init?: RequestInit) {
@@ -41,7 +45,7 @@ function mockBackend(options: BackendOptions = {}) {
   const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (input === undefined) return response({})
     const url = String(input)
-    if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesStatus ? response({ detail: 'Unavailable' }, options.industriesStatus) : response(sessionOptions)
+    if (url.endsWith('/api/demo/session') && (init?.method ?? 'GET') === 'GET') return options.industriesStatus ? response({ detail: 'Unavailable' }, options.industriesStatus) : response(options.industries ?? sessionOptions)
     if (isSessionPost(url, init) && sessionStatuses.length) return response({ detail: 'Request failed with status 429' }, sessionStatuses.shift())
     if (isSessionPost(url, init)) return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z' })
     if (url.endsWith('/api/demo/reset')) return response({ seeded: 9 })
@@ -55,8 +59,8 @@ function mockBackend(options: BackendOptions = {}) {
       if (step === 'SYNTHETIC_FAILURE') return pendingJob('RETRYABLE_FAILURE', 'SYNTHETIC_PROVIDER_TIMEOUT')
       return pendingJob(String(step), step === 'RETRYABLE_FAILURE' || step === 'TERMINAL_FAILURE' ? 'PROVIDER_TIMEOUT' : null)
     }
-    if (url.includes('/processing') && pendingPolls > 0) { pendingPolls -= 1; return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, result: null }) }
-    if (url.includes('/processing')) return response({ job: { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [{ id: 'attempt-1', jobId: 'job-1', attemptNumber: 1, status: 'COMPLETED', startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', errorCode: null }] }, result: { id: 'result-1', ticketId: 'ticket-a102', category: 'CHARGING_SESSION', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'Payment was accepted but no session started.', evidence: [{ quote: 'The driver was charged', meaning: 'The ticket reports a payment without a session start.' }], policyIds: ['payment-follow-up'], explanation: 'The payment signal and missing session start are the strongest evidence.', recommendedActions: ['Confirm the authorization outcome.'], suggestedReply: 'We are reviewing the session start.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 82, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'openai/gpt-oss-20b', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
+    if (url.includes('/processing') && pendingPolls > 0) { pendingPolls -= 1; return pendingJob('QUEUED') }
+    if (url.includes('/processing')) return response({ job: completedJob, result: legacyResult })
     if (url.includes('/triage')) return response({ id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }, 202)
     if (url.includes('/feedback')) return response({ id: 'feedback-1' }, 201)
     if (url.endsWith('/api/evaluation') && options.laterEvaluation && evaluationCalls++ > 0) return options.laterEvaluation()
@@ -73,20 +77,44 @@ function mockBackend(options: BackendOptions = {}) {
 
 beforeEach(() => mockBackend())
 
+const LAUNCH = /^Open the .+ queue$/
 // The launch button waits for the industry list, so wait until it is enabled before clicking it.
 async function launch() {
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: LAUNCH })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: LAUNCH }))
 }
+async function openInbox() {
+  await launch()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Inbox' })).toBeInTheDocument())
+}
+const row = (subject: string | RegExp) => within(document.querySelector<HTMLElement>('.queue')!).getByRole('button', { name: typeof subject === 'string' ? new RegExp(subject) : subject })
+const detail = () => within(document.querySelector<HTMLElement>('.detail')!)
+const PAYMENT = 'Payment accepted but charging did not start'
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-test('renders the honest CaseLens demo shell', async () => {
+test('renders the honest CaseLens landing, with the byline and no sign-in', async () => {
   render(<App />)
-  expect(screen.getByRole('heading', { name: 'CaseLens' })).toBeInTheDocument()
-  expect(screen.getByText('Demo environment')).toBeInTheDocument()
-  expect(screen.getByText(/No account is required/i)).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled())
+  expect(screen.getByRole('heading', { name: 'Support triage that shows its evidence' })).toBeInTheDocument()
+  expect(screen.getByText(/No sign-in, deleted after 24 hours/)).toBeInTheDocument()
+  expect(screen.getByText('Synthetic tickets only.')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Open the SaaS support queue' })).toBeEnabled())
   expect(screen.queryByLabelText(/passcode|password/i)).not.toBeInTheDocument()
+})
+
+test('shows a recorded example for the picked industry beside the launch button', async () => {
+  render(<App />)
+  expect(screen.getByText(/Example: a recorded result from the SaaS support queue/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('radio', { name: /EV charging/ }))
+
+  expect(screen.getByText(/Example: a recorded result from the EV charging queue/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open the EV charging queue' })).toBeInTheDocument()
+  const card = document.querySelector('.preview-card')!
+  expect(card.querySelectorAll('mark.ev').length).toBe(3)
+  expect(card).toHaveTextContent('3 of 3 quotes found word for word in the ticket')
+  fireEvent.click(screen.getByRole('radio', { name: /E-commerce/ }))
+  expect(screen.getByRole('button', { name: 'Open the e-commerce queue' })).toBeInTheDocument()
 })
 
 test('explains a possible serverless cold start while opening the workspace', async () => {
@@ -96,23 +124,23 @@ test('explains a possible serverless cold start while opening the workspace', as
 
   await launch()
 
-  expect(screen.getByRole('button', { name: 'Creating isolated workspace...' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Opening the SaaS support queue...' })).toBeDisabled()
   expect(screen.getByRole('status')).toHaveTextContent('First access may take up to 20 seconds while serverless services resume.')
 })
 
-test('opens an isolated reviewer workspace from the public launch screen', async () => {
+test('opens a reviewer workspace, without the avatar, and keeps the stack in How it\'s built', async () => {
   render(<App />)
 
-  await launch()
+  await openInbox()
 
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
-  expect(screen.getByText('HD', { selector: '.avatar' })).toBeInTheDocument()
-  expect(screen.queryByText('HV', { selector: '.avatar' })).not.toBeInTheDocument()
-  expect(screen.getByText('Isolated demo workspace')).toBeInTheDocument()
-  expect(screen.getByText('Local review')).toBeInTheDocument()
-  expect(screen.getByText('Neon PostgreSQL')).toBeInTheDocument()
-  expect(screen.getByText('LocalStack SQS')).toBeInTheDocument()
-  expect(screen.getByText('Groq')).toBeInTheDocument()
+  expect(document.querySelector('.avatar')).toBeNull()
+  expect(screen.getByText('Demo workspace', { selector: '.scope-label' })).toBeInTheDocument()
+  expect(screen.queryByText('Groq')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: "How it's built" }))
+  expect(screen.getByRole('heading', { name: "How it's built" })).toBeInTheDocument()
+  expect(screen.getByText('This workspace runs on a local review stack: Neon Postgres, LocalStack SQS and Groq.')).toBeInTheDocument()
+  expect(within(screen.getByRole('dialog')).getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
+  expect(screen.getAllByRole('link', { name: 'Harish Darko' }).length).toBe(2)
 })
 
 test('opens the reviewer workspace from the real session and ticket endpoints', async () => {
@@ -121,97 +149,90 @@ test('opens the reviewer workspace from the real session and ticket endpoints', 
 
   await launch()
 
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await waitFor(() => expect(row(PAYMENT)).toBeInTheDocument())
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST' }))
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets?page=0&size=50'), expect.anything())
 })
 
-test('lists the industries and sends the picked industry when the workspace opens', async () => {
+test('lists the industries, starts on SaaS support, and sends the picked industry when the workspace opens', async () => {
   const fetchMock = mockBackend()
   render(<App />)
 
-  expect(await screen.findByRole('radio', { name: /EV charging/ })).toBeChecked()
-  fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
-  await launch()
+  expect(await screen.findByRole('radio', { name: /SaaS support/ })).toBeChecked()
+  fireEvent.click(screen.getByRole('radio', { name: /EV charging/ }))
+  await openInbox()
 
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => isSessionPost(String(url), init))
-  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
-  expect(screen.getByText('Industry: SaaS support')).toBeInTheDocument()
-  expect(screen.getByText('Whole team locked out after an SSO change')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Load ticket: Whole team locked out after an SSO change' })).toBeEnabled()
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
+  expect(screen.getByText('EV charging', { selector: '.scope-name' })).toBeInTheDocument()
 })
 
-test('still opens an EV charging workspace when the industry list does not load', async () => {
+test('still opens a workspace from the bundled list when the industry list does not load', async () => {
   const fetchMock = mockBackend({ industriesStatus: 503 })
   render(<App />)
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.anything()))
-  expect(screen.getByRole('radio', { name: /EV charging/ })).toBeChecked()
-  await launch()
+  expect(screen.getByRole('radio', { name: /SaaS support/ })).toBeChecked()
+  await openInbox()
 
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => isSessionPost(String(url), init))
-  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
-  expect(screen.getByText('Every charger at the demo site appears offline')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' })).toBeEnabled()
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
+  expect(row(PAYMENT)).toBeInTheDocument()
 })
 
 test('lets the visitor pick and launch at once, before a cold API answers the industry list', async () => {
-  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/api/demo/session') && !init?.method
-    ? new Promise<Response>(() => undefined) : new Promise<Response>(() => undefined))
+  const fetchMock = vi.fn(() => new Promise<Response>(() => undefined))
   vi.stubGlobal('fetch', fetchMock)
   render(<App />)
 
-  expect(screen.getByRole('button', { name: 'Launch live demo' })).toBeEnabled()
-  expect(screen.getByRole('radio', { name: /EV charging/ })).toBeChecked()
-  fireEvent.click(screen.getByRole('radio', { name: /SaaS support/ }))
-  fireEvent.click(screen.getByRole('button', { name: 'Launch live demo' }))
+  expect(screen.getByRole('button', { name: 'Open the SaaS support queue' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('radio', { name: /EV charging/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open the EV charging queue' }))
 
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'saas-support' }) })))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/session'), expect.objectContaining({ method: 'POST', body: JSON.stringify({ industry: 'ev-charging' }) })))
   expect(screen.queryByText(/Loading the list of industries/)).not.toBeInTheDocument()
 })
 
 test('uses the list from the API when it differs from the bundled one', async () => {
+  mockBackend({ industries: { ...sessionOptions, industries: [...sessionOptions.industries, { id: 'telecom', name: 'Telecom', featuredScenario: { key: 'x', label: 'X' }, scenarios: [] }] } })
   render(<App />)
 
-  expect(screen.getAllByText('9 demo tickets').length).toBe(3)
-  await waitFor(() => expect(screen.getAllByText('1 demo tickets').length).toBe(3))
+  expect(screen.queryByRole('radio', { name: /Telecom/ })).not.toBeInTheDocument()
+  expect(await screen.findByRole('radio', { name: /Telecom/ })).toBeInTheDocument()
+  expect(screen.getByRole('radio', { name: /SaaS support/ })).toBeChecked()
 })
 
-test('gives the full EV journey when the API does not know the industry list yet (405 during a deploy)', async () => {
+test('gives the full journey when the API does not know the industry list yet (405 during a deploy)', async () => {
   mockBackend({ industriesStatus: 405 })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: /Load ticket: Every charger at the demo site appears offline/i }))
+  fireEvent.click(row(PAYMENT))
 
-  await waitFor(() => expect(screen.getAllByText('Every charger at the demo site appears offline').length).toBeGreaterThan(1))
-  expect(screen.getByRole('button', { name: /Review CL-A104/i })).toBeInTheDocument()
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(detail().getByText('Charging session', { selector: '.fact' })).toBeInTheDocument()
 })
 
-test('loads a synthetic scenario into the inbox and records reviewer feedback', async () => {
+test('runs live triage on an opened ticket, shows the real trace, and records an override (older API)', async () => {
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: /Load ticket: Every charger at the demo site appears offline/i }))
-  await waitFor(() => expect(screen.getAllByText('Every charger at the demo site appears offline').length).toBeGreaterThan(0))
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
-  expect(screen.getByRole('heading', { name: 'Why this ticket is here' })).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Durable processing trace' })).toBeInTheDocument())
-  expect(screen.getByText('Outbox committed')).toBeInTheDocument()
-  expect(screen.getByText('Worker completed')).toBeInTheDocument()
-  expect(screen.getByText('Groq validated')).toBeInTheDocument()
-  expect(screen.getByText('event-1')).toBeInTheDocument()
-  expect(screen.getByText('job-1')).toBeInTheDocument()
-  expect(screen.getByText('1 attempt')).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The synthetic case indicates higher customer impact.' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Correction saved. Evaluation metrics updated.'))
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(document.querySelector('.msg mark.ev')).toHaveTextContent('The driver was charged')
+  fireEvent.click(detail().getByRole('button', { name: /Outbox → SQS → Worker/ }))
+  expect(detail().getByText('event-1')).toBeInTheDocument()
+  expect(detail().getByText('job-1')).toBeInTheDocument()
+  expect(detail().getByText('1 attempt')).toBeInTheDocument()
+  // An API from before Accept records corrections only, so the page does not offer Accept there.
+  expect(detail().queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument()
+
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  fireEvent.change(detail().getByLabelText('Reason'), { target: { value: 'The synthetic case indicates higher customer impact.' } })
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(detail().getByText('Overridden.')).toBeInTheDocument())
+  expect(screen.getByRole('status')).toHaveTextContent('Override logged. AI Critical, you High.')
 })
 
 test('keeps waiting through a slow worker start and explains the delay', async () => {
@@ -219,17 +240,18 @@ test('keeps waiting through a slow worker start and explains the delay', async (
   try {
     mockBackend({ pendingProcessingPolls: 40 })
     render(<App />)
-    await launch()
-    await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+    await openInbox()
 
-    fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+    fireEvent.click(row(PAYMENT))
     await vi.advanceTimersByTimeAsync(12_000)
-    expect(screen.getByRole('status')).toHaveTextContent('Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.')
+    expect(screen.getByRole('status')).toHaveTextContent('Waking the triage worker. The first live run after a quiet spell can take up to a minute.')
+    expect(document.querySelector('.waking')).toHaveTextContent(/^Waking the triage worker\./)
+    expect(document.querySelector('.stage-note')).toBeNull()
 
     await vi.advanceTimersByTimeAsync(60_000)
-    await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+    await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Waiting for the triage worker/)).not.toBeInTheDocument()
+    expect(document.querySelector('.waking')).toBeNull()
   } finally {
     vi.useRealTimers()
   }
@@ -238,10 +260,9 @@ test('keeps waiting through a slow worker start and explains the delay', async (
 async function openTicketWithFakeTimers(backend: BackendOptions) {
   const fetchMock = mockBackend(backend)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  fireEvent.click(row(PAYMENT))
   return fetchMock
 }
 
@@ -255,39 +276,42 @@ test('checks the triage status once a second, not four times', async () => {
 test('says in plain words what the worker is doing, and never "local worker"', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['QUEUED', 'QUEUED', 'PROCESSING', 'PROCESSING'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(100) })
-  expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.')
+  expect(document.querySelector('.stage-note')).toHaveTextContent('Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.')
+  expect(row(PAYMENT)).toHaveTextContent('Queued')
 
   await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
-  expect(document.querySelector('.lead-copy')).toHaveTextContent('The AI model is reading the ticket. This usually takes a few seconds.')
+  expect(document.querySelector('.stage-note')).toHaveTextContent('The AI model is reading the ticket. This usually takes a few seconds.')
+  expect(row(PAYMENT)).toHaveTextContent('Reading and checking')
   expect(screen.queryByText(/local worker/i)).not.toBeInTheDocument()
 
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
-  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
 })
 
 test('keeps waiting when one status check is throttled', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['QUEUED', 429] })
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
 
-  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 test('keeps waiting while the worker retries a provider that did not answer', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['PROCESSING', 'RETRYABLE_FAILURE', 'RETRYABLE_FAILURE'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(1_500) })
-  expect(document.querySelector('.lead-copy')).toHaveTextContent('The AI model did not answer. The worker tries again by itself in about a minute.')
+  expect(document.querySelector('.stage-note')).toHaveTextContent('The AI model did not answer. The worker tries again by itself in about a minute.')
 
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
-  await waitFor(() => expect(screen.getByText('Groq validated')).toBeInTheDocument())
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
-test('says where to go when triage fails', async () => {
+test('says where to go when triage fails, on that ticket', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['TERMINAL_FAILURE'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(500) })
 
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.'))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.'))
+  expect(row(PAYMENT)).toHaveTextContent('Triage failed')
   expect(screen.queryByText(/terminal failure/i)).not.toBeInTheDocument()
 })
 
@@ -318,36 +342,37 @@ test('says plainly when the service cannot be reached', async () => {
   expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
 })
 
-test('requires a reviewer note before saving a correction', async () => {
+test('requires a reason before saving an override on an API that records corrections only', async () => {
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled())
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
 
-  expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
+  expect(detail().getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(detail().getByText('Add a reason to save.')).toBeInTheDocument()
 })
 
-test('launches the fixed synthetic retry demonstration', async () => {
+test('runs the controlled retry demo from Operations and keeps its ticket out of the inbox', async () => {
   const fetchMock = mockBackend()
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
-  expect(screen.getByText('Controlled retry demonstration')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run controlled retry demo' })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
 
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-    expect.stringContaining('/api/demo/scenarios/provider-retry-demo'),
-    expect.objectContaining({ method: 'POST' }),
-  ))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a105/triage'), expect.objectContaining({ method: 'POST' })))
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/scenarios/provider-retry-demo'), expect.objectContaining({ method: 'POST' }))
+  expect(screen.getByRole('heading', { name: 'Operations' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+  expect(screen.queryByText('Synthetic provider timeout for retry review')).not.toBeInTheDocument()
 })
 
 test('shows measured evaluation and operational failure views', async () => {
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
   expect(screen.getByRole('heading', { name: 'Evaluation signal' })).toBeInTheDocument()
@@ -359,8 +384,7 @@ test('shows measured evaluation and operational failure views', async () => {
 
 test('surfaces persisted evaluation activity and operations telemetry', async () => {
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
   await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
@@ -377,8 +401,7 @@ test('surfaces persisted evaluation activity and operations telemetry', async ()
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
   mockBackend({ syntheticFailure: true })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
 
@@ -386,6 +409,7 @@ test('labels a controlled synthetic timeout as reviewer recovery rather than pro
   expect(screen.getByText('A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Retry case' })).toBeInTheDocument()
   expect(screen.queryByText(/Provider degraded/)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Operations' })).toHaveTextContent('1 failed')
 })
 
 // Live refresh: the tab can be hidden, and a visitor can walk away. Timers and Date are faked only after the
@@ -406,8 +430,7 @@ function calls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
 async function openView(name: 'Evaluation' | 'Operations', backend: Parameters<typeof mockBackend>[0] = {}) {
   const fetchMock = mockBackend(backend)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
   fireEvent.click(screen.getByRole('button', { name }))
   await advance(0)
@@ -513,19 +536,28 @@ test('says in plain words when the latest numbers could not load', async () => {
 // Opening a workspace in one call: POST /api/demo/session?seed=true seeds the workspace and returns its tickets and the
 // runtime summary. mockBackend answers like the API before this change (a bare session), which is the deploy gap.
 const seededRuntime = { environment: 'AWS_DEMO', database: 'NEON_POSTGRESQL', queue: 'AMAZON_SQS', aiProvider: 'GROQ' }
-const chargerTicket = { ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', scenarioKey: 'charger-offline-site-wide', createdAt: '2026-07-11T09:15:00Z' }
+const chargerTicket = { ...apiTicket, id: 'ticket-a104', displayId: 'CL-A104', subject: 'Every charger at the demo site appears offline', message: 'All six chargers show Offline and three drivers are waiting.', scenarioKey: 'charger-offline-site-wide', createdAt: '2026-07-11T09:15:00Z' }
 
-function completedProcessing(ticketId: string, priorityScore: number, slaRisk: 'LOW' | 'MEDIUM' | 'HIGH') {
-  return response({ job: { id: `job-${ticketId}`, eventId: `event-${ticketId}`, ticketId, status: 'COMPLETED', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, attempts: [] }, result: { id: `result-${ticketId}`, ticketId, category: 'GENERAL_QUESTION', urgency: 'LOW', slaRisk, sentiment: 'NEUTRAL', summary: `Summary for ${ticketId}.`, evidence: [{ quote: 'charged', meaning: 'A test quote.' }], policyIds: [], explanation: 'A test explanation.', recommendedActions: [], suggestedReply: '', reliabilitySignal: 'MEDIUM', warnings: [], priorityScore, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'test-model', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z' } })
+type Result = Record<string, unknown>
+function resultFor(ticketId: string, overrides: Result = {}): Result {
+  return { id: `result-${ticketId}`, ticketId, category: 'GENERAL', urgency: 'LOW', slaRisk: 'LOW', sentiment: 'NEUTRAL', summary: `Summary for ${ticketId}.`, evidence: [{ quote: 'charged', meaning: `A test reason for ${ticketId}.` }], policyIds: [], explanation: 'A test explanation.', recommendedActions: [], suggestedReply: '', reliabilitySignal: 'MEDIUM', warnings: [], priorityScore: 40, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'test-model', promptVersion: 'triage-v1', createdAt: '2026-07-11T09:14:02Z', ...overrides }
+}
+// A result as the newer API sends it, with the fields recorded results brought.
+function enriched(ticketId: string, overrides: Result = {}): Result {
+  return resultFor(ticketId, { recorded: false, fallbackReason: null, categoryLabel: 'General', categoryDescription: 'Questions and anything that fits no other category.', policyVersion: 'ev-v1', policies: [], ...overrides })
+}
+function completedProcessing(ticketId: string, priorityScore: number, slaRisk: 'LOW' | 'MEDIUM' | 'HIGH', overrides: Result = {}) {
+  return response({ job: { ...completedJob, id: `job-${ticketId}`, eventId: `event-${ticketId}`, ticketId, attempts: [] }, result: resultFor(ticketId, { priorityScore, slaRisk, ...overrides }) })
 }
 
-function mockSeededBackend(tickets: unknown[] = [apiTicket], processing: Record<string, () => Response> = {}) {
+function mockSeededBackend(tickets: unknown[] = [apiTicket], processing: Record<string, () => Response> = {}, onFeedback?: (body: Record<string, unknown>) => Response) {
   const backend = mockBackend()
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url.endsWith('/api/demo/session?seed=true') && init?.method === 'POST') return response({ token: 'demo-token', expiresAt: '2026-07-12T00:00:00Z', industry: 'ev-charging', tickets, runtime: seededRuntime })
     const ticketId = Object.keys(processing).find((id) => url.endsWith(`/api/tickets/${id}/processing`))
     if (ticketId) return processing[ticketId]()
+    if (onFeedback && url.endsWith('/feedback')) return onFeedback(JSON.parse(String(init?.body)) as Record<string, unknown>)
     return backend(input, init)
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -537,21 +569,21 @@ function apiCallsAfterLaunch(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 function rowOrder() {
-  return screen.getAllByRole('article').map((row) => row.querySelector('.ticket-id')?.textContent)
+  return [...document.querySelectorAll<HTMLElement>('.queue .row')].map((item) => item.dataset.id)
 }
 
-test('opens a seeded workspace with one request and shows its tickets and runtime', async () => {
+test('opens a seeded workspace with one request and keeps its runtime for How it\'s built', async () => {
   const fetchMock = mockSeededBackend()
   render(<App />)
   await launch()
 
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  expect(screen.getByText('AWS demo')).toBeInTheDocument()
-  expect(screen.getByText('Amazon SQS')).toBeInTheDocument()
+  await waitFor(() => expect(row(PAYMENT)).toBeInTheDocument())
   expect(apiCallsAfterLaunch(fetchMock)).toEqual(['POST /api/demo/session?seed=true'])
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session?seed=true') && init?.method === 'POST')
-  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'ev-charging' })
-  expect(screen.getByRole('button', { name: 'Operations' })).toHaveTextContent('OK')
+  expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
+  expect(screen.getByRole('button', { name: 'Operations' })).not.toHaveTextContent(/failed/)
+  fireEvent.click(screen.getByRole('button', { name: "How it's built" }))
+  expect(screen.getByText('This workspace runs on AWS: Neon Postgres, Amazon SQS and Groq.')).toBeInTheDocument()
 })
 
 test('still opens through reset and the separate reads when the API returns a bare session (deploy gap)', async () => {
@@ -559,16 +591,17 @@ test('still opens through reset and the separate reads when the API returns a ba
   render(<App />)
   await launch()
 
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  expect(screen.getByText('Local review')).toBeInTheDocument()
+  await waitFor(() => expect(row(PAYMENT)).toBeInTheDocument())
   expect(apiCallsAfterLaunch(fetchMock)).toEqual(expect.arrayContaining(['POST /api/demo/session?seed=true', 'POST /api/demo/reset', 'GET /api/tickets?page=0&size=50', 'GET /api/demo/runtime']))
+  // Without recorded results nothing is triaged yet, so nothing opens by itself and nothing is sent to the worker.
+  expect(screen.getByText('Nothing triaged yet. Open a ticket to run the live AI on it.')).toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/triage'))).toBe(false)
 })
 
 test('loads Evaluation and Operations when they are opened, and never shows numbers from an earlier workspace', async () => {
   const fetchMock = mockSeededBackend()
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await openInbox()
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
   await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
@@ -578,14 +611,13 @@ test('loads Evaluation and Operations when they are opened, and never shows numb
   expect(calls(fetchMock, '/api/operations/failures?page=0&size=50')).toBe(1)
 
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await openInbox()
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
   expect(screen.getByText('Loading the evaluation numbers for this workspace...')).toBeInTheDocument()
   await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
 })
 
-test('lists triaged tickets first, by priority score and then SLA risk, and untriaged ones after in API order', async () => {
+test('lists triaged tickets first, by the AI priority score and then SLA risk, and untriaged ones after in API order', async () => {
   const receipt = { ...apiTicket, id: 'ticket-a103', displayId: 'CL-A103', subject: 'Receipt requested for a completed session', scenarioKey: 'receipt-request-general' }
   const offline = { ...chargerTicket, id: 'ticket-a106', displayId: 'CL-A106' }
   mockSeededBackend([receipt, offline, apiTicket], {
@@ -594,38 +626,238 @@ test('lists triaged tickets first, by priority score and then SLA risk, and untr
     'ticket-a102': () => completedProcessing('ticket-a102', 82, 'MEDIUM'),
   })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  expect(rowOrder()).toEqual(['CL-A103', 'CL-A106', 'CL-A102'])
-  expect(screen.getByText('Triaged cases first, by priority and SLA risk')).toBeInTheDocument()
-
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A103/ }))
-  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a103.').length).toBeGreaterThan(0))
+  await openInbox()
   expect(rowOrder()).toEqual(['CL-A103', 'CL-A106', 'CL-A102'])
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/ }))
-  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a102.').length).toBeGreaterThan(0))
+  fireEvent.click(row('Receipt requested'))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a103.')).toBeInTheDocument())
+  expect(rowOrder()).toEqual(['CL-A103', 'CL-A106', 'CL-A102'])
+  expect(screen.getByText('Triaged, highest priority first')).toBeInTheDocument()
+
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
   expect(rowOrder()).toEqual(['CL-A102', 'CL-A103', 'CL-A106'])
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A106/ }))
-  await waitFor(() => expect(screen.getAllByText('Summary for ticket-a106.').length).toBeGreaterThan(0))
+  fireEvent.click(row('Every charger'))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a106.')).toBeInTheDocument())
   expect(rowOrder()).toEqual(['CL-A102', 'CL-A106', 'CL-A103'])
 })
 
-test('opens the featured ticket already in the inbox instead of adding a copy, with a plain label', async () => {
-  const fetchMock = mockSeededBackend([chargerTicket, apiTicket])
+// The hybrid queue: recorded results arrive with the session, the other tickets wait for a live run.
+const recordedOffline = { ...chargerTicket, latestResult: enriched('ticket-a104', { recorded: true, urgency: 'CRITICAL', slaRisk: 'HIGH', priorityScore: 100, category: 'CONNECTIVITY', categoryLabel: 'Connectivity', evidence: [{ quote: 'Every charger at the demo site appears offline', meaning: 'The whole site is down.' }, { quote: 'three drivers are waiting', meaning: 'Drivers are blocked now.' }], policies: [{ id: 'CHARGER_SITE_OUTAGE', label: 'Charger site outage', guidance: 'Check the site network and notify the operator.' }], appliedRules: [{ code: 'URGENCY_CRITICAL', points: 55, explanation: 'Critical urgency baseline' }, { code: 'SLA_RISK_HIGH', points: 20, explanation: 'High risk of breaching the response target' }, { code: 'BROAD_IMPACT', points: 30, explanation: 'Many drivers are affected' }] }), latestFeedback: null }
+const recordedReceipt = { ...apiTicket, id: 'ticket-a103', displayId: 'CL-A103', subject: 'Receipt requested for a completed session', message: 'Please send a receipt, I was charged for the session.', scenarioKey: 'receipt-request-general', latestResult: enriched('ticket-a103', { recorded: true, priorityScore: 10 }), latestFeedback: null }
+const retryTicket = { ...apiTicket, id: 'ticket-a105', displayId: 'CL-A105', subject: 'Synthetic provider timeout for retry review', scenarioKey: 'provider-retry-demo' }
+
+test('opens the hybrid queue: recorded results first, the top one already open, and the rest ready for a live run', async () => {
+  const fetchMock = mockSeededBackend([apiTicket, recordedReceipt, retryTicket, recordedOffline])
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A104')).toBeInTheDocument())
-  expect(screen.queryByRole('button', { name: /charger-offline-site-wide/ })).not.toBeInTheDocument()
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }))
+  expect(screen.getByText('1 critical ticket: every charger at the demo site appears offline.')).toBeInTheDocument()
+  expect(screen.getByText('3 tickets, 2 triaged, 1 not triaged yet')).toBeInTheDocument()
+  expect(rowOrder()).toEqual(['CL-A104', 'CL-A103', 'CL-A102'])
+  expect(row('Every charger')).toHaveTextContent('Recorded')
+  expect(row(PAYMENT)).toHaveTextContent('Run live AI')
+  expect(screen.queryByText('Synthetic provider timeout for retry review')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Inbox' })).toHaveTextContent('2 to review')
+  // A laptop opens the most urgent recorded ticket without asking the worker for anything.
+  expect(row('Every charger')).toHaveAttribute('aria-current', 'true')
+  expect(detail().getByText('Recorded AI result')).toBeInTheDocument()
+  expect(detail().getByText('Charger site outage')).toBeInTheDocument()
+  expect(detail().getByText('Check the site network and notify the operator.', { selector: '.guidance' })).toBeInTheDocument()
+  expect(detail().getByText('Capped at 100')).toBeInTheDocument()
+  expect(document.querySelector('.d-subject mark.ev')).toHaveTextContent('Every charger at the demo site appears offline')
+  expect(document.querySelector('.msg mark.ev')).toHaveTextContent('three drivers are waiting')
+  expect(detail().getByText('2 of 2 quotes found word for word in the ticket', { selector: '.verify span' })).toBeInTheDocument()
+  expect(apiCallsAfterLaunch(fetchMock)).toEqual(['POST /api/demo/session?seed=true'])
+})
 
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Why this ticket is here' })).toBeInTheDocument())
-  expect(document.querySelector('.detail-column .ticket-id')).toHaveTextContent('CL-A104')
-  expect(screen.getAllByRole('article')).toHaveLength(2)
-  expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/demo/scenarios/'))).toBe(false)
+test('accepts the AI call with one click and logs it, without a note or an urgency', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  mockSeededBackend([recordedOffline, apiTicket], {}, (body) => { bodies.push(body); return response({ id: 'feedback-1', decision: body.decision }, 201) })
+  render(<App />)
+  await openInbox()
+
+  expect(detail().getByText('Connectivity', { selector: '.rv-text' , exact: false })).toBeInTheDocument()
+  fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
+
+  await waitFor(() => expect(detail().getByText('Accepted.')).toBeInTheDocument())
+  expect(bodies).toEqual([expect.objectContaining({ decision: 'ACCEPTED', triageResultId: 'result-ticket-a104', originalResultId: 'result-ticket-a104' })])
+  expect(bodies[0]).not.toHaveProperty('urgency')
+  expect(bodies[0]).not.toHaveProperty('note')
+  expect(screen.getByRole('status')).toHaveTextContent('Accepted. The AI call is logged as confirmed.')
+  expect(row('Every charger')).toHaveTextContent('Accepted')
+  expect(screen.getByRole('button', { name: 'Inbox' })).not.toHaveTextContent('to review')
+  // There is no Undo: the next step is another review, added beside this one.
+  expect(detail().queryByRole('button', { name: /Undo/ })).not.toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
+})
+
+test('overrides urgency without a reason, keeps the AI score as the original, and changes the review by adding another', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  mockSeededBackend([recordedOffline], {}, (body) => { bodies.push(body); return response({ id: `feedback-${bodies.length}` }, 201) })
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  expect(detail().getByRole('group', { name: 'Change urgency from Critical to' })).toBeInTheDocument()
+  expect(detail().getByRole('button', { name: /^Critical/ })).toBeDisabled()
+  expect(detail().getByRole('button', { name: 'Save' })).toBeDisabled()
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  expect(detail().getByRole('button', { name: /^High/ })).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+
+  await waitFor(() => expect(detail().getByText('Overridden.')).toBeInTheDocument())
+  expect(bodies[0]).toEqual(expect.objectContaining({ decision: 'CORRECTED', urgency: 'HIGH', triageResultId: 'result-ticket-a104' }))
+  expect(bodies[0]).not.toHaveProperty('note')
+  expect(detail().getByText('AI priority (original)')).toBeInTheDocument()
+  expect(detail().getByText("This score comes from the AI's original Critical call and is never overwritten.")).toBeInTheDocument()
+  expect(detail().getByText('AI said Critical')).toBeInTheDocument()
+  expect(row('Every charger')).toHaveTextContent('You, AI said Critical')
+  // The queue keeps its order by the AI's score: an override is logged beside it, never rescored.
+  expect(screen.getByText('No critical tickets. Top of the queue: every charger at the demo site appears offline.')).toBeInTheDocument()
+
+  fireEvent.click(detail().getByRole('button', { name: 'Change review' }))
+  expect(detail().getByRole('button', { name: /^High/ })).toBeDisabled()
+  fireEvent.click(detail().getByRole('button', { name: "Critical AI's call, accept it" }))
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+
+  await waitFor(() => expect(detail().getByText('Accepted.')).toBeInTheDocument())
+  expect(bodies[1]).toEqual(expect.objectContaining({ decision: 'ACCEPTED' }))
+  expect(detail().getByText(/2 reviews are logged for this ticket/)).toBeInTheDocument()
+})
+
+test('shows the latest review a seeded ticket already has', async () => {
+  mockSeededBackend([{ ...recordedOffline, latestFeedback: { decision: 'CORRECTED', urgency: 'MEDIUM', note: 'Only one site.', createdAt: '2026-07-11T09:20:00Z' } }])
+  render(<App />)
+  await openInbox()
+
+  expect(detail().getByText('Overridden.')).toBeInTheDocument()
+  expect(detail().getByText('“Only one site.”')).toBeInTheDocument()
+  expect(row('Every charger')).toHaveTextContent('Medium')
+})
+
+test('never calls a correction that kept the AI urgency an Accept', async () => {
+  mockSeededBackend([{ ...recordedOffline, latestFeedback: { decision: 'CORRECTED', urgency: null, note: 'Category was wrong.', createdAt: '2026-07-11T09:20:00Z' } }])
+  render(<App />)
+  await openInbox()
+
+  expect(detail().getByText('Corrected.')).toBeInTheDocument()
+  expect(detail().queryByText('Accepted.')).not.toBeInTheDocument()
+  expect(row('Every charger')).toHaveTextContent('Corrected')
+})
+
+test('says plainly why the pack rules decided a ticket, and labels it as a rules fallback', async () => {
+  mockSeededBackend([apiTicket], { 'ticket-a102': () => response({ job: completedJob, result: enriched('ticket-a102', { decisionSource: 'RULES_FALLBACK', fallbackReason: 'BUDGET_SPENT', reliabilitySignal: 'LOW', evidence: [{ quote: PAYMENT, meaning: 'Matched the pack keywords for charging sessions.' }] }) }) })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+
+  await waitFor(() => expect(detail().getByText('Rules fallback', { selector: '.badge' })).toBeInTheDocument())
+  expect(document.querySelector('.fallback-note')).toHaveTextContent("Rules fallback. Today's live AI budget for this demo is spent. Fixed pack rules decided this ticket instead")
+  expect(detail().getByRole('heading', { name: 'Why the rules decided this' })).toBeInTheDocument()
+  expect(document.querySelector('.d-subject mark.ev')).toHaveTextContent(PAYMENT)
+  expect(row(PAYMENT)).toHaveTextContent('Rules fallback')
+})
+
+test('gives a general fallback reason when an older API sends none', async () => {
+  mockSeededBackend([apiTicket], { 'ticket-a102': () => response({ job: completedJob, result: { ...legacyResult, decisionSource: 'RULES_FALLBACK', reliabilitySignal: 'LOW' } }) })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+
+  await waitFor(() => expect(document.querySelector('.fallback-note')).toHaveTextContent('The live AI was unavailable or its answer failed a check.'))
+})
+
+test('lists a reason whose quote is not in the ticket, and says how many quotes were found', async () => {
+  mockSeededBackend([{ ...apiTicket, latestResult: enriched('ticket-a102', { recorded: true, evidence: [{ quote: 'The driver was charged', meaning: 'Money was taken.' }, { quote: 'a sentence that is not there', meaning: 'Something else.' }] }) }])
+  render(<App />)
+  await openInbox()
+
+  expect(detail().getByText('Quote not found in the ticket text: “a sentence that is not there”')).toBeInTheDocument()
+  expect(detail().getByText('1 of 2 quotes found word for word in the ticket', { selector: '.verify span' })).toBeInTheDocument()
+  expect(document.querySelectorAll('mark.ev')).toHaveLength(1)
+})
+
+test('pairs a reason with its highlighted quote on hover and keyboard focus', async () => {
+  mockSeededBackend([recordedOffline])
+  render(<App />)
+  await openInbox()
+
+  const reason = detail().getByText('Drivers are blocked now.').closest('li')!
+  act(() => reason.focus())
+  expect(document.querySelector('.msg mark.ev')).toHaveClass('on')
+  expect(document.querySelector('.d-subject mark.ev')).not.toHaveClass('on')
+  fireEvent.mouseEnter(document.querySelector('.d-subject mark.ev')!)
+  expect(detail().getByText('The whole site is down.').closest('li')).toHaveClass('on')
+})
+
+test('re-runs a recorded ticket live and replaces the recorded result with the new one', async () => {
+  let polls = 0
+  const fetchMock = mockSeededBackend([recordedOffline], {
+    'ticket-a104': () => {
+      polls += 1
+      // The first answer still carries the recorded result with no job: the page keeps waiting for a new one.
+      if (polls === 1) return response({ job: null, result: recordedOffline.latestResult })
+      if (polls === 2) return pendingJob('PROCESSING', null, 'ticket-a104')
+      return response({ job: { ...completedJob, ticketId: 'ticket-a104' }, result: enriched('ticket-a104', { id: 'result-live', urgency: 'HIGH', priorityScore: 60, categoryLabel: 'Connectivity' }) })
+    },
+  })
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(detail().getAllByRole('button', { name: 'Re-run live' })[0])
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a104/triage'), expect.objectContaining({ method: 'POST' })))
+  expect(detail().getByRole('list', { name: 'Live triage progress' })).toBeInTheDocument()
+  expect(row('Every charger')).toHaveTextContent('Queued')
+
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument(), { timeout: 5_000 })
+  expect(detail().queryByText('Recorded AI result')).not.toBeInTheDocument()
+  expect(detail().getByRole('button', { name: /Outbox → SQS → Worker/ })).toBeInTheDocument()
+})
+
+// The phone shows one pane at a time and keeps the review bar in reach.
+function asPhone() {
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width: 699px'), media: query, addEventListener: () => undefined, removeEventListener: () => undefined }))
+}
+
+test('on a phone, opens on the list, shows a ticket as its own screen, and returns to the list with Back', async () => {
+  asPhone()
+  const pushState = vi.spyOn(window.history, 'pushState')
+  mockSeededBackend([recordedOffline, apiTicket])
+  render(<App />)
+  await openInbox()
+
+  expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'list')
+  expect(document.querySelector('.detail-empty')).toBeInTheDocument()
+  fireEvent.click(row('Every charger'))
+  expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'detail')
+  expect(pushState).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('region', { name: 'Review' })).toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Accept' })).toBeInTheDocument()
+
+  // The system Back gesture returns to the list instead of leaving the demo.
+  act(() => { window.dispatchEvent(new PopStateEvent('popstate')) })
+  expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'list')
+  fireEvent.click(row('Every charger'))
+  fireEvent.click(detail().getByRole('button', { name: 'Back to inbox' }))
+  expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'list')
+  pushState.mockRestore()
+})
+
+test('on a phone, the menu holds the screens, How it\'s built and the byline', async () => {
+  asPhone()
+  mockSeededBackend([recordedOffline])
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  const menu = screen.getByRole('dialog', { name: 'Menu' })
+  expect(within(menu).getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
+  expect(within(menu).getByText('Demo workspace, EV charging')).toBeInTheDocument()
+  fireEvent.click(within(menu).getByRole('button', { name: 'Evaluation' }))
+  expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Evaluation signal' })).toBeInTheDocument()
 })
 
 // Neon review CL-13, CL-23, CL-24 and CL-16: polling stops with the workspace, an ended session stops live updates,
@@ -646,15 +878,14 @@ test('stops the triage poll when the demo closes, and the next workspace starts 
   await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
   expect(calls(fetchMock, '/processing')).toBe(atClose)
 
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
   const sessionPosts = fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init))
   expect(sessionPosts).toHaveLength(2)
   expect(new Headers(sessionPosts[1]?.[1]?.headers).get('Authorization')).toBeNull()
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
   expect(calls(fetchMock, '/processing')).toBe(atClose)
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  expect(screen.queryByText(/Waiting for the triage worker/)).not.toBeInTheDocument()
+  expect(document.querySelector('.stage-note')).toBeNull()
 })
 
 test('stops live updates when the session has ended and offers a new demo', async () => {
@@ -675,8 +906,7 @@ test('keeps the error from a failed action on screen while the view refreshes in
   const backend = mockBackend({ syntheticFailure: true })
   stubOver(backend, (url) => url.endsWith('/retry') ? response({ detail: 'Request failed with status 500' }, 500) : undefined)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
   await advance(0)
@@ -689,21 +919,27 @@ test('keeps the error from a failed action on screen while the view refreshes in
   expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem. Try again in a few seconds.')
 })
 
+async function overrideToHigh(note = 'Lower than the model said.') {
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled())
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  fireEvent.change(detail().getByLabelText(/^Reason/), { target: { value: note } })
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+}
+
 test('says plainly when the API refuses a correction (409), without claiming which conflict it was', async () => {
   const backend = mockBackend()
   // The API sends the same generic detail for every refused correction.
   stubOver(backend, (url) => url.includes('/feedback') ? response({ detail: 'The requested operation is not valid' }, 409) : undefined)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Lower than the model said.' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+  await openInbox()
+  await overrideToHigh()
 
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'))
   expect(screen.queryByText(/409|not valid|Try again in a few seconds/)).not.toBeInTheDocument()
+  // The override panel stays open with the reviewer's choice, so they can try again.
+  expect(detail().getByRole('button', { name: /^High/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('says the workspace is full when the API refuses a correction for the workspace cap', async () => {
@@ -712,43 +948,37 @@ test('says the workspace is full when the API refuses a correction for the works
     ? response({ type: 'urn:caselens:problem:workspace-limit', code: 'workspace-limit', detail: 'This demo workspace holds at most 100 feedback entries.' }, 409)
     : undefined)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).not.toBeDisabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'Lower than the model said.' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+  await openInbox()
+  await overrideToHigh()
 
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This demo workspace has reached its limit. Start a new demo to keep going.'))
   expect(screen.queryByText(/conflicts with the current triage result/)).not.toBeInTheDocument()
 })
 
-test('keeps the original urgency apart from the saved correction, and shows the priority and suggested reply', async () => {
+test('keeps the original urgency apart from the saved override, and shows the priority and suggested reply', async () => {
   const fetchMock = mockBackend()
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency critical' })).toHaveAttribute('aria-pressed', 'true'))
-  expect(screen.getByText('Priority 82')).toBeInTheDocument()
-  expect(screen.getByText('We are reviewing the session start.')).toBeInTheDocument()
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(document.querySelector('.d-head .tags')).toHaveTextContent('Priority 82')
+  expect(detail().getByText('We are reviewing the session start.')).toBeInTheDocument()
+  expect(detail().getByText('Critical urgency baseline')).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  expect(screen.getByRole('button', { name: 'Mark urgency high' })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByRole('button', { name: 'Mark urgency critical' })).toHaveAttribute('aria-pressed', 'false')
-  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The synthetic case is less urgent.' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
-  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Correction saved. Evaluation metrics updated.'))
-  expect(screen.getByText('Original triage urgency: Critical.')).toBeInTheDocument()
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  expect(detail().getByRole('button', { name: /^High/ })).toHaveAttribute('aria-pressed', 'true')
+  expect(detail().getByRole('button', { name: /^Critical/ })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.change(detail().getByLabelText('Reason'), { target: { value: 'The synthetic case is less urgent.' } })
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(detail().getByText('AI said Critical')).toBeInTheDocument())
 
-  // Going back to the urgency the model gave would send a no-op the API refuses, so Save stays off and the notice goes.
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency critical' }))
-  expect(screen.queryByText('Correction saved. Evaluation metrics updated.')).not.toBeInTheDocument()
-  expect(screen.getByText('This is the urgency the triage gave, so there is no correction to save.')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  expect(screen.getByRole('button', { name: 'Save correction' })).toBeDisabled()
+  // Going back to the urgency the model gave would send a no-op this API refuses, and the saved override is already
+  // logged, so neither can be picked again.
+  fireEvent.click(detail().getByRole('button', { name: 'Change review' }))
+  expect(detail().getByRole('button', { name: /^Critical/ })).toBeDisabled()
+  expect(detail().getByRole('button', { name: /^High/ })).toBeDisabled()
+  expect(detail().getByRole('button', { name: 'Save' })).toBeDisabled()
   expect(calls(fetchMock, '/feedback')).toBe(1)
 })
 
@@ -760,8 +990,7 @@ test('shows an unfinished job as Pending and Not called, not as a 0 ms rules dec
     return undefined
   })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
   await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
@@ -784,16 +1013,15 @@ test('offers a new demo when a ticket action finds the session ended, and moves 
     return undefined
   })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
 
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Your demo session has ended. Start a new demo to keep exploring.'))
   const sessionPosts = () => fetchMock.mock.calls.filter(([url, init]) => isSessionPost(String(url), init)).length
   expect(sessionPosts()).toBe(1)
   fireEvent.click(screen.getByRole('button', { name: 'Start a new demo' }))
 
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toHaveFocus())
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Inbox' })).toHaveFocus())
   expect(sessionPosts()).toBe(2)
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
@@ -801,13 +1029,12 @@ test('offers a new demo when a ticket action finds the session ended, and moves 
 test('sends one triage request when a ticket being triaged is opened twice', async () => {
   const fetchMock = mockBackend({ pendingProcessingPolls: 100 })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
 
   // Both clicks land before React re-renders, so only a synchronous guard can stop the second request.
-  const review = screen.getByRole('button', { name: /Review CL-A102/i })
-  act(() => { review.click(); review.click() })
+  const ticketRow = row(PAYMENT)
+  act(() => { ticketRow.click(); ticketRow.click() })
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
 
   expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/triage') && init?.method === 'POST')).toHaveLength(1)
@@ -816,77 +1043,61 @@ test('sends one triage request when a ticket being triaged is opened twice', asy
 
 test('keeps the stage text of a ticket still in triage when another ticket finishes', async () => {
   mockSeededBackend([chargerTicket, apiTicket], {
-    'ticket-a104': () => pendingJob('QUEUED'),
+    'ticket-a104': () => pendingJob('QUEUED', null, 'ticket-a104'),
     'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
   })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A104')).toBeInTheDocument())
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
-  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('A test explanation.'))
+  fireEvent.click(row('Every charger'))
+  await waitFor(() => expect(document.querySelector('.stage-note')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
-  expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.')
+  fireEvent.click(row('Every charger'))
+  expect(document.querySelector('.stage-note')).toHaveTextContent('Waiting for the triage worker to pick this up.')
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
 
-// CL2-09: a scenario's triage poll can last two minutes. Only that ticket waits; other tickets stay usable.
-test('keeps other tickets usable while a loaded scenario waits for triage', async () => {
-  mockSeededBackend([apiTicket], {
-    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
-    'ticket-a105': () => pendingJob('QUEUED'),
-  })
+// CL2-09: a live triage can wait two minutes. Only that ticket waits; other tickets stay usable.
+test('keeps other tickets reviewable while one ticket waits for live triage', async () => {
+  mockSeededBackend([chargerTicket, recordedReceipt], { 'ticket-a104': () => pendingJob('QUEUED', null, 'ticket-a104') })
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
-  await waitFor(() => expect(document.querySelector('.lead-copy')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
-  // The scenario buttons stay off while its ticket is in triage, so the scenario is not loaded twice.
-  expect(screen.getByRole('button', { name: 'Run controlled retry demo' })).toBeDisabled()
+  fireEvent.click(row('Every charger'))
+  await waitFor(() => expect(document.querySelector('.stage-note')).toHaveTextContent('Waiting for the triage worker to pick this up.'))
+  fireEvent.click(row('Receipt requested'))
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled()
-  expect(screen.getByLabelText('Review note')).toBeEnabled()
+  expect(detail().getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
 
-// CL2-14: the ticket rows stay clickable while a correction is being saved. A save that finishes after the reviewer
-// opened another ticket updates its own ticket and never says "Correction saved" on the other one.
-test('shows "Correction saved" only on the ticket whose correction was saved', async () => {
+// CL2-14: the ticket rows stay clickable while a review is being saved. A save that finishes after the reviewer opened
+// another ticket updates its own ticket and never shows its result on the other one.
+test('shows a saved review only on the ticket it was saved for', async () => {
   let finishSave: (value: Response) => void = () => undefined
-  const seeded = mockSeededBackend([chargerTicket, apiTicket], {
-    'ticket-a104': () => completedProcessing('ticket-a104', 40, 'LOW'),
-    'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'),
-  })
+  const seeded = mockSeededBackend([recordedOffline, recordedReceipt])
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/feedback')
     ? new Promise<Response>((resolve) => { finishSave = resolve })
     : seeded(input, init))
   vi.stubGlobal('fetch', fetchMock)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByText('CL-A102')).toBeInTheDocument())
+  await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
-  fireEvent.click(screen.getByRole('button', { name: 'Mark urgency high' }))
-  fireEvent.change(screen.getByLabelText('Review note'), { target: { value: 'The payment case needs a faster answer.' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }))
+  fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
   await waitFor(() => expect(calls(fetchMock, '/feedback')).toBe(1))
+  expect(detail().getByRole('button', { name: 'Saving...' })).toBeDisabled()
 
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A104/i }))
-  await waitFor(() => expect(document.querySelector('.detail-subject h3')).toHaveTextContent('Every charger at the demo site appears offline'))
+  fireEvent.click(row('Receipt requested'))
+  await waitFor(() => expect(document.querySelector('.d-subject')).toHaveTextContent('Receipt requested for a completed session'))
   await act(async () => { finishSave(response({ id: 'feedback-1' }, 201)) })
 
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Mark urgency high' })).toBeEnabled())
-  expect(screen.queryByText('Correction saved. Evaluation metrics updated.')).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: /Review CL-A102/i }))
-  expect(screen.getByText('Original triage urgency: Low.')).toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(detail().queryByText('Accepted.')).not.toBeInTheDocument()
+  fireEvent.click(row('Every charger'))
+  expect(detail().getByText('Accepted.')).toBeInTheDocument()
 })
 
 // CL2-13: a throttled live read waits up to 5 seconds before its retry. Leaving the view or closing the demo aborts it,
@@ -895,8 +1106,7 @@ test('stops a throttled Evaluation read from retrying once the reviewer leaves t
   // The seeded open reads nothing from Evaluation, so only the live read is throttled.
   const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/evaluation') ? new Response('', { status: 429, headers: { 'Retry-After': '3' } }) : undefined)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
 
   fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
@@ -912,8 +1122,7 @@ test('stops throttled Operations reads from retrying when the demo closes', asyn
   const throttled = () => new Response('', { status: 429, headers: { 'Retry-After': '3' } })
   const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/operations/overview') || url.includes('/api/operations/failures') ? throttled() : undefined)
   render(<App />)
-  await launch()
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Ticket inbox' })).toBeInTheDocument())
+  await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
