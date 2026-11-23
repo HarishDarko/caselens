@@ -49,16 +49,153 @@ run "destroy_role_can_refresh_before_destroying" {
     error_message = "Only the documented list reads may be granted on \"*\"."
   }
 
-  # The destroy role must not be able to change IAM: no wildcard and no create, put, attach, pass or trust change.
+  # Exact allowlists, so a wildcard such as iam:Put* or any action the teardown does not call fails the test. The
+  # lists come from the AWS provider v5.100.0 refresh and destroy paths (see the comments in main.tf).
   assert {
     condition = alltrue([
       for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement :
-      statement.Effect != "Allow" || length(setintersection(try(statement.Action, []), [
-        "iam:*", "iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole", "iam:UpdateAssumeRolePolicy",
-        "iam:UpdateRole", "iam:PutRolePermissionsBoundary", "iam:TagRole",
-      ])) == 0
+      statement.Effect != "Allow" || alltrue([for action in try(statement.Action, []) : !strcontains(action, "*")])
     ])
-    error_message = "The destroy role may only read and delete IAM roles."
+    error_message = "No allowed action may be a wildcard."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "iam:")
+      ]) == toset([
+      "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole",
+      "iam:ListOpenIDConnectProviders", "iam:ListRoles", "iam:GetOpenIDConnectProvider",
+    ])
+    error_message = "The iam actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "s3:")
+      ]) == toset([
+      "s3:GetBucketLocation", "s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:GetBucketAcl", "s3:GetBucketCORS",
+      "s3:GetBucketWebsite", "s3:GetBucketVersioning", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment",
+      "s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration",
+      "s3:GetEncryptionConfiguration", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketTagging",
+      "s3:GetBucketPolicy", "s3:GetBucketPublicAccessBlock", "s3:ListBucketVersions", "s3:DeleteBucketPolicy",
+      "s3:PutBucketPublicAccessBlock", "s3:PutEncryptionConfiguration", "s3:PutBucketVersioning", "s3:DeleteBucket",
+      "s3:DeleteObject", "s3:DeleteObjectVersion",
+    ])
+    error_message = "The s3 actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "sqs:")
+      ]) == toset([
+      "sqs:GetQueueAttributes", "sqs:ListQueueTags", "sqs:DeleteQueue",
+    ])
+    error_message = "The sqs actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "lambda:")
+      ]) == toset([
+      "lambda:GetFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:ListVersionsByFunction",
+      "lambda:GetAlias", "lambda:GetPolicy", "lambda:GetEventSourceMapping", "lambda:ListTags",
+      "lambda:RemovePermission", "lambda:DeleteAlias", "lambda:DeleteEventSourceMapping", "lambda:DeleteFunction",
+    ])
+    error_message = "The lambda actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "logs:")
+      ]) == toset([
+      "logs:DescribeLogGroups", "logs:ListTagsForResource", "logs:DeleteLogGroup",
+    ])
+    error_message = "The logs actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "secretsmanager:")
+      ]) == toset([
+      "secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:DeleteSecret",
+    ])
+    error_message = "The secretsmanager actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "events:")
+      ]) == toset([
+      "events:DescribeRule", "events:ListTagsForResource", "events:ListTargetsByRule", "events:RemoveTargets",
+      "events:DeleteRule",
+    ])
+    error_message = "The events actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "cloudwatch:")
+      ]) == toset([
+      "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource", "cloudwatch:DeleteAlarms",
+    ])
+    error_message = "The cloudwatch actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "sns:")
+      ]) == toset([
+      "sns:GetTopicAttributes", "sns:ListTagsForResource", "sns:GetSubscriptionAttributes",
+      "sns:ListSubscriptionsByTopic", "sns:Unsubscribe", "sns:DeleteTopic",
+    ])
+    error_message = "The sns actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "apigateway:")
+      ]) == toset([
+      "apigateway:GET", "apigateway:DELETE",
+    ])
+    error_message = "The apigateway actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  assert {
+    condition = toset([
+      for action in flatten([for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : try(statement.Action, []) if statement.Effect == "Allow"]) :
+      action if startswith(action, "cloudfront:")
+      ]) == toset([
+      "cloudfront:GetDistribution", "cloudfront:ListTagsForResource", "cloudfront:UpdateDistribution",
+      "cloudfront:DeleteDistribution", "cloudfront:GetOriginAccessControl", "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:GetResponseHeadersPolicy", "cloudfront:DeleteResponseHeadersPolicy", "cloudfront:GetCachePolicy",
+      "cloudfront:ListCachePolicies",
+    ])
+    error_message = "The cloudfront actions must be exactly the reads, deletes and disables the teardown calls."
+  }
+
+  # Disabling and deleting a distribution are limited to this app's tagged distribution.
+  assert {
+    condition = length([
+      for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : statement
+      if statement.Effect == "Allow" && contains(try(statement.Action, []), "cloudfront:UpdateDistribution")
+      && try(statement.Condition.StringEquals["aws:ResourceTag/Project"], "") == "caselens"
+      && try(statement.Condition.StringEquals["aws:ResourceTag/Environment"], "") == "demo"
+      ]) == 1 && length([
+      for statement in jsondecode(aws_iam_role_policy.github_destroy.policy).Statement : statement
+      if statement.Effect == "Allow" && anytrue([for action in try(statement.Action, []) : contains(["cloudfront:UpdateDistribution", "cloudfront:DeleteDistribution"], action)])
+    ]) == 1
+    error_message = "UpdateDistribution and DeleteDistribution must require this app's Project and Environment tags."
   }
 
   # It cannot touch itself at all, and on the deploy role it can only read and delete.
