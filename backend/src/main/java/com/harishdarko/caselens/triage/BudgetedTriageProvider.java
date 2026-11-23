@@ -9,8 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Spends one unit of the global daily AI budget, and of the calling client's daily share of it, before each provider
- * call. When either is spent it throws a provider failure, and TriageEngine answers with the rules fallback as it does
+ * Spends one unit of the global daily AI budget, and of the calling client's daily share of it, before the first
+ * provider call of each queued job (a redelivery of the same job spends nothing more; see AiCallBudget). When either is spent it throws a provider failure, and TriageEngine answers with the rules fallback as it does
  * for any other provider failure. The error code on the model-invocation record says which one ran out.
  */
 public final class BudgetedTriageProvider implements TriageProvider {
@@ -36,7 +36,7 @@ public final class BudgetedTriageProvider implements TriageProvider {
 
     @Override
     public ProviderCall analyze(TriageRequest request, RedactedTicket redactedTicket) {
-        switch (budget.tryAcquire(clientKeyOf(request.ticketId()))) {
+        switch (budget.tryAcquire(clientKeyOf(request.ticketId()), request.eventId())) {
             case CLIENT_SHARE_SPENT -> throw new ProviderCallException(
                     "This client's daily share of AI calls is spent", SHARE_EXHAUSTED);
             case BUDGET_SPENT -> throw new ProviderCallException("The daily AI call budget is spent", BUDGET_EXHAUSTED);

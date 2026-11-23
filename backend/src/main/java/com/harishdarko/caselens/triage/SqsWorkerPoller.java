@@ -36,7 +36,9 @@ public class SqsWorkerPoller {
     @Scheduled(fixedDelayString = "${caselens.worker.poll-delay-ms:1000}")
     public void poll() {
         var response = client.receiveMessage(ReceiveMessageRequest.builder()
-                .queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(1)
+                // One at a time, like the Lambda event source (batch_size 1): a long rate-limit wait on one message
+                // must not run out the visibility timeout of others waiting in the same batch.
+                .queueUrl(queueUrl).maxNumberOfMessages(1).waitTimeSeconds(1)
                 .messageSystemAttributeNames(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT).build());
         for (Message message : response.messages()) {
             if (shouldDelete(message)) {

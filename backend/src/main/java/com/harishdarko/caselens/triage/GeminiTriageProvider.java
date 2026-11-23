@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.IntSupplier;
@@ -36,6 +37,8 @@ public final class GeminiTriageProvider implements TriageProvider {
     private final IntSupplier retryDelayMillis;
     private final Duration callBudget;
     private final LongSupplier nanoTime;
+    private final RateLimitWait.Sleeper sleeper;
+    private final Clock clock;
     private final PromptBuilder promptBuilder = new PromptBuilder(PROMPT_VERSION);
 
     public GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client,
@@ -45,6 +48,16 @@ public final class GeminiTriageProvider implements TriageProvider {
 
     GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client, ObjectMapper mapper,
             Duration requestTimeout, IntSupplier retryDelayMillis, Duration callBudget, LongSupplier nanoTime) {
+        this(endpoint, apiKey, model, client, mapper, requestTimeout, retryDelayMillis, callBudget, nanoTime, Thread::sleep,
+                Clock.systemUTC());
+    }
+
+    /** {@code clock} reads an HTTP-date Retry-After; {@code nanoTime} measures the call budget. */
+    GeminiTriageProvider(URI endpoint, String apiKey, String model, HttpClient client, ObjectMapper mapper,
+            Duration requestTimeout, IntSupplier retryDelayMillis, Duration callBudget, LongSupplier nanoTime,
+            RateLimitWait.Sleeper sleeper, Clock clock) {
+        this.sleeper = Objects.requireNonNull(sleeper);
+        this.clock = Objects.requireNonNull(clock);
         this.callBudget = Objects.requireNonNull(callBudget);
         this.nanoTime = Objects.requireNonNull(nanoTime);
         this.endpoint = Objects.requireNonNull(endpoint);
@@ -62,7 +75,7 @@ public final class GeminiTriageProvider implements TriageProvider {
         Objects.requireNonNull(redactedTicket);
         long started = nanoTime.getAsLong();
         String body = requestBody(request, redactedTicket);
-        HttpResponse<String> response = sendWithOneTransientRetry(body, started);
+        HttpResponse<String> response = sendWithOneTransientRetry(body, started, request.callBudget(callBudget));
         if (response.body().length() > MAX_RESPONSE_CHARS) {
             throw new ProviderCallException("Gemini provider response was too large", "RESPONSE_TOO_LARGE");
         }
@@ -92,13 +105,22 @@ public final class GeminiTriageProvider implements TriageProvider {
 
     /** The configured request timeout, cut to what is left of the call budget after the connect allowance. */
     Duration attemptTimeout(long started) {
+        return attemptTimeout(started, callBudget);
+    }
+
+    private Duration attemptTimeout(long started, Duration budget) {
         Duration elapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - started));
-        Duration left = callBudget.minus(elapsed).minus(CONNECT_ALLOWANCE);
+        Duration left = budget.minus(elapsed).minus(CONNECT_ALLOWANCE);
         return left.compareTo(requestTimeout) < 0 ? left : requestTimeout;
     }
 
-    private HttpResponse<String> sendWithOneTransientRetry(String body, long started) {
-        Duration timeout = attemptTimeout(started);
+    /**
+     * One request and at most one retry, with the same 429 rule as Groq (RateLimitWait): wait in the call when the
+     * asked wait fits, end as HTTP_429 for one SQS redelivery when it does not, and as RATE_LIMIT_LONG_WAIT when no
+     * redelivery could cure it. A 429 without a wait, and a 5xx, are retried after a short jitter.
+     */
+    private HttpResponse<String> sendWithOneTransientRetry(String body, long started, Duration budget) {
+        Duration timeout = attemptTimeout(started, budget);
         if (timeout.compareTo(MIN_FIRST_TIMEOUT) < 0) timeout = MIN_FIRST_TIMEOUT;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
@@ -106,8 +128,21 @@ public final class GeminiTriageProvider implements TriageProvider {
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) return response;
                 if (attempt == 0 && (status == 429 || status >= 500)) {
-                    pauseBeforeRetry();
-                    timeout = attemptTimeout(started);
+                    Duration wait = Duration.ZERO;
+                    if (status == 429) {
+                        Duration elapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - started));
+                        RateLimitWait.Decision decision = RateLimitWait.decide(response.headers(), clock, elapsed, budget,
+                                CONNECT_ALLOWANCE, MIN_RETRY_TIMEOUT);
+                        switch (decision.kind()) {
+                            case GIVE_UP -> throw new ProviderCallException(
+                                    "Gemini provider rate limit lasts longer than a redelivery", RateLimitWait.LONG_WAIT_CODE);
+                            case RETRY_LATER -> throw new ProviderCallException(
+                                    "Gemini provider rate limit outlasts the call budget", "HTTP_429");
+                            case WAIT, RETRY_NOW -> wait = decision.delay();
+                        }
+                    }
+                    pause(wait.isZero() ? jitter() : wait);
+                    timeout = attemptTimeout(started, budget);
                     // Too little budget left for a useful retry: fail now so the rules fallback still has time.
                     if (timeout.equals(requestTimeout) || timeout.compareTo(MIN_RETRY_TIMEOUT) >= 0) continue;
                 }
@@ -127,10 +162,13 @@ public final class GeminiTriageProvider implements TriageProvider {
         throw new ProviderCallException("Gemini provider request failed", "TRANSIENT_FAILURE");
     }
 
-    private void pauseBeforeRetry() {
-        int delay = Math.max(0, Math.min(250, retryDelayMillis.getAsInt()));
+    private Duration jitter() {
+        return Duration.ofMillis(Math.max(0, Math.min(250, retryDelayMillis.getAsInt())));
+    }
+
+    private void pause(Duration wait) {
         try {
-            if (delay > 0) Thread.sleep(delay);
+            if (!wait.isZero()) sleeper.sleep(wait.toMillis());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new ProviderCallException("Gemini provider request was interrupted", "INTERRUPTED", exception);

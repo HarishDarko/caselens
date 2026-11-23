@@ -157,11 +157,12 @@ class BudgetedTriageProviderTest {
     }
 
     /**
-     * One budget unit per triage attempt that reaches the provider: Groq's in-call retry after a 429 does not spend a
-     * second unit, and a job that SQS redelivers spends one more only because that delivery makes a new call.
+     * One budget unit per job (per event id), however many requests and deliveries it takes: Groq's in-call retry
+     * after a 429 and the SQS redelivery of the same job spend nothing more, so a rate limit cannot drain a visitor's
+     * daily share. Another job spends its own unit.
      */
     @Test
-    void aRateLimitRetryInsideTheCallSpendsNoExtraUnitAndARedeliverySpendsOneForItsNewCall() throws Exception {
+    void aJobSpendsOneUnitAcrossItsInCallRetryAndItsRedelivery() throws Exception {
         AtomicInteger httpRequests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/groq", exchange -> {
@@ -187,9 +188,12 @@ class BudgetedTriageProviderTest {
             assertThat(engine.triage(request, eventId, false).decisionSource()).isEqualTo(DecisionSource.AI_VALIDATED);
             assertThat(httpRequests).hasValue(3);
 
+            assertThat(engine.triage(request, UUID.randomUUID(), true).decisionSource())
+                    .as("the redelivered job spent one unit, so a second job still has one").isEqualTo(DecisionSource.AI_VALIDATED);
+            assertThat(httpRequests).hasValue(4);
             TriageDecision spent = engine.triage(request, UUID.randomUUID(), true);
-            assertThat(spent.fallbackReason()).as("two attempts, two units").isEqualTo(FallbackReason.BUDGET_SPENT);
-            assertThat(httpRequests).hasValue(3);
+            assertThat(spent.fallbackReason()).as("two jobs, two units").isEqualTo(FallbackReason.BUDGET_SPENT);
+            assertThat(httpRequests).hasValue(4);
         } finally {
             server.stop(0);
         }

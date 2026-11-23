@@ -10,9 +10,13 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -180,27 +184,6 @@ class GroqTriageProviderTest {
     }
 
     @Test
-    void countsTheTimeAlreadySpentAgainstTheWait() throws Exception {
-        AtomicInteger calls = new AtomicInteger();
-        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.createContext("/openai/v1/chat/completions", exchange -> {
-            calls.incrementAndGet();
-            exchange.getResponseHeaders().add("retry-after", "5");
-            respond(exchange, 429, "rate limited");
-        });
-        server.start();
-        AtomicLong now = new AtomicLong();
-        LongSupplier clock = () -> now.getAndAdd(Duration.ofSeconds(34).toNanos()); // each reading is 34 s later
-        List<Long> sleeps = new ArrayList<>();
-
-        assertThatThrownBy(() -> timedProvider(clock, sleeps::add).analyze(request(), ticket()))
-                .extracting(exception -> ((ProviderCallException) exception).errorCode())
-                .isEqualTo("HTTP_429");
-        assertThat(calls).hasValue(1);
-        assertThat(sleeps).isEmpty();
-    }
-
-    @Test
     void aSecondRateLimitAfterTheWaitEndsTheAttemptAsRateLimited() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
@@ -278,20 +261,190 @@ class GroqTriageProviderTest {
         assertThat(llama.path("max_completion_tokens").asInt()).isEqualTo(GroqTriageProvider.MAX_COMPLETION_TOKENS);
     }
 
-    @Test
-    void parsesGroqResetDurations() {
-        assertThat(GroqTriageProvider.parseDuration("7.66s")).contains(Duration.ofMillis(7_660));
-        assertThat(GroqTriageProvider.parseDuration("2m59.56s")).contains(Duration.ofMillis(179_560));
-        assertThat(GroqTriageProvider.parseDuration("1h2m3s")).contains(Duration.ofSeconds(3_723));
-        assertThat(GroqTriageProvider.parseDuration("250ms")).contains(Duration.ofMillis(250));
-        assertThat(GroqTriageProvider.parseDuration("3")).contains(Duration.ofSeconds(3));
-        assertThat(GroqTriageProvider.parseDuration("1.5")).contains(Duration.ofMillis(1_500));
-        assertThat(GroqTriageProvider.parseDuration("soon")).isEmpty();
-        assertThat(GroqTriageProvider.parseDuration("")).isEmpty();
-        assertThat(GroqTriageProvider.parseDuration(null)).isEmpty();
+    /**
+     * A clock that moves only when time really passes: in the server handler (the request took that long) and in the
+     * sleeper (the wait, plus 10 ms of overshoot, as Thread.sleep wakes late).
+     */
+    private static final class SteppedClock {
+        final AtomicLong nanos = new AtomicLong();
+
+        void advance(Duration by) { nanos.addAndGet(by.toNanos()); }
+
+        LongSupplier nanoTime() { return nanos::get; }
+
+        RateLimitWait.Sleeper sleeper(List<Long> sleeps) {
+            return millis -> {
+                sleeps.add(millis);
+                advance(Duration.ofMillis(millis + 10));
+            };
+        }
     }
 
-    private GroqTriageProvider timedProvider(LongSupplier nanoTime, GroqTriageProvider.Sleeper sleeper) {
+    @Test
+    void approvesAWaitOnlyWhenTheRetryStillHasItsMinimumTimeAfterOvershoot() throws Exception {
+        // Budget 45 s: first request 3 s, then wait + 1 s overshoot margin + 2 s connect + 5 s retry. 34 s fits exactly.
+        assertThat(boundaryRun("34s").sleeps()).containsExactly(34_000L);
+        assertThat(boundaryRun("34s").calls()).isEqualTo(2);
+        BoundaryRun over = boundaryRun("34.001s");
+        assertThat(over.sleeps()).as("one millisecond more does not fit").isEmpty();
+        assertThat(over.calls()).isEqualTo(1);
+        assertThat(over.errorCode()).isEqualTo("HTTP_429");
+    }
+
+    private record BoundaryRun(List<Long> sleeps, int calls, String errorCode) {}
+
+    private BoundaryRun boundaryRun(String resetTokens) throws Exception {
+        if (server != null) server.stop(0);
+        SteppedClock clock = new SteppedClock();
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            clock.advance(Duration.ofSeconds(3));
+            if (calls.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().add("x-ratelimit-reset-tokens", resetTokens);
+                respond(exchange, 429, "rate limited");
+            } else {
+                respond(exchange, 200, validResponse());
+            }
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+        String errorCode = null;
+        try {
+            timedProvider(clock.nanoTime(), clock.sleeper(sleeps)).analyze(request(), ticket());
+        } catch (ProviderCallException exception) {
+            errorCode = exception.errorCode();
+        }
+        return new BoundaryRun(sleeps, calls.get(), errorCode);
+    }
+
+    @Test
+    void countsTheTimeAlreadySpentAgainstTheWait() throws Exception {
+        SteppedClock clock = new SteppedClock();
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            clock.advance(Duration.ofSeconds(30)); // a slow first answer
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().add("retry-after", "8");
+            respond(exchange, 429, "rate limited");
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+
+        // 8 s alone fits the 45 s budget; after 30 s already spent, 30 + 8 + 1 + 2 + 5 = 46 does not.
+        assertThatThrownBy(() -> timedProvider(clock.nanoTime(), clock.sleeper(sleeps)).analyze(request(), ticket()))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_429");
+        assertThat(calls).hasValue(1);
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test
+    void aWaitLongerThanOneRedeliveryCouldCureFallsBackAtOnce() throws Exception {
+        for (Map<String, String> headers : List.of(Map.of("retry-after", "120"),
+                Map.of("x-ratelimit-remaining-requests", "0", "x-ratelimit-reset-requests", "7h12m3s"))) {
+            if (server != null) server.stop(0);
+            AtomicInteger calls = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+            server.createContext("/openai/v1/chat/completions", exchange -> {
+                calls.incrementAndGet();
+                headers.forEach((name, value) -> exchange.getResponseHeaders().add(name, value));
+                respond(exchange, 429, "rate limited");
+            });
+            server.start();
+            List<Long> sleeps = new ArrayList<>();
+
+            assertThatThrownBy(() -> timedProvider(() -> 0L, sleeps::add).analyze(request(), ticket()))
+                    .as(headers.toString())
+                    .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                    .isEqualTo("RATE_LIMIT_LONG_WAIT");
+            assertThat(calls).hasValue(1);
+            assertThat(sleeps).isEmpty();
+        }
+    }
+
+    @Test
+    void aZeroWaitStillWaitsTheJitterBeforeRetrying() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().add("retry-after", "0");
+                respond(exchange, 429, "rate limited");
+            } else {
+                respond(exchange, 200, validResponse());
+            }
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+
+        new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort() + "/openai/v1/chat/completions"),
+                "secret-key", "llama-3.1-8b-instant", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(2), () -> 40, GroqTriageProvider.CALL_BUDGET, () -> 0L, sleeps::add,
+                Clock.systemUTC()).analyze(request(), ticket());
+
+        assertThat(sleeps).containsExactly(40L);
+        assertThat(calls).hasValue(2);
+    }
+
+    @Test
+    void waitsForAnHttpDateRetryAfter() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().add("retry-after", "Mon, 23 Nov 2026 12:00:06 GMT");
+                respond(exchange, 429, "rate limited");
+            } else {
+                respond(exchange, 200, validResponse());
+            }
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+
+        new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort() + "/openai/v1/chat/completions"),
+                "secret-key", "llama-3.1-8b-instant", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(2), () -> 0, GroqTriageProvider.CALL_BUDGET, () -> 0L, sleeps::add,
+                Clock.fixed(Instant.parse("2026-11-23T12:00:00Z"), ZoneOffset.UTC)).analyze(request(), ticket());
+
+        assertThat(sleeps).containsExactly(6_000L);
+    }
+
+    @Test
+    void theWorkersTimeBudgetCapsTheCallBudget() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().add("retry-after", "5");
+            respond(exchange, 429, "rate limited");
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+        TriageRequest withTenSeconds = request().withCallContext(UUID.randomUUID(), Duration.ofSeconds(10));
+
+        // 5 s fits the 45 s budget, but the Lambda has only 10 s to give: 5 + 1 + 2 + 5 > 10.
+        assertThatThrownBy(() -> timedProvider(() -> 0L, sleeps::add).analyze(withTenSeconds, ticket()))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_429");
+        assertThat(sleeps).isEmpty();
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void aTruncatedAnswerHasItsOwnCode() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> respond(exchange, 200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"{\\\"category\\\":\\\"BILL\"}}]}"));
+        server.start();
+
+        assertThatThrownBy(() -> provider().analyze(request(), ticket()))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("RESPONSE_TRUNCATED");
+    }
+
+    private GroqTriageProvider timedProvider(LongSupplier nanoTime, RateLimitWait.Sleeper sleeper) {
         return new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort()
                         + "/openai/v1/chat/completions"), "secret-key", "llama-3.1-8b-instant",
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(), new ObjectMapper(),

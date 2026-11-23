@@ -80,6 +80,7 @@ class SqsWorkerPollerTest {
         verify(client).receiveMessage(request.capture());
         assertThat(request.getValue().messageSystemAttributeNames())
                 .contains(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT);
+        assertThat(request.getValue().maxNumberOfMessages()).as("one at a time, like the Lambda event source").isEqualTo(1);
         verify(worker).process(any(QueueMessage.class), org.mockito.ArgumentMatchers.eq(4));
     }
 

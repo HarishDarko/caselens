@@ -16,6 +16,7 @@ import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketRepository;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -255,7 +256,7 @@ class TriageWorkerTest {
 
         List<ILoggingEvent> lines = captureWorkerLog(() -> {
             WorkerResult result = worker(rateLimited()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1),
-                    TriageWorker.MAX_DELIVERIES);
+                    TriageWorker.RATE_LIMIT_DELIVERIES);
             assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK);
         });
 
@@ -283,19 +284,20 @@ class TriageWorkerTest {
         AppenderBase<ILoggingEvent> live = new AppenderBase<>() {
             @Override
             protected void append(ILoggingEvent event) {
-                if (event.getFormattedMessage().startsWith("triage.fallback ")) order.add("log");
+                if (event.getFormattedMessage().startsWith("triage.completed ")) order.add("completed");
+                if (event.getFormattedMessage().startsWith("triage.fallback ")) order.add("fallback");
             }
         };
         live.start();
         logger.addAppender(live);
         try {
             transactionalWorker(rateLimited(), committing)
-                    .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.MAX_DELIVERIES);
+                    .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.RATE_LIMIT_DELIVERIES);
         } finally {
             logger.detachAppender(live);
         }
 
-        assertThat(order).containsExactly("commit", "commit", "log");
+        assertThat(order).containsExactly("commit", "commit", "completed", "fallback");
     }
 
     @Test
@@ -314,10 +316,54 @@ class TriageWorkerTest {
 
         List<ILoggingEvent> lines = captureWorkerLog(() -> org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 transactionalWorker(rateLimited(), failingSecondCommit)
-                        .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.MAX_DELIVERIES))
+                        .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.RATE_LIMIT_DELIVERIES))
                 .hasMessage("commit failed"));
 
         assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.fallback "));
+        assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.completed "));
+    }
+
+    @Test
+    void theSecondDeliveryIsTheLastRateLimitRetrySoAVisitorWaitsAtMostOneRedelivery() {
+        claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        WorkerResult second = worker(rateLimited()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), 2);
+
+        assertThat(TriageWorker.RATE_LIMIT_DELIVERIES).isEqualTo(2).isLessThan(TriageWorker.MAX_DELIVERIES);
+        assertThat(second.status()).isEqualTo(WorkerResultStatus.ACK);
+        verify(results).save(any(TriageResult.class));
+    }
+
+    @Test
+    void givesTheProviderTheLambdasRemainingTimeLessTheReserveAndTheJobsEvent() {
+        claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        java.util.concurrent.atomic.AtomicReference<TriageRequest> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        TriageProvider capturing = (request, redacted) -> {
+            seen.set(request);
+            return new MockTriageProvider().analyze(request, redacted);
+        };
+
+        worker(capturing).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), 1, () -> 50_000L);
+
+        assertThat(seen.get().eventId()).isEqualTo(eventId);
+        assertThat(seen.get().timeBudget()).isEqualTo(Duration.ofSeconds(50).minus(TriageWorker.POST_CALL_RESERVE));
+    }
+
+    @Test
+    void anUnknownRemainingTimeLeavesTheProviderItsOwnBudget() {
+        claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        java.util.concurrent.atomic.AtomicReference<TriageRequest> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        TriageProvider capturing = (request, redacted) -> {
+            seen.set(request);
+            return new MockTriageProvider().analyze(request, redacted);
+        };
+
+        worker(capturing).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), 1);
+
+        assertThat(seen.get().timeBudget()).isNull();
     }
 
     private TriageJob claimableJob() {

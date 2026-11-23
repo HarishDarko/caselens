@@ -99,6 +99,7 @@ class TriageEngineTest {
     void otherFailuresFallBackOnEveryDelivery() {
         for (RuntimeException failure : java.util.List.of(new ProviderCallException("down", "HTTP_503"),
                 new ProviderCallException("too large", "HTTP_413"),
+                new ProviderCallException("daily limit", "RATE_LIMIT_LONG_WAIT"),
                 new ProviderCallException("spent", BudgetedTriageProvider.BUDGET_EXHAUSTED),
                 new ProviderCallException("bad", "SCHEMA_FAILURE"))) {
             TriageEngine engine = new TriageEngine(new TicketRedactor(), failing(failure), new RulesFallbackProvider(),

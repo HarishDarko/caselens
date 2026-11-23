@@ -10,7 +10,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -124,6 +127,50 @@ class GeminiTriageProviderTest {
         now[0] = Duration.ofSeconds(32).toNanos();
         // 45 s budget - 32 s spent - 2 s connect allowance: the retry gets 11 s, so the whole call stays under 60 s.
         assertThat(provider.attemptTimeout(0)).isEqualTo(Duration.ofSeconds(11));
+    }
+
+    @Test
+    void followsTheSameRateLimitRuleAsGroq() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<String> retryAfter = new AtomicReference<>("3");
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/interactions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().add("retry-after", retryAfter.get());
+                respond(exchange, 429, "rate limited");
+            } else {
+                respond(exchange, 200, validResponse());
+            }
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+        GeminiTriageProvider provider = new GeminiTriageProvider(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
+                "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(2), () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> 0L,
+                sleeps::add, Clock.systemUTC());
+        RedactedTicket ticket = new RedactedTicket("Payment accepted", "Payment accepted but session never started.");
+
+        provider.analyze(request(), ticket);
+        assertThat(sleeps).as("waits retry-after, then retries in the call").containsExactly(3_000L);
+        assertThat(calls).hasValue(2);
+
+        calls.set(0);
+        sleeps.clear();
+        retryAfter.set("120");
+        assertThatThrownBy(() -> provider.analyze(request(), ticket))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("RATE_LIMIT_LONG_WAIT");
+        assertThat(sleeps).isEmpty();
+        assertThat(calls).hasValue(1);
+
+        calls.set(0);
+        retryAfter.set("39");
+        assertThatThrownBy(() -> provider.analyze(request(), ticket))
+                .as("a wait that fits no retry in this call is left for SQS")
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_429");
+        assertThat(calls).hasValue(1);
     }
 
     private GeminiTriageProvider provider() {

@@ -3,8 +3,10 @@ package com.harishdarko.caselens.triage;
 import com.harishdarko.caselens.ticket.Ticket;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionOperations;
@@ -13,12 +15,20 @@ import tools.jackson.databind.ObjectMapper;
 public class TriageWorker {
     private static final Logger log = LoggerFactory.getLogger(TriageWorker.class);
     static final String CLAIM_LEASE_EXPIRED = "CLAIM_LEASE_EXPIRED";
-    /**
-     * SQS maxReceiveCount on the triage queue (infra/terraform/main.tf, checked by WorkerTimingContractTest). On this
-     * delivery a rate-limited provider call falls back to the rules instead of asking for another delivery, so a rate
-     * limit never sends a job to the DLQ.
-     */
+    /** SQS maxReceiveCount on the triage queue (infra/terraform/main.tf, checked by WorkerTimingContractTest). */
     static final int MAX_DELIVERIES = 5;
+    /**
+     * The last delivery a rate-limited provider call is retried on: the first is retried once by SQS (90 s later),
+     * the second falls back to the rules. A visitor then waits at most one redelivery plus one worker run, inside the
+     * page's 150 s wait, and a rate limit never sends a job to the DLQ.
+     */
+    static final int RATE_LIMIT_DELIVERIES = 2;
+    /**
+     * Time kept back from the Lambda's remaining time for what follows the provider call: the invocation record in its
+     * own transaction (which may need a fresh connection, up to Hikari's 10 s connect timeout), the rules fallback and
+     * the result commit. The provider call gets the rest (TriageRequest.timeBudget).
+     */
+    static final Duration POST_CALL_RESERVE = Duration.ofSeconds(14);
     private final TriageJobRepository jobs;
     private final com.harishdarko.caselens.ticket.TicketRepository tickets;
     private final TriageResultRepository results;
@@ -80,15 +90,20 @@ public class TriageWorker {
         return process(message, 0);
     }
 
+    public WorkerResult process(QueueMessage message, int receiveCount) {
+        return process(message, receiveCount, null);
+    }
+
     /**
      * {@code receiveCount} is SQS's ApproximateReceiveCount for this delivery (1 for the first), or 0 when unknown.
-     * Before the final delivery (MAX_DELIVERIES) a rate-limited provider call ends the attempt as a retryable failure
-     * and SQS delivers the message again after its visibility timeout.
+     * Before RATE_LIMIT_DELIVERIES a rate-limited provider call ends the attempt as a retryable failure and SQS
+     * delivers the message again after its visibility timeout. {@code remainingMillis} is the Lambda's remaining time
+     * (null outside Lambda); the provider call gets it less POST_CALL_RESERVE.
      */
-    public WorkerResult process(QueueMessage message, int receiveCount) {
+    public WorkerResult process(QueueMessage message, int receiveCount, LongSupplier remainingMillis) {
         Timer.Sample latency = metrics.startLatency();
         try {
-            return processInternal(message, receiveCount <= 0 || receiveCount >= MAX_DELIVERIES);
+            return processInternal(message, receiveCount <= 0 || receiveCount >= RATE_LIMIT_DELIVERIES, remainingMillis);
         } finally {
             metrics.stopLatency(latency);
         }
@@ -103,7 +118,7 @@ public class TriageWorker {
      * final writes only land while this worker still owns the claim (see stillOwned). Each step takes the ticket row
      * lock before it touches the job (see lockTicket).
      */
-    private WorkerResult processInternal(QueueMessage message, boolean finalDelivery) {
+    private WorkerResult processInternal(QueueMessage message, boolean finalDelivery, LongSupplier remainingMillis) {
         Claim claim = transactions.execute(status -> claim(message));
         if (claim.outcome() != null) return claim.outcome();
         TriageJob job = claim.job();
@@ -113,15 +128,24 @@ public class TriageWorker {
             if (demoFailurePolicy.shouldFail(ticket.getScenarioKey(), job.getAttemptCount(), job.getReplayedFromJobId())) {
                 throw new SyntheticDemoRetryException();
             }
-            decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
-                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())), job.getEventId(), finalDelivery);
+            TriageRequest request = new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
+                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId()));
+            // Measured here, after the claim and the pack lookup, so slow database work before the call is counted.
+            Duration timeBudget = remainingMillis == null ? null
+                    : Duration.ofMillis(remainingMillis.getAsLong()).minus(POST_CALL_RESERVE);
+            decision = engine.triage(request.withCallContext(job.getEventId(), timeBudget), job.getEventId(), finalDelivery);
         } catch (RuntimeException failure) {
             return transactions.execute(status -> recordFailure(message, claim, failure));
         }
         WorkerResult outcome = transactions.execute(status -> complete(message, claim, decision));
-        // After the commit, so a line is only ever written for a result that was saved.
-        if (outcome.status() == WorkerResultStatus.ACK && decision.decisionSource() == DecisionSource.RULES_FALLBACK) {
-            logFallback(message, job, decision.fallback());
+        // After the commit, so the counts and lines only ever describe a result that was saved.
+        if (outcome.status() == WorkerResultStatus.ACK) {
+            metrics.completed();
+            if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) metrics.fallback();
+            log.info("triage.completed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} source={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(),
+                    message.eventId(), decision.decisionSource());
+            if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) logFallback(message, job, decision.fallback());
         }
         return outcome;
     }
@@ -262,11 +286,6 @@ public class TriageWorker {
             attempt.complete(clock.instant());
             attempts.save(attempt);
         }
-        metrics.completed();
-        if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) metrics.fallback();
-        log.info("triage.completed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} source={}",
-                message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(),
-                message.eventId(), decision.decisionSource());
         return WorkerResult.ack();
     }
 

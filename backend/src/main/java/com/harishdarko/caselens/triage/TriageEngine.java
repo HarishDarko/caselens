@@ -59,9 +59,11 @@ public final class TriageEngine {
     public TriageDecision triage(TriageRequest request, UUID eventId, boolean finalDelivery) {
         Objects.requireNonNull(request);
         RedactedTicket redacted = redactor.redact(request.subject(), request.message());
+        TriageRequest call = eventId != null && request.eventId() == null
+                ? request.withCallContext(eventId, request.timeBudget()) : request;
         Instant started = clock.instant();
         try {
-            ProviderCall providerCall = primaryProvider.analyze(request, redacted);
+            ProviderCall providerCall = primaryProvider.analyze(call, redacted);
             ProviderTriageResult providerResult = providerCall.result();
             ValidatedProviderResult validated = validator.validate(providerResult, redacted, request.pack());
             Instant ended = clock.instant();
