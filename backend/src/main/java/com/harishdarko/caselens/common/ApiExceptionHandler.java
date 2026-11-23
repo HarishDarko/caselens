@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.common;
 
+import com.harishdarko.caselens.demo.InvalidDemoTokenException;
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -15,6 +16,15 @@ class ApiExceptionHandler {
     @ExceptionHandler(TicketNotFoundException.class)
     ResponseEntity<ProblemDetail> ticketNotFound() {
         return problem(HttpStatus.NOT_FOUND, "Not found", "Ticket not found");
+    }
+
+    /**
+     * The workspace was deleted after the request passed the token check: the same 401 the bearer filter sends for
+     * an expired session, so the page starts a new demo instead of showing a server error.
+     */
+    @ExceptionHandler(InvalidDemoTokenException.class)
+    ResponseEntity<ProblemDetail> invalidSession() {
+        return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", "Invalid or expired demo session");
     }
 
     /** The problem type and code a client checks to tell a workspace cap apart from other 409 answers. */

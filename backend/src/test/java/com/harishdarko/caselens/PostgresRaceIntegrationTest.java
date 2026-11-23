@@ -1,10 +1,13 @@
 package com.harishdarko.caselens;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
 import com.harishdarko.caselens.demo.DemoRetentionSweep;
 import com.harishdarko.caselens.demo.DemoSessionService;
+import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
+import com.harishdarko.caselens.demo.InvalidDemoTokenException;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketService;
 import java.sql.Connection;
@@ -34,7 +37,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-/** CL2-08 and CL2-12: races that only a real PostgreSQL shows, with its row locks and READ COMMITTED rechecks. */
+/**
+ * CL2-04, CL2-08 and CL2-12 on a real PostgreSQL schema: the native client-key query, the workspace row lock, and
+ * READ COMMITTED rechecks.
+ */
 @Testcontainers
 @SpringBootTest(properties = {
     "CASELENS_SESSION_SECRET=test-session-secret-that-is-at-least-thirty-two-bytes",
@@ -63,6 +69,35 @@ class PostgresRaceIntegrationTest {
     @Autowired DemoRetentionSweep sweep;
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
+    @Autowired DemoWorkspaceAccess workspaces;
+
+    @Test
+    void theClientKeyQueryFindsTheOpenerOfATicketsWorkspace() {
+        UUID keyed = sessions.create("ev-charging", "fedcba9876543210fedcba9876543210").workspaceId();
+        UUID unkeyed = sessions.create("ev-charging").workspaceId();
+        UUID keyedTicket = tickets.create(keyed, "Charger offline", "The charger at bay four is offline again today.",
+                TicketChannel.WEB).getId();
+        UUID unkeyedTicket = tickets.create(unkeyed, "Charger offline", "The charger at bay two is offline again today.",
+                TicketChannel.WEB).getId();
+
+        assertThat(workspaces.clientKeyOfTicket(keyedTicket)).contains("fedcba9876543210fedcba9876543210");
+        assertThat(workspaces.clientKeyOfTicket(unkeyedTicket)).isEmpty();
+        assertThat(workspaces.clientKeyOfTicket(UUID.randomUUID())).isEmpty();
+    }
+
+    /**
+     * The retention sweep can delete an expired workspace after a request passed the token check. Adding to it then
+     * answers like an expired session (401) instead of failing on the tickets foreign key (500).
+     */
+    @Test
+    void writesToADeletedWorkspaceAnswerAsAnExpiredSession() {
+        UUID gone = UUID.randomUUID();
+
+        assertThatThrownBy(() -> tickets.create(gone, "Charger offline", "The charger at bay four is offline again today.",
+                TicketChannel.WEB)).isInstanceOf(InvalidDemoTokenException.class);
+        assertThatThrownBy(() -> tickets.reset(gone)).isInstanceOf(InvalidDemoTokenException.class);
+        assertThat(jdbc.queryForObject("select count(*) from tickets where workspace_id = ?", Long.class, gone)).isZero();
+    }
 
     @Test
     void concurrentTicketCreatesNeverPassTheWorkspaceCap() throws Exception {
