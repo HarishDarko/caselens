@@ -5,6 +5,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Spends one unit of the global daily AI budget, and of the calling client's daily share of it, before each provider
@@ -12,6 +14,7 @@ import java.util.function.Function;
  * for any other provider failure. The error code on the model-invocation record says which one ran out.
  */
 public final class BudgetedTriageProvider implements TriageProvider {
+    private static final Logger log = LoggerFactory.getLogger(BudgetedTriageProvider.class);
     static final String BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED";
     static final String SHARE_EXHAUSTED = "AI_BUDGET_SHARE_EXHAUSTED";
     private final TriageProvider delegate;
@@ -44,12 +47,15 @@ public final class BudgetedTriageProvider implements TriageProvider {
 
     /**
      * A failed lookup counts the call against the global budget only, which still caps the cost; it must not turn a
-     * triage into a fallback on its own.
+     * triage into a fallback on its own. It is logged, because while lookups fail the per-client share is off. The
+     * log names the ticket and the error type only, never the client key or an address.
      */
     private String clientKeyOf(UUID ticketId) {
         try {
             return clientKeys.apply(ticketId).orElse(null);
         } catch (RuntimeException lookupFailed) {
+            log.warn("triage.ai_share_lookup_failed ticketId={} errorType={} effect=global_budget_only",
+                    ticketId, lookupFailed.getClass().getSimpleName());
             return null;
         }
     }

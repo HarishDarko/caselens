@@ -29,10 +29,6 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
     /** Requests per minute for each kind of POST. */
     record Limits(int session, int triage, int mutation, int ticket, int feedback) {}
 
-    DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, boolean trustGatewayClientIp, Limits perMinute) {
-        this(limits, objectMapper, new ClientAddresses(trustGatewayClientIp), perMinute);
-    }
-
     DemoRateLimitFilter(RateLimitService limits, ObjectMapper objectMapper, ClientAddresses addresses, Limits perMinute) {
         this.limits = limits;
         this.objectMapper = objectMapper;
@@ -65,7 +61,7 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
     Bucket bucketFor(HttpServletRequest request) {
         if (!"POST".equalsIgnoreCase(request.getMethod())) return null;
         String uri = request.getRequestURI();
-        if (uri.equals("/api/demo/session")) return new Bucket("session:" + clientAddress(request), perMinute.session());
+        if (uri.equals("/api/demo/session")) return new Bucket("session:" + clientKey(request), perMinute.session());
         if (uri.matches(TRIAGE_PATH)) return new Bucket("triage:" + owner(request), perMinute.triage());
         if (uri.equals("/api/tickets")) return new Bucket("ticket:" + owner(request), perMinute.ticket());
         if (uri.matches(FEEDBACK_PATH)) return new Bucket("feedback:" + owner(request), perMinute.feedback());
@@ -75,17 +71,26 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
         return null;
     }
 
-    /** The workspace for a signed-in caller; the client address before the request is turned away as 401. */
+    /** The workspace for a signed-in caller; the client key before the request is turned away as 401. */
     private String owner(HttpServletRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication != null && authentication.getPrincipal() instanceof DemoPrincipal principal) {
             return principal.workspaceId().toString();
         }
-        return clientAddress(request);
+        return clientKey(request);
     }
 
     String clientAddress(HttpServletRequest request) {
         return addresses.address(request);
+    }
+
+    /**
+     * Buckets for anonymous callers are keyed by the HMAC client key, not the address, so rate_limit_buckets and the
+     * rate-limit log line never hold a client's IP. It is also the AI share's key, so an IPv6 caller is one client
+     * per /64 here too.
+     */
+    String clientKey(HttpServletRequest request) {
+        return addresses.clientKey(request);
     }
 
     record Bucket(String key, int limit) {}

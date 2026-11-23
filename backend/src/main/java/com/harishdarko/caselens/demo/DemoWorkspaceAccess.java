@@ -31,11 +31,13 @@ public class DemoWorkspaceAccess {
 
     /**
      * Holds the workspace row lock until the caller's transaction ends, so a per-workspace cap check and the insert
-     * after it run one at a time for the workspace instead of each seeing the same count.
+     * after it run one at a time for the workspace instead of each seeing the same count. When the row is gone (the
+     * retention sweep deleted the expired workspace after the request's token check), the caller gets the same
+     * "invalid or expired demo session" answer as at the door, instead of a foreign-key failure on the insert.
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void lockForUpdate(UUID workspaceId) {
-        workspaces.findByIdForUpdate(workspaceId);
+        if (workspaces.findByIdForUpdate(workspaceId).isEmpty()) throw new InvalidDemoTokenException();
     }
 
     @Transactional(readOnly = true)
