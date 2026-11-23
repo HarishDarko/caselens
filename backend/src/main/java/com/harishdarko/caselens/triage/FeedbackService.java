@@ -38,13 +38,31 @@ public class FeedbackService {
     }
 
     /**
-     * Saves a reviewer correction. requestId, when the client sends one, becomes the feedback id, so the same submit
-     * arriving twice (the browser resends it after a throttled 429 it could not read, CL-05) saves one entry and
-     * answers the second arrival with it.
+     * A correction, as clients sent before the review decision existed. Transactional itself: the call below is a
+     * self-invocation, which the proxy does not see, and the workspace lock needs the transaction.
      */
     @Transactional
     public FeedbackSnapshot submit(UUID workspaceId, UUID ticketId, UUID requestedResultId,
             Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, UUID requestId) {
+        return submit(workspaceId, ticketId, requestedResultId, FeedbackDecision.CORRECTED, correctedCategory,
+                correctedUrgency, correctedSlaRisk, note, requestId);
+    }
+
+    /**
+     * Saves a reviewer decision: ACCEPTED keeps the AI's call (no field may change, no note needed), CORRECTED changes
+     * at least one field (a note is optional). Entries are only ever added, never edited, so a changed review is a
+     * new entry. requestId, when the client sends one, becomes the feedback id, so the same submit arriving twice
+     * (the browser resends it after a throttled 429 it could not read, CL-05) saves one entry and answers the second
+     * arrival with it.
+     */
+    @Transactional
+    public FeedbackSnapshot submit(UUID workspaceId, UUID ticketId, UUID requestedResultId, FeedbackDecision decision,
+            Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, UUID requestId) {
+        FeedbackDecision effective = decision == null ? FeedbackDecision.CORRECTED : decision;
+        if (effective == FeedbackDecision.ACCEPTED
+                && (correctedCategory != null || correctedUrgency != null || correctedSlaRisk != null)) {
+            throw new ConstraintViolationException("An accepted result keeps every field", Set.of());
+        }
         // The workspace lock comes first, as in TicketService, and is held until the insert commits. Concurrent
         // submits then count one after the other; a concurrent reset finishes before the ticket and result are read,
         // so a deleted ticket is a 404 instead of a foreign-key failure on the insert; and a workspace the retention
@@ -54,8 +72,8 @@ public class FeedbackService {
             var earlier = feedback.findByIdAndWorkspaceId(requestId, workspaceId);
             if (earlier.isPresent()) {
                 // A resend is the same request. The same id with another body is a client error, not a resend.
-                if (!earlier.get().sameSubmission(ticketId, requestedResultId, correctedCategory, correctedUrgency,
-                        correctedSlaRisk, note)) {
+                if (!earlier.get().sameSubmission(ticketId, requestedResultId, effective, correctedCategory,
+                        correctedUrgency, correctedSlaRisk, note)) {
                     throw new IllegalArgumentException("The request id was used for another feedback entry");
                 }
                 return FeedbackSnapshot.from(earlier.get());
@@ -75,9 +93,10 @@ public class FeedbackService {
         if (!result.getTicketId().equals(ticket.getId())) {
             throw new IllegalArgumentException("Triage result does not belong to the ticket");
         }
-        TriageFeedback candidate = TriageFeedback.submit(requestId == null ? UUID.randomUUID() : requestId, workspaceId, ticketId, result.getId(),
-                correctedCategory, correctedUrgency, correctedSlaRisk, note, "demo-reviewer", clock.instant());
-        if (!candidate.differsFrom(result)) {
+        TriageFeedback candidate = TriageFeedback.submit(requestId == null ? UUID.randomUUID() : requestId, workspaceId,
+                ticketId, result.getId(), effective, correctedCategory, correctedUrgency, correctedSlaRisk, note,
+                "demo-reviewer", clock.instant());
+        if (effective == FeedbackDecision.CORRECTED && !candidate.differsFrom(result)) {
             throw new IllegalArgumentException("Feedback must change at least one triage field");
         }
         if (feedback.countByWorkspaceId(workspaceId) >= maxFeedbackPerWorkspace) {

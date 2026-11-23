@@ -100,6 +100,15 @@ class FeedbackEvaluationApiIntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"triageResultId\":\"" + original.getId() + "\",\"urgency\":\"HIGH\"}"))
+                // The redesigned review bar sends no note when the override reason is left empty.
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.decision").value("CORRECTED"))
+                .andExpect(jsonPath("$.note").doesNotExist());
+        mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"triageResultId\":\"" + original.getId() + "\",\"urgency\":\"HIGH\",\"note\":\""
+                                + "x".repeat(501) + "\"}"))
                 .andExpect(status().isBadRequest());
 
         mvc.perform(get("/api/tickets/{id}/feedback", ticketId).header("Authorization", "Bearer " + token))

@@ -48,12 +48,13 @@ class DemoIndustryApiTest {
                 .andExpect(jsonPath("$.industries[0].id").value("ev-charging"))
                 .andExpect(jsonPath("$.industries[0].name").value("EV charging"))
                 .andExpect(jsonPath("$.industries[0].featuredScenario.key").value("charger-offline-site-wide"))
-                .andExpect(jsonPath("$.industries[0].scenarios.length()").value(9))
+                .andExpect(jsonPath("$.industries[0].scenarios.length()").value(8))
+                .andExpect(jsonPath("$.industries[0].scenarios[?(@.key == 'provider-retry-demo')]").isEmpty())
                 .andExpect(jsonPath("$.industries[1].id").value("e-commerce"))
                 .andExpect(jsonPath("$.industries[1].featuredScenario.key").value("shop-checkout-down"))
                 .andExpect(jsonPath("$.industries[2].id").value("saas-support"))
                 .andExpect(jsonPath("$.industries[2].featuredScenario.key").value("saas-sso-lockout"))
-                .andExpect(jsonPath("$.industries[2].scenarios.length()").value(9));
+                .andExpect(jsonPath("$.industries[2].scenarios.length()").value(8));
     }
 
     @Test
@@ -85,11 +86,14 @@ class DemoIndustryApiTest {
         String token = session("saas-support");
 
         mvc.perform(post("/api/demo/reset").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(9));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(8));
         String page = mvc.perform(get("/api/tickets?page=0&size=50").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-        assertThat(page).contains("Whole team locked out after an SSO change", "Synthetic provider timeout for retry review")
-                .doesNotContain("Payment accepted but charging did not start");
+        assertThat(page).contains("Whole team locked out after an SSO change")
+                .doesNotContain("Payment accepted but charging did not start", "Synthetic provider timeout for retry review");
+        // The retry demonstration is no longer seeded, but Quality and operations can still create it on demand.
+        mvc.perform(post("/api/demo/scenarios/provider-retry-demo").header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated());
 
         mvc.perform(post("/api/demo/scenarios/charger-offline-site-wide").header("Authorization", "Bearer " + token))
                 .andExpect(status().isConflict());

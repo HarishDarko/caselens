@@ -3,6 +3,15 @@
   "name": "EV charging",
   "categories": ["BILLING", "CHARGING_SESSION", "CHARGER_HARDWARE", "CONNECTIVITY", "ACCOUNT_ACCESS", "REFUND", "GENERAL"],
   "generalCategory": "GENERAL",
+  "categoryLabels": {
+    "BILLING": "Billing",
+    "CHARGING_SESSION": "Charging session",
+    "CHARGER_HARDWARE": "Charger hardware",
+    "CONNECTIVITY": "Connectivity",
+    "ACCOUNT_ACCESS": "Account access",
+    "REFUND": "Refund",
+    "GENERAL": "General"
+  },
   "categoryDescriptions": {
     "BILLING": "Payments, charges, receipts and other billing questions.",
     "CHARGING_SESSION": "A charging session that did not start, stopped early or charged slowly.",
@@ -14,12 +23,12 @@
   },
   "policyVersion": "v1",
   "policies": [
-    { "id": "PAYMENT_CAPTURE_NO_SESSION", "guidance": "Verify session and payment state; do not promise a refund before confirmation." },
-    { "id": "DUPLICATE_CHARGE_REVIEW", "guidance": "Collect transaction references and escalate for billing review." },
-    { "id": "CHARGER_SITE_OUTAGE", "guidance": "Identify affected site scope and escalate operational impact." },
-    { "id": "CONNECTOR_FAULT", "guidance": "Isolate connector-specific faults and check alternate connector availability." },
-    { "id": "OCPP_CONNECTIVITY", "guidance": "Verify heartbeat, last-seen timestamp, and network path." },
-    { "id": "ACCOUNT_AUTHORIZATION", "guidance": "Verify account or RFID state without requesting secrets." }
+    { "id": "PAYMENT_CAPTURE_NO_SESSION", "label": "Payment captured, no session", "guidance": "Verify session and payment state; do not promise a refund before confirmation." },
+    { "id": "DUPLICATE_CHARGE_REVIEW", "label": "Duplicate charge review", "guidance": "Collect transaction references and escalate for billing review." },
+    { "id": "CHARGER_SITE_OUTAGE", "label": "Site outage", "guidance": "Identify affected site scope and escalate operational impact." },
+    { "id": "CONNECTOR_FAULT", "label": "Connector fault", "guidance": "Isolate connector-specific faults and check alternate connector availability." },
+    { "id": "OCPP_CONNECTIVITY", "label": "OCPP connectivity", "guidance": "Verify heartbeat, last-seen timestamp, and network path." },
+    { "id": "ACCOUNT_AUTHORIZATION", "label": "Account authorization", "guidance": "Verify account or RFID state without requesting secrets." }
   ],
   "rules": {
     "category": [

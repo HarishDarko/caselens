@@ -175,7 +175,7 @@ test('lets the visitor pick and launch at once, before a cold API answers the in
 test('uses the list from the API when it differs from the bundled one', async () => {
   render(<App />)
 
-  expect(screen.getAllByText('9 demo tickets').length).toBe(3)
+  expect(screen.getAllByText('8 demo tickets').length).toBe(3)
   await waitFor(() => expect(screen.getAllByText('1 demo tickets').length).toBe(3))
 })
 

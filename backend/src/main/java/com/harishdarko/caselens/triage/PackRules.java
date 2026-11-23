@@ -27,6 +27,8 @@ public final class PackRules {
     private final List<Category> categories;
     private final Category generalCategory;
     private final Map<Category, String> categoryDescriptions;
+    private final Map<Category, String> categoryLabels;
+    private final Map<String, String> policyLabels;
     private final PolicyCatalog policies;
     private final List<TermRule<Category>> categoryRules;
     private final List<TermRule<Urgency>> urgencyRules;
@@ -54,10 +56,18 @@ public final class PackRules {
             descriptions.put(category, required(required(root, "categoryDescriptions"), category.name()).asText());
         }
         categoryDescriptions = Map.copyOf(descriptions);
+        Map<Category, String> labels = new LinkedHashMap<>();
+        for (Category category : categories) {
+            labels.put(category, required(required(root, "categoryLabels"), category.name()).asText());
+        }
+        categoryLabels = Map.copyOf(labels);
         Map<String, String> guidance = new LinkedHashMap<>();
+        Map<String, String> policyNames = new LinkedHashMap<>();
         for (JsonNode policy : required(root, "policies")) {
             guidance.put(required(policy, "id").asText(), required(policy, "guidance").asText());
+            policyNames.put(required(policy, "id").asText(), required(policy, "label").asText());
         }
+        policyLabels = Map.copyOf(policyNames);
         policies = PolicyCatalog.of(required(root, "policyVersion").asText(), guidance);
         JsonNode rules = required(root, "rules");
         categoryRules = termRules(required(rules, "category"), this::requireCategory);
@@ -116,6 +126,15 @@ public final class PackRules {
 
     /** One plain line that tells the model what the category covers. */
     String description(Category category) { return categoryDescriptions.get(category); }
+
+    /** The category's name as the page shows it ("Charger hardware"); null for a category outside this pack. */
+    String categoryLabel(Category category) { return categoryLabels.get(category); }
+
+    /** The policy's name as the page shows it ("Connector fault"); null for a policy outside this pack. */
+    String policyLabel(String policyId) { return policyLabels.get(policyId); }
+
+    /** The version of this pack's policy guidance ("v1", "saas-v1"). */
+    String policyVersion() { return policies.version(); }
 
     /** The category used when no rule matches; the scorer and the rules treat it as the general, low-urgency case. */
     Category generalCategory() { return generalCategory; }
