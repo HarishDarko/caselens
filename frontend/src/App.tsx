@@ -65,6 +65,8 @@ function App() {
   // One polite live region carries state changes (triage stage, review saved). It is never refreshed on a timer.
   const [announcement, setAnnouncement] = useState('')
   const resumeLiveRef = useRef<(() => void) | null>(null)
+  // Reads Evaluation or Operations once, now, without waiting for the next 5-second tick.
+  const refreshLiveRef = useRef<(() => void) | null>(null)
   // Every request a workspace starts carries this signal. Closing the demo or opening another workspace aborts it, so a
   // triage poll from the old workspace stops and never writes into the next one.
   const sessionAbortRef = useRef(new AbortController())
@@ -159,6 +161,7 @@ function App() {
     const onVisibility = () => { if (document.visibilityState === 'hidden') stop(); else if (!paused) resume() }
     const onActivity = () => { lastActivity = Date.now(); if (paused) resume() }
     resumeLiveRef.current = resume
+    refreshLiveRef.current = () => { void refresh() }
     setLiveState('loading')
     setLastUpdated(null)
     resume()
@@ -170,6 +173,7 @@ function App() {
       controller.abort()
       stop()
       resumeLiveRef.current = null
+      refreshLiveRef.current = null
       document.removeEventListener('visibilitychange', onVisibility)
       activityEvents.forEach((name) => window.removeEventListener(name, onActivity))
     }
@@ -288,11 +292,17 @@ function App() {
   function selectTicket(ticketId: string) {
     const ticket = inboxTickets.find((item) => item.id === ticketId)
     setSelectedTicketId(ticketId)
-    if (isPhone()) {
+    const phone = isPhone()
+    if (phone) {
       if (pane !== 'detail') window.history.pushState({ caselens: 'detail' }, '')
       setPane('detail')
-      window.requestAnimationFrame(() => { window.scrollTo(0, 0); document.querySelector<HTMLElement>('.detail')?.focus({ preventScroll: true }) })
     }
+    // Focus follows the reviewer's choice to the ticket heading, so a screen reader reads it out. The laptop's own
+    // auto-open on launch does not come through here, so it never takes focus.
+    window.requestAnimationFrame(() => {
+      if (phone) { try { window.scrollTo(0, 0) } catch { /* jsdom and old browsers */ } }
+      document.getElementById('detail-subject')?.focus({ preventScroll: true })
+    })
     if (ticket) void hydrateTriage(ticket)
   }
   function backToList() {
@@ -346,7 +356,7 @@ function App() {
       setTickets((current) => current.some((ticket) => ticket.backendId === created.backendId) ? current : [...current, created])
       await api.requestTriage(created.backendId, signal)
       if (signal.aborted) return
-      resumeLiveRef.current?.()
+      refreshLiveRef.current?.()
     }
     catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not start the retry demo. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
   }

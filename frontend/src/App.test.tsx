@@ -214,6 +214,7 @@ test('gives the full journey when the API does not know the industry list yet (4
 })
 
 test('runs live triage on an opened ticket, shows the real trace, and records an override (older API)', async () => {
+  const fetchMock = mockBackend()
   render(<App />)
   await openInbox()
 
@@ -233,6 +234,10 @@ test('runs live triage on an opened ticket, shows the real trace, and records an
   fireEvent.click(detail().getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(detail().getByText('Overridden.')).toBeInTheDocument())
   expect(screen.getByRole('status')).toHaveTextContent('Override logged. AI Critical, you High.')
+  // The older API has no decision field; it reads triageResultId.
+  const body = JSON.parse(String(fetchMock.mock.calls.find(([url]) => String(url).endsWith('/feedback'))?.[1]?.body)) as Record<string, unknown>
+  expect(body).not.toHaveProperty('decision')
+  expect(body).toMatchObject({ triageResultId: 'result-1', urgency: 'HIGH', note: 'The synthetic case indicates higher customer impact.' })
 })
 
 test('keeps waiting through a slow worker start and explains the delay', async () => {
@@ -312,6 +317,7 @@ test('says where to go when triage fails, on that ticket', async () => {
 
   await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.'))
   expect(row(PAYMENT)).toHaveTextContent('Triage failed')
+  expect(detail().queryByText('Open this ticket to run the live AI on it.')).not.toBeInTheDocument()
   expect(screen.queryByText(/terminal failure/i)).not.toBeInTheDocument()
 })
 
@@ -361,9 +367,12 @@ test('runs the controlled retry demo from Operations and keeps its ticket out of
 
   fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Run controlled retry demo' })).toBeEnabled())
+  const overviewReads = calls(fetchMock, '/api/operations/overview')
   fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a105/triage'), expect.objectContaining({ method: 'POST' })))
+  // Operations reads again at once instead of waiting for its next 5-second tick.
+  await waitFor(() => expect(calls(fetchMock, '/api/operations/overview')).toBe(overviewReads + 1), { timeout: 1_000 })
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/scenarios/provider-retry-demo'), expect.objectContaining({ method: 'POST' }))
   expect(screen.getByRole('heading', { name: 'Operations' })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
@@ -672,6 +681,19 @@ test('opens the hybrid queue: recorded results first, the top one already open, 
   expect(apiCallsAfterLaunch(fetchMock)).toEqual(['POST /api/demo/session?seed=true'])
 })
 
+test('moves focus to the ticket heading when the reviewer opens one, but not on the automatic open', async () => {
+  mockSeededBackend([recordedOffline, recordedReceipt])
+  render(<App />)
+  await openInbox()
+
+  expect(document.getElementById('detail-subject')).toHaveTextContent('Every charger at the demo site appears offline')
+  expect(document.getElementById('detail-subject')).not.toHaveFocus()
+  fireEvent.click(row('Receipt requested'))
+
+  await waitFor(() => expect(document.getElementById('detail-subject')).toHaveFocus())
+  expect(document.getElementById('detail-subject')).toHaveTextContent('Receipt requested for a completed session')
+})
+
 test('accepts the AI call with one click and logs it, without a note or an urgency', async () => {
   const bodies: Array<Record<string, unknown>> = []
   mockSeededBackend([recordedOffline, apiTicket], {}, (body) => { bodies.push(body); return response({ id: 'feedback-1', decision: body.decision }, 201) })
@@ -830,9 +852,14 @@ test('on a phone, opens on the list, shows a ticket as its own screen, and retur
 
   expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'list')
   expect(document.querySelector('.detail-empty')).toBeInTheDocument()
+  const scrollTo = vi.fn()
+  vi.stubGlobal('scrollTo', scrollTo)
   fireEvent.click(row('Every charger'))
   expect(document.querySelector('.app')).toHaveAttribute('data-pane', 'detail')
   expect(pushState).toHaveBeenCalledTimes(1)
+  // The ticket screen starts at the top, with focus on its heading.
+  await waitFor(() => expect(document.getElementById('detail-subject')).toHaveFocus())
+  expect(scrollTo).toHaveBeenCalledWith(0, 0)
   expect(screen.getByRole('region', { name: 'Review' })).toBeInTheDocument()
   expect(detail().getByRole('button', { name: 'Accept' })).toBeInTheDocument()
 

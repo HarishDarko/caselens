@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { locateQuote, placeEvidence, segments } from './evidence'
+import { locateQuote, placeEvidence, quoteSummary, segments } from './evidence'
 import examples from './landing-examples.json'
 
 const marked = (text: string, placement: ReturnType<typeof placeEvidence>['message']) =>
@@ -68,8 +68,36 @@ describe('evidence highlighter', () => {
   it('allows for the separator the redactor drops, and for emails, cards and phone numbers', () => {
     expect(locateQuote('Transaction id: TX-55AA failed twice', 'Transaction id [TRANSACTION_ID_1] failed')).toEqual({ start: 0, end: 30 })
     const text = 'Write to ana@example.com or call (416) 555-0100 about card 4111 1111 1111 1111 today.'
-    const at = locateQuote(text, 'Write to [EMAIL_1] or call [PHONE_1] about card [CARD_1] today')
+    // The card pattern takes the space after the last digit, so the redacted text reads "[CARD_1]today", as on the server.
+    const at = locateQuote(text, 'Write to [EMAIL_1] or call [PHONE_1] about card [CARD_1]today')
     expect(at && text.slice(at.start, at.end)).toBe('Write to ana@example.com or call (416) 555-0100 about card 4111 1111 1111 1111 today')
+  })
+
+  it('maps a bare placeholder to the identifier the redactor replaced, not to the first word that looks like one', () => {
+    const message = 'Contact support about payment reference PAY-DEMO-7319 today.'
+    const placement = placeEvidence('Refund', message, ['[PAYMENT_ID_1]'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'PAY-DEMO-7319', refs: [1] }])
+  })
+
+  it('maps the Nth placeholder of a type to the Nth distinct value, counting the subject first', () => {
+    const subject = 'Copy to ana@example.com'
+    const message = 'Write to ana@example.com and bob@example.org, then call 416 555 0100.'
+    const placement = placeEvidence(subject, message, ['[EMAIL_2]', '[EMAIL_1] and [EMAIL_2]', '[PHONE_1]'])
+
+    expect(marked(message, placement.message)).toEqual([
+      { text: 'ana@example.com and bob@example.org', refs: [1, 2] },
+      { text: '416 555 0100', refs: [3] },
+    ])
+  })
+
+  it('counts a quote found through redaction apart from the word-for-word ones', () => {
+    const message = 'At charger CHG-CA-1042, connector 2 accepted payment reference PAY-DEMO-7319. The vehicle never began charging.'
+    const quotes = ['connector 2 accepted payment reference [PAYMENT_ID_1]', 'The vehicle never began charging', 'At charger CHG-CA-1042']
+    const placement = placeEvidence('Payment accepted', message, quotes)
+
+    expect(quoteSummary(3, placement)).toBe('2 of 3 quotes found word for word, 1 matched after redaction')
+    expect(quoteSummary(1, placeEvidence('', message, ['At charger CHG-CA-1042']))).toBe('1 of 1 quotes found word for word in the ticket')
   })
 
   it('reports a quote it cannot find instead of dropping it silently', () => {

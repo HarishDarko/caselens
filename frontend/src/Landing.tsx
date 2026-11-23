@@ -1,5 +1,5 @@
 import type { Industry } from './api'
-import { placeEvidence } from './evidence'
+import { placeEvidence, quoteSummary } from './evidence'
 import examples from './landing-examples.json'
 import { channelLabel, URGENCY_LABEL, type Urgency } from './model'
 import { Byline, CheckIcon, EvidenceText, UrgencyPill, Wordmark } from './ui'
@@ -28,7 +28,6 @@ function PreviewCard({ example }: { example: Example }) {
   const quotes = result.evidence.map((item) => item.quote)
   const placement = placeEvidence(example.subject, example.message, quotes)
   const policy = result.policies[0]
-  const found = placement.placed.size
   return (
     <div className="preview-card">
       <div className="pv-head">
@@ -39,7 +38,7 @@ function PreviewCard({ example }: { example: Example }) {
       <p className="msg pv-msg"><EvidenceText text={example.message} marks={placement.message} /></p>
       <ol className="reasons pv-reasons">{result.evidence.map((item, index) => <li key={index}><span className="ref-chip" aria-hidden="true">{index + 1}</span><span><span className="sr-only">Evidence {index + 1}: </span>{item.meaning}</span></li>)}</ol>
       {policy && <div className="pv-policy"><p className="pv-label">Policy: {policy.label}</p><p>{policy.guidance}</p></div>}
-      <p className="pv-check"><CheckIcon />{found} of {quotes.length} quotes found word for word in the ticket</p>
+      <p className="pv-check"><CheckIcon />{quoteSummary(quotes.length, placement)}</p>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { TriageResult } from './api'
-import { meaningOf, placeEvidence, quoteOf, type EvidencePlacement } from './evidence'
+import { meaningOf, placeEvidence, quoteOf, quoteSummary, type EvidencePlacement } from './evidence'
 import { categoryLabel, channelLabel, fallbackText, formatTime, isOverridden, policiesOf, provenanceOf, seconds, shownUrgency, TRIAGE_STAGE_TEXT, URGENCY_LABEL, WAKING_TEXT, type Ticket, type TriageStage } from './model'
 import { ReviewBar, type ReviewActions } from './ReviewBar'
 import { CheckIcon, DashIcon, EvidenceText, UrgencyPill } from './ui'
@@ -58,7 +58,7 @@ function ChecksBlock({ result, placement, total, industryName }: { result: Triag
     <section className="block checks">
       <h3>Checks</h3>
       <ul className="check-list">
-        {item(total > 0 && found === total, `${found} of ${total} quotes found word for word in the ticket`)}
+        {item(total > 0 && found === total, quoteSummary(total, placement))}
         {fallback
           ? item(false, "The AI's answer was not used. The pack's keyword rules decided.")
           : <>
@@ -120,7 +120,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
         <button type="button" className="back" aria-label="Back to inbox" onClick={onBack}><BackIcon />Inbox</button>
         <p className="d-id"><code>{ticket.id}</code><span>{channelLabel(ticket.channel)}</span></p>
       </div>
-      <h2 className="d-subject" id="detail-subject"><EvidenceText text={ticket.subject} marks={placement.subject} active={active} onActive={setActive} /></h2>
+      <h2 className="d-subject" id="detail-subject" tabIndex={-1}><EvidenceText text={ticket.subject} marks={placement.subject} active={active} onActive={setActive} /></h2>
       {result && urgency ? (
         <div className="tags">
           <UrgencyPill urgency={urgency} />
@@ -148,7 +148,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
         <div className="d-grid">
           <div className="d-main">
             <section className="block b-msg"><h3>Customer message</h3><p className="msg">{ticket.message}</p></section>
-            <section className="block b-why"><h3>Why the AI decided this</h3><p className="block-note">{state.running ? 'Evidence appears once every quote has been checked against the message.' : 'Open this ticket to run the live AI on it.'}</p>{state.running && <div className="skeleton gap-top"><span style={{ width: '82%' }} /><span style={{ width: '64%' }} /></div>}</section>
+            <section className="block b-why"><h3>Why the AI decided this</h3><p className="block-note">{state.running ? 'Evidence appears once every quote has been checked against the message.' : state.error ?? 'Open this ticket to run the live AI on it.'}</p>{state.running && <div className="skeleton gap-top"><span style={{ width: '82%' }} /><span style={{ width: '64%' }} /></div>}</section>
           </div>
           <aside className="d-side">
             <section className="block"><h3>Priority</h3>{state.running ? <div className="skeleton"><span className="tall" style={{ width: '30%' }} /><span style={{ width: '100%' }} /></div> : <p className="block-note">Scored once the ticket is triaged.</p>}</section>
@@ -172,7 +172,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
           <section className="block b-msg">
             <h3>Customer message</h3>
             <p className="msg"><EvidenceText text={ticket.message} marks={placement.message} active={active} onActive={setActive} /></p>
-            {quotes.length > 0 && <p className={found === quotes.length ? 'verify' : 'verify partial'}>{found === quotes.length ? <CheckIcon /> : <DashIcon />}<span>{found} of {quotes.length} quotes found word for word in the ticket</span></p>}
+            {quotes.length > 0 && <p className={found === quotes.length ? 'verify' : 'verify partial'}>{found === quotes.length ? <CheckIcon /> : <DashIcon />}<span>{quoteSummary(quotes.length, placement)}</span></p>}
           </section>
           <section className="block b-why">
             <h3>{fallback ? 'Why the rules decided this' : 'Why the AI decided this'}</h3>
