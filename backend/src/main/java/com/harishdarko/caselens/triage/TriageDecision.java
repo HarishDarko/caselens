@@ -22,7 +22,19 @@ public record TriageDecision(
         List<RuleApplication> appliedRules,
         DecisionSource decisionSource,
         String modelVersion,
-        String promptVersion) {
+        String promptVersion,
+        FallbackCause fallback) {
+    /** A decision with no fallback cause: AI validated, or built by a caller that does not know why it fell back. */
+    public TriageDecision(UUID ticketId, Category category, Urgency urgency, SlaRisk slaRisk, Sentiment sentiment,
+            String summary, List<EvidenceItem> evidence, List<String> policyIds, String explanation,
+            List<String> recommendedActions, String suggestedReply, ReliabilitySignal reliabilitySignal,
+            List<String> warnings, int priorityScore, List<RuleApplication> appliedRules, DecisionSource decisionSource,
+            String modelVersion, String promptVersion) {
+        this(ticketId, category, urgency, slaRisk, sentiment, summary, evidence, policyIds, explanation,
+                recommendedActions, suggestedReply, reliabilitySignal, warnings, priorityScore, appliedRules,
+                decisionSource, modelVersion, promptVersion, null);
+    }
+
     public TriageDecision {
         Objects.requireNonNull(ticketId, "Ticket id is required");
         Objects.requireNonNull(category, "Category is required");
@@ -42,5 +54,13 @@ public record TriageDecision(
         Objects.requireNonNull(decisionSource, "Decision source is required");
         Objects.requireNonNull(modelVersion, "Model version is required");
         Objects.requireNonNull(promptVersion, "Prompt version is required");
+        if (fallback != null && decisionSource != DecisionSource.RULES_FALLBACK) {
+            throw new IllegalArgumentException("Only a rules fallback decision has a fallback cause");
+        }
+    }
+
+    /** The plain reason the rules decided, or null when the AI answer was validated (or the cause is unknown). */
+    public FallbackReason fallbackReason() {
+        return fallback == null ? null : fallback.reason();
     }
 }

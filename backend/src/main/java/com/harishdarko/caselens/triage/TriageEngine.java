@@ -10,6 +10,7 @@ import java.util.UUID;
 
 public final class TriageEngine {
     private static final String FALLBACK_WARNING = "AI provider result unavailable or invalid";
+    static final String SEMANTIC_VALIDATION = "SEMANTIC_VALIDATION";
     private final TicketRedactor redactor;
     private final TriageProvider primaryProvider;
     private final TriageProvider fallbackProvider;
@@ -55,11 +56,15 @@ public final class TriageEngine {
             Instant ended = clock.instant();
             recordSafely(request, eventId, primaryProvider.providerName(), providerResult.modelVersion(), providerResult.promptVersion(), started, ended, "SUCCESS", null,
                     providerCall.inputTokens(), providerCall.outputTokens());
-            return decision(request, validated.providerResult(), validated.reliabilitySignal(), DecisionSource.AI_VALIDATED);
+            return decision(request, validated.providerResult(), validated.reliabilitySignal(), DecisionSource.AI_VALIDATED, null);
         } catch (RuntimeException failure) {
             Instant ended = clock.instant();
+            String errorCode = safeErrorCode(failure);
             recordSafely(request, eventId, primaryProvider.providerName(), primaryProvider.modelVersion(), primaryProvider.promptVersion(),
-                    started, ended, "FAILURE", safeErrorCode(failure), null, null);
+                    started, ended, "FAILURE", errorCode, null, null);
+            FallbackCause cause = FallbackCause.of(errorCode,
+                    failure instanceof SemanticValidationException semantic ? semantic.check().name() : null,
+                    request.pack().id(), primaryProvider.providerName());
             ProviderTriageResult fallbackResult = fallbackProvider.analyze(request, redacted).result();
             List<String> warnings = new ArrayList<>(fallbackResult.warnings());
             warnings.add(FALLBACK_WARNING);
@@ -67,18 +72,18 @@ public final class TriageEngine {
                     fallbackResult.slaRisk(), fallbackResult.sentiment(), fallbackResult.summary(), fallbackResult.evidence(),
                     fallbackResult.policyIds(), fallbackResult.explanation(), fallbackResult.recommendedActions(),
                     fallbackResult.suggestedReply(), warnings, fallbackResult.modelVersion(), fallbackResult.promptVersion());
-            return decision(request, withWarning, ReliabilitySignal.LOW, DecisionSource.RULES_FALLBACK);
+            return decision(request, withWarning, ReliabilitySignal.LOW, DecisionSource.RULES_FALLBACK, cause);
         }
     }
 
     private TriageDecision decision(TriageRequest request, ProviderTriageResult result,
-            ReliabilitySignal reliability, DecisionSource source) {
+            ReliabilitySignal reliability, DecisionSource source, FallbackCause fallback) {
         PriorityResult priority = priorityScorer.score(new PriorityContext(result.urgency(), result.slaRisk(), result.category(),
                 request.subject() + "\n" + request.message(), request.repeatContactCount(), request.pack()));
         return new TriageDecision(request.ticketId(), result.category(), result.urgency(), result.slaRisk(), result.sentiment(),
                 result.summary(), result.evidence(), result.policyIds(), result.explanation(), result.recommendedActions(),
                 result.suggestedReply(), reliability, result.warnings(), priority.score(), priority.appliedRules(), source,
-                result.modelVersion(), result.promptVersion());
+                result.modelVersion(), result.promptVersion(), fallback);
     }
 
     private void recordSafely(TriageRequest request, UUID eventId, String provider, String modelVersion, String promptVersion, Instant started, Instant ended,
@@ -93,7 +98,7 @@ public final class TriageEngine {
     }
 
     private String safeErrorCode(RuntimeException failure) {
-        if (failure instanceof SemanticValidationException) return "SEMANTIC_VALIDATION";
+        if (failure instanceof SemanticValidationException) return SEMANTIC_VALIDATION;
         if (failure instanceof ProviderCallException providerFailure) return providerFailure.errorCode();
         return "PROVIDER_FAILURE";
     }

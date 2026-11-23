@@ -7,6 +7,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketRepository;
@@ -20,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
@@ -149,6 +154,82 @@ class TriageWorkerTest {
     }
 
     @Test
+    void logsOneStructuredWarningWithTheReasonWhenTheRulesFallbackDecides() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        Ticket ticket = ticket();
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(1);
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        stillOwnsTheClaim();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        TriageProvider rateLimited = new TriageProvider() {
+            @Override
+            public ProviderCall analyze(TriageRequest request, RedactedTicket redacted) {
+                throw new ProviderCallException("Groq provider request failed", "HTTP_429");
+            }
+
+            @Override public String providerName() { return "groq"; }
+        };
+
+        List<ILoggingEvent> lines = captureWorkerLog(() -> {
+            WorkerResult result = worker(rateLimited).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1));
+            assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK);
+        });
+
+        List<ILoggingEvent> fallbacks = lines.stream()
+                .filter(line -> line.getFormattedMessage().startsWith("triage.fallback ")).toList();
+        assertThat(fallbacks).hasSize(1);
+        ILoggingEvent line = fallbacks.getFirst();
+        assertThat(line.getLevel()).isEqualTo(Level.WARN);
+        assertThat(line.getFormattedMessage())
+                .contains("ticketId=" + ticketId, "jobId=" + job.getId(), "eventId=" + eventId, "pack=ev-charging",
+                        "provider=groq", "errorCode=HTTP_429", "check=none", "reason=PROVIDER_RATE_LIMITED")
+                .doesNotContain(ticket.getSubject(), ticket.getMessage());
+    }
+
+    @Test
+    void logsTheFailedCheckWhenTheAnswerFailsValidationAndNeverTheTicketTextOrQuotes() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        Ticket ticket = ticket();
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(1);
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
+        stillOwnsTheClaim();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        TriageProvider invented = (request, redacted) -> new ProviderCall(new ProviderTriageResult(
+                Category.of("CHARGING_SESSION"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                "The provider returned an invented evidence quote.",
+                List.of(new EvidenceItem("An invented quote about a fire", "Not in the ticket")), List.of(),
+                "The provider output cannot be trusted because its evidence is not grounded in the ticket.",
+                List.of("Verify the session state"),
+                "We are reviewing the session state and will update you after verification.",
+                List.of(), "model-x", "triage-v2"), null, null);
+
+        List<ILoggingEvent> lines = captureWorkerLog(() ->
+                worker(invented).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1)));
+
+        String line = lines.stream().map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.startsWith("triage.fallback ")).findFirst().orElseThrow();
+        assertThat(line).contains("errorCode=SEMANTIC_VALIDATION", "check=QUOTE_NOT_FOUND", "reason=ANSWER_FAILED_CHECKS")
+                .doesNotContain("invented", ticket.getSubject(), ticket.getMessage());
+    }
+
+    @Test
+    void logsNoFallbackLineWhenTheAiAnswerIsValidated() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenReturn(1);
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket()));
+        stillOwnsTheClaim();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        List<ILoggingEvent> lines = captureWorkerLog(() ->
+                worker(new MockTriageProvider()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1)));
+
+        assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.fallback "));
+    }
+
+    @Test
     void asksForRedeliveryWhenAnotherWorkerHoldsTheAtomicClaim() {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
         TriageProvider provider = org.mockito.Mockito.mock(TriageProvider.class);
@@ -191,6 +272,19 @@ class TriageWorkerTest {
         verify(jobs, never()).save(any());
         verify(tickets).save(ticket); // once, by the claim; not again by the dropped failure write
         verify(results, never()).save(any());
+    }
+
+    private List<ILoggingEvent> captureWorkerLog(Runnable action) {
+        Logger logger = (Logger) LoggerFactory.getLogger(TriageWorker.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return List.copyOf(appender.list);
     }
 
     private void stillOwnsTheClaim() {

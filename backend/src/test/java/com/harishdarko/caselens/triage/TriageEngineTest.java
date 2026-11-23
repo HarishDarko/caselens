@@ -37,6 +37,59 @@ class TriageEngineTest {
         assertThat(invocation.get().status()).isEqualTo("FAILURE");
         assertThat(invocation.get().sanitizedErrorCode()).isEqualTo("SEMANTIC_VALIDATION");
         assertThat(invocation.get().toString()).doesNotContain(request.message());
+        assertThat(decision.fallbackReason()).isEqualTo(FallbackReason.ANSWER_FAILED_CHECKS);
+        assertThat(decision.fallback().errorCode()).isEqualTo("SEMANTIC_VALIDATION");
+        assertThat(decision.fallback().failedCheck()).isEqualTo("QUOTE_NOT_FOUND");
+        assertThat(decision.fallback().pack()).isEqualTo("ev-charging");
+    }
+
+    @Test
+    void anAiValidatedDecisionHasNoFallbackReason() {
+        TriageDecision decision = new TriageEngine(new MockTriageProvider(), new RulesFallbackProvider(),
+                new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer()).triage(request);
+
+        assertThat(decision.decisionSource()).isEqualTo(DecisionSource.AI_VALIDATED);
+        assertThat(decision.fallback()).isNull();
+        assertThat(decision.fallbackReason()).isNull();
+    }
+
+    @Test
+    void namesTheProviderErrorAndItsPlainReasonOnAFallback() {
+        assertThat(fallbackFor(new ProviderCallException("Groq provider request failed", "HTTP_429")))
+                .isEqualTo(new FallbackCause(FallbackReason.PROVIDER_RATE_LIMITED, "HTTP_429", null, "ev-charging", "groq"));
+        assertThat(fallbackFor(new ProviderCallException("The daily AI call budget is spent", "AI_BUDGET_EXHAUSTED")).reason())
+                .isEqualTo(FallbackReason.BUDGET_SPENT);
+        assertThat(fallbackFor(new ProviderCallException("Groq provider returned invalid structured output", "SCHEMA_FAILURE")).reason())
+                .isEqualTo(FallbackReason.ANSWER_UNREADABLE);
+        assertThat(fallbackFor(new IllegalStateException("bug")))
+                .isEqualTo(new FallbackCause(FallbackReason.PROVIDER_UNAVAILABLE, "PROVIDER_FAILURE", null, "ev-charging", "groq"));
+    }
+
+    @Test
+    void keepsAnUnexpectedErrorCodeOutOfTheFallbackCause() {
+        FallbackCause cause = fallbackFor(new ProviderCallException("odd", "secret value from the ticket"));
+
+        assertThat(cause.errorCode()).isEqualTo("UNRECOGNIZED");
+        assertThat(cause.reason()).isEqualTo(FallbackReason.PROVIDER_UNAVAILABLE);
+    }
+
+    private FallbackCause fallbackFor(RuntimeException failure) {
+        TriageProvider failing = new TriageProvider() {
+            @Override
+            public ProviderCall analyze(TriageRequest ignoredRequest, RedactedTicket ignoredTicket) {
+                throw failure;
+            }
+
+            @Override public String providerName() { return "groq"; }
+            @Override public String modelVersion() { return "openai/gpt-oss-20b"; }
+            @Override public String promptVersion() { return "triage-v2"; }
+        };
+        TriageDecision decision = new TriageEngine(failing, new RulesFallbackProvider(),
+                new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer()).triage(request);
+        assertThat(decision.decisionSource()).isEqualTo(DecisionSource.RULES_FALLBACK);
+        assertThat(decision.warnings()).as("old clients keep the warning text").contains("AI provider result unavailable or invalid");
+        assertThat(decision.fallbackReason()).isEqualTo(decision.fallback().reason());
+        return decision.fallback();
     }
 
     @Test
