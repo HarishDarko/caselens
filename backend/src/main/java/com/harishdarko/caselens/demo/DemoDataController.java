@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -24,9 +25,13 @@ class DemoDataController {
     @PostMapping("/scenarios/{scenarioKey}")
     @ResponseStatus(HttpStatus.CREATED)
     ScenarioTicketResponse createScenario(@AuthenticationPrincipal DemoPrincipal principal,
-            @PathVariable String scenarioKey) {
-        return ScenarioTicketResponse.from(tickets.createScenario(principal.workspaceId(), scenarioKey));
+            @PathVariable String scenarioKey, @RequestBody(required = false) ScenarioRequest request) {
+        UUID requestId = request == null ? null : request.requestId();
+        return ScenarioTicketResponse.from(tickets.createScenario(principal.workspaceId(), scenarioKey, requestId));
     }
+
+    /** Optional body: a client id for this request, so a resent request adds one ticket (CL-05). */
+    record ScenarioRequest(UUID requestId) {}
 
     @PostMapping("/reset")
     ResetResponse reset(@AuthenticationPrincipal DemoPrincipal principal) {

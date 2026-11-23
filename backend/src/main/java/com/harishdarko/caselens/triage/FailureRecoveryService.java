@@ -50,15 +50,16 @@ public class FailureRecoveryService {
     @Transactional(readOnly = true)
     public OperationsOverview overview(UUID workspaceId) {
         List<TriageJob> storedJobs = jobs.findByWorkspaceId(workspaceId);
-        List<TriageResult> storedResults = results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId);
+        // Column reads, not entities: this runs on every 5 s Operations poll (CL-20).
+        List<ResultFacts> storedResults = results.findFactsByWorkspaceId(workspaceId);
         List<UUID> ticketIds = storedJobs.stream().map(TriageJob::getTicketId).distinct().toList();
         List<ModelInvocation> storedInvocations = ticketIds.isEmpty() ? List.of() : invocations.findByTicketIds(ticketIds);
-        Map<UUID, TriageResult> resultByEvent = storedResults.stream()
-                .collect(java.util.stream.Collectors.toMap(TriageResult::getEventId, result -> result, (left, right) ->
-                        left.getCreatedAt().isAfter(right.getCreatedAt()) ? left : right));
+        Map<UUID, ResultFacts> resultByEvent = storedResults.stream()
+                .collect(java.util.stream.Collectors.toMap(ResultFacts::eventId, result -> result, (left, right) ->
+                        left.createdAt().isAfter(right.createdAt()) ? left : right));
         JobInvocations jobInvocations = new JobInvocations(storedInvocations);
 
-        long fallbackCount = storedResults.stream().filter(result -> result.getDecisionSource() == DecisionSource.RULES_FALLBACK).count();
+        long fallbackCount = storedResults.stream().filter(result -> result.decisionSource() == DecisionSource.RULES_FALLBACK).count();
         long providerFailureCount = storedInvocations.stream().filter(invocation -> !"SUCCESS".equals(invocation.getStatus())).count();
         OperationsOverview.QueueCounts queue = new OperationsOverview.QueueCounts(
                 count(storedJobs, TriageJobStatus.QUEUED),
@@ -88,15 +89,15 @@ public class FailureRecoveryService {
      * 0 ms would read as an instant answer. Provider and model are null when no provider call was recorded for this
      * job (for example the synthetic demo failure, which never calls one).
      */
-    private OperationsOverview.RecentOperation operation(TriageJob job, TriageResult result, ModelInvocation invocation) {
+    private OperationsOverview.RecentOperation operation(TriageJob job, ResultFacts result, ModelInvocation invocation) {
         Long latency = result != null
-                ? durationMillis(job.getCreatedAt(), result.getCreatedAt())
+                ? durationMillis(job.getCreatedAt(), result.createdAt())
                 : durationMillis(job.getStartedAt(), job.getCompletedAt());
         return new OperationsOverview.RecentOperation(job.getId(), job.getTicketId(), job.getStatus(), job.getAttemptCount(),
                 job.getCreatedAt(), job.getUpdatedAt(), job.getCompletedAt(), job.getLastErrorCode(),
                 invocation == null ? null : invocation.getProvider(),
                 invocation == null ? null : invocation.getModelVersion(),
-                result == null ? null : result.getDecisionSource().name(), latency);
+                result == null ? null : result.decisionSource().name(), latency);
     }
 
     private Long durationMillis(Instant start, Instant end) {
@@ -129,18 +130,33 @@ public class FailureRecoveryService {
         }
     }
 
+    /**
+     * Reviewer recovery. Only the job's ticket id is read here: it is a column read, so the job does not enter this
+     * transaction's persistence context before the replay holds the ticket lock. The replay then reads the job and
+     * checks it with requireReplayable under that lock (CL3-01). A job loaded before the lock would be served from
+     * the persistence context afterwards, and could miss a claim or completion that committed while this waited.
+     */
     @Transactional
     public TriageJobSnapshot retry(UUID workspaceId, UUID jobId, String correlationId) {
-        TriageJob job = jobs.findByIdAndWorkspaceId(jobId, workspaceId)
+        UUID ticketId = jobs.findTicketIdByIdAndWorkspaceId(jobId, workspaceId)
                 .orElseThrow(TicketNotFoundException::new);
+        return requests.replay(workspaceId, ticketId, jobId, correlationId);
+    }
+
+    /**
+     * Throws unless a reviewer may replay this job now: a terminal failure, the acknowledged synthetic demo failure,
+     * a retryable failure SQS stopped redelivering, or a stranded QUEUED or PROCESSING job. TriageRequestService.replay
+     * calls it with the ticket lock held, so the job cannot change until the replay commits.
+     */
+    static void requireReplayable(TriageJob job, Instant now) {
         if (job.getStatus() == TriageJobStatus.COMPLETED) {
             throw new IllegalArgumentException("Completed triage jobs cannot be retried");
         }
         if (job.getStatus() == TriageJobStatus.QUEUED || job.getStatus() == TriageJobStatus.PROCESSING) {
             // A stranded job: its message went to the DLQ (see TriageJobRepository.findRecoverableFailures). The
             // replay closes it under the ticket lock and queues one replacement.
-            if (!stranded(job)) throw new IllegalArgumentException("Active triage jobs remain owned by SQS");
-            return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
+            if (!stranded(job, now)) throw new IllegalArgumentException("Active triage jobs remain owned by SQS");
+            return;
         }
         if (job.getStatus() != TriageJobStatus.RETRYABLE_FAILURE
                 && job.getStatus() != TriageJobStatus.TERMINAL_FAILURE) {
@@ -148,10 +164,9 @@ public class FailureRecoveryService {
         }
         if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE
                 && !"SYNTHETIC_PROVIDER_TIMEOUT".equals(job.getLastErrorCode())
-                && job.getUpdatedAt().isAfter(clock.instant().minus(SQS_REDELIVERY_WINDOW))) {
+                && job.getUpdatedAt().isAfter(now.minus(SQS_REDELIVERY_WINDOW))) {
             throw new IllegalArgumentException("Retryable jobs remain owned by SQS");
         }
-        return requests.replay(workspaceId, job.getTicketId(), job.getId(), correlationId);
     }
 
     /**
@@ -164,9 +179,5 @@ public class FailureRecoveryService {
         if (!active || !job.getUpdatedAt().isBefore(now.minus(SQS_REDELIVERY_WINDOW))) return false;
         return job.getStatus() == TriageJobStatus.QUEUED || job.getStartedAt() == null
                 || job.getStartedAt().isBefore(now.minus(TriageJobRepository.CLAIM_LEASE));
-    }
-
-    private boolean stranded(TriageJob job) {
-        return stranded(job, clock.instant());
     }
 }

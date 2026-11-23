@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketRepository;
+import com.harishdarko.caselens.ticket.TicketScenarioKey;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -42,9 +43,9 @@ class EvaluationServiceTest {
         TriageFeedback correction = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketId, result.getId(),
                 Category.of("CHARGING_SESSION"), Urgency.HIGH, null, "Escalation confirmed", "demo-reviewer", FINISHED);
 
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(result));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(result));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
-        when(tickets.findByWorkspaceIdAndIdIn(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(ticket));
+        when(tickets.findScenarioKeys(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(TicketScenarioKey.of(ticket)));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(correction));
         when(groundTruth.findAll()).thenReturn(List.of(new EvaluationGroundTruth("synthetic-session",
                 Category.of("CHARGING_SESSION"), Urgency.HIGH)));
@@ -87,7 +88,7 @@ class EvaluationServiceTest {
         UUID newerTicketId = UUID.randomUUID();
         TriageResult older = resultAt(workspaceId, olderTicketId, FINISHED.minusSeconds(1));
         TriageResult newer = resultAt(workspaceId, newerTicketId, FINISHED);
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(older, newer));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(older, newer));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
         when(groundTruth.findAll()).thenReturn(List.of());
@@ -107,7 +108,7 @@ class EvaluationServiceTest {
         TriageJob job = TriageJob.queued(UUID.randomUUID(), fallback.getEventId(), workspaceId, ticketId, 1, CREATED);
         job.claim(CREATED.plusMillis(100));
         job.complete(FINISHED);
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(fallback));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(fallback));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
         when(groundTruth.findAll()).thenReturn(List.of());
@@ -136,9 +137,9 @@ class EvaluationServiceTest {
                 null, Urgency.MEDIUM, null, "First review", "demo-reviewer", FINISHED);
         TriageFeedback laterId = TriageFeedback.submit(new UUID(0, 2), workspaceId, ticketId, result.getId(),
                 null, Urgency.HIGH, null, "Escalation review", "demo-reviewer", FINISHED);
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(result));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(result));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
-        when(tickets.findByWorkspaceIdAndIdIn(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(ticket));
+        when(tickets.findScenarioKeys(workspaceId, java.util.Set.of(ticketId))).thenReturn(List.of(TicketScenarioKey.of(ticket)));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(sameValue, laterId));
         when(groundTruth.findAll()).thenReturn(List.of());
         when(invocations.findByTicketIds(List.of(ticketId))).thenReturn(List.of());
@@ -161,7 +162,7 @@ class EvaluationServiceTest {
         TriageJob terminal = job(workspaceId);
         terminal.claim(CREATED.plusMillis(10));
         terminal.terminalFailure("SCHEMA_INVALID", CREATED.plusMillis(20));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts());
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(completed, queued, retryable, terminal));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
         when(groundTruth.findAll()).thenReturn(List.of());
@@ -183,7 +184,7 @@ class EvaluationServiceTest {
         replay.setReplayedFromJobId(original.getId());
         replay.claim(CREATED.plusSeconds(1).plusMillis(10));
         replay.complete(CREATED.plusSeconds(1).plusMillis(20));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts());
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
         when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
         when(groundTruth.findAll()).thenReturn(List.of());
@@ -220,5 +221,9 @@ class EvaluationServiceTest {
                         ReliabilitySignal.HIGH, List.of(), 55, List.of(), source, "mock-v1", "triage-v1"),
                 createdAt, new ObjectMapper());
         return result;
+    }
+
+    private static List<ResultFacts> facts(TriageResult... stored) {
+        return java.util.Arrays.stream(stored).map(ResultFacts::of).toList();
     }
 }

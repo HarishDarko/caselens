@@ -14,7 +14,11 @@ import org.springframework.data.repository.query.Param;
 public interface TicketRepository extends JpaRepository<Ticket, UUID>, JpaSpecificationExecutor<Ticket> {
     Optional<Ticket> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
 
-    List<Ticket> findByWorkspaceIdAndIdIn(UUID workspaceId, Collection<UUID> ids);
+    @Query("""
+            select new com.harishdarko.caselens.ticket.TicketScenarioKey(t.id, t.scenarioKey) from Ticket t
+            where t.workspaceId = :workspaceId and t.id in :ids
+            """)
+    List<TicketScenarioKey> findScenarioKeys(@Param("workspaceId") UUID workspaceId, @Param("ids") Collection<UUID> ids);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from Ticket t where t.id = :id and t.workspaceId = :workspaceId")

@@ -183,8 +183,11 @@ export class ApiError extends Error {
 
 // One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on an idempotent
 // request. A POST is never sent twice after a 503, because the first one may have run, unless sending it twice is
-// harmless: the triage POST returns the ticket's existing job, so it is idempotent. A long rate-limit window is not
-// waited out. An idempotent request is also tried once more when fetch itself fails with a TypeError. API Gateway
+// harmless (CL-05): the triage POST returns the ticket's existing job, a failure retry returns the replacement it
+// already queued, reset seeds the same set again, and a scenario or a feedback entry carries a requestId that the
+// API turns into its id, so a resend returns the entry the first one saved. Creating a session is not resent: a
+// second one would open an extra workspace and spend a session rate-limit token, and the reviewer can simply try
+// again. A long rate-limit window is not waited out. An idempotent request is also tried once more when fetch itself fails with a TypeError. API Gateway
 // answers its own throttle (429) and errors without CORS headers, so the browser hides that answer and fetch rejects
 // instead of returning the status.
 const RETRY_DEFAULT_MS = 1_000
@@ -250,20 +253,23 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
       method: 'POST', ...(industry ? { body: JSON.stringify({ industry }) } : {}),
     }),
     setToken: (value) => { token = value },
-    resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }),
+    resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }, { idempotent: true }),
     getRuntimeSummary: () => request<RuntimeSummary>('/api/demo/runtime'),
     listTickets: () => request<TicketPage>('/api/tickets?page=0&size=50'),
     // A signal stops a request and its retry wait: the page aborts it when the reviewer leaves the view or the demo.
-    createScenario: (scenarioKey, signal) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, { method: 'POST', signal }),
+    // One requestId per call, reused by the resend, so the API saves one ticket or one feedback entry (CL-05).
+    createScenario: (scenarioKey, signal) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, {
+      method: 'POST', body: JSON.stringify({ requestId: crypto.randomUUID() }), signal,
+    }, { idempotent: true }),
     requestTriage: (ticketId, signal) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }, { idempotent: true }),
     getProcessing: (ticketId, signal) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`, { signal }),
     submitFeedback: (ticketId, payload, signal) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
-      method: 'POST', body: JSON.stringify(payload), signal,
-    }),
+      method: 'POST', body: JSON.stringify({ ...payload, requestId: crypto.randomUUID() }), signal,
+    }, { idempotent: true }),
     getEvaluation: (signal) => request<EvaluationSummary>('/api/evaluation', { signal }),
     getOperationsOverview: (signal) => request<OperationsOverview>('/api/operations/overview', { signal }),
     listFailures: (signal) => request<FailurePage>('/api/operations/failures?page=0&size=50', { signal }),
-    retryFailure: (jobId, signal) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST', signal }),
+    retryFailure: (jobId, signal) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST', signal }, { idempotent: true }),
   }
 }
 

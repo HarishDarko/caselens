@@ -72,7 +72,7 @@ describe('CaseLens API client', () => {
     await expect(api.requestTriage('ticket-1')).rejects.toMatchObject({ status: 409, code: 'workspace-limit', message: 'Full' })
   })
 
-  it('tries a GET once more after a 503, but never a non-idempotent POST, and keeps the status on the error', async () => {
+  it('tries a GET once more after a 503 and keeps the status on the error', async () => {
     vi.useFakeTimers()
     try {
       const fetcher = vi.fn().mockImplementation(async () => new Response('', { status: 503 }))
@@ -82,15 +82,12 @@ describe('CaseLens API client', () => {
       await vi.advanceTimersByTimeAsync(1_000)
       expect(await get).toMatchObject({ status: 503 })
       expect(fetcher).toHaveBeenCalledTimes(2)
-
-      await expect(api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })).rejects.toMatchObject({ status: 503 })
-      expect(fetcher).toHaveBeenCalledTimes(3)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('tries a GET once more when fetch fails with a TypeError (a gateway answer without CORS headers), but never a non-idempotent POST', async () => {
+  it('tries a GET once more when fetch fails with a TypeError (a gateway answer without CORS headers)', async () => {
     vi.useFakeTimers()
     try {
       const fetcher = vi.fn()
@@ -106,18 +103,80 @@ describe('CaseLens API client', () => {
       expect(fetcher).toHaveBeenCalledTimes(2)
 
       fetcher.mockRejectedValue(new TypeError('Failed to fetch'))
-      await expect(api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })).rejects.toBeInstanceOf(TypeError)
-      await expect(api.retryFailure('job-1')).rejects.toBeInstanceOf(TypeError)
-      await expect(api.createScenario('provider-retry-demo')).rejects.toBeInstanceOf(TypeError)
-      expect(fetcher).toHaveBeenCalledTimes(5)
-
       const get = api.getProcessing('ticket-1').catch((error: unknown) => error)
       await vi.advanceTimersByTimeAsync(1_000)
       expect(await get).toBeInstanceOf(TypeError)
-      expect(fetcher).toHaveBeenCalledTimes(7)
+      expect(fetcher).toHaveBeenCalledTimes(4)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // CL-05 leftover: these POSTs are safe to send twice, so a gateway 429 that the browser reports as a TypeError no
+  // longer fails a reset, scenario, feedback or failure retry outright.
+  it.each([
+    ['resetDemo', (api: ReturnType<typeof createCaseLensApi>) => api.resetDemo()],
+    ['createScenario', (api: ReturnType<typeof createCaseLensApi>) => api.createScenario('provider-retry-demo')],
+    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })],
+    ['retryFailure', (api: ReturnType<typeof createCaseLensApi>) => api.retryFailure('job-1')],
+  ])('%s is sent once more after a TypeError or a 503', async (_name, call) => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ ok: 1 }), { status: 200 }))
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ ok: 2 }), { status: 200 }))
+      const api = createCaseLensApi('', fetcher)
+
+      const first = call(api)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(first).resolves.toEqual({ ok: 1 })
+      const second = call(api)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(second).resolves.toEqual({ ok: 2 })
+      expect(fetcher).toHaveBeenCalledTimes(4)
+      // A resend is the same request: same URL, method and body.
+      expect(fetcher.mock.calls[1]?.[0]).toBe(fetcher.mock.calls[0]?.[0])
+      expect(fetcher.mock.calls[1]?.[1]?.body).toBe(fetcher.mock.calls[0]?.[1]?.body)
+      expect(fetcher.mock.calls[3]?.[1]?.body).toBe(fetcher.mock.calls[2]?.[1]?.body)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never sends a session request twice, so a lost answer cannot open a second workspace', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+      const api = createCaseLensApi('', fetcher)
+
+      await expect(api.createSession()).rejects.toBeInstanceOf(TypeError)
+      const second = api.createSession().catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await second).toMatchObject({ status: 503 })
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives each new scenario and feedback request its own requestId', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({}), { status: 200 }))
+    const api = createCaseLensApi('', fetcher)
+    const feedback = { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' }
+
+    await api.createScenario('provider-retry-demo')
+    await api.createScenario('provider-retry-demo')
+    await api.submitFeedback('ticket-1', feedback)
+    await api.submitFeedback('ticket-1', feedback)
+
+    const ids = fetcher.mock.calls.map(([, init]) => (JSON.parse(String(init?.body)) as { requestId: string }).requestId)
+    expect(ids.every((id) => /^[0-9a-f-]{36}$/.test(id))).toBe(true)
+    expect(new Set(ids).size).toBe(4)
+    expect(JSON.parse(String(fetcher.mock.calls[2]?.[1]?.body))).toMatchObject(feedback)
   })
 
   // CL-05: the API returns the ticket's existing job when the triage POST arrives twice, so a throttled triage

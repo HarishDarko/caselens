@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,9 +37,31 @@ public class FeedbackService {
         this.maxFeedbackPerWorkspace = maxFeedbackPerWorkspace;
     }
 
+    /**
+     * Saves a reviewer correction. requestId, when the client sends one, becomes the feedback id, so the same submit
+     * arriving twice (the browser resends it after a throttled 429 it could not read, CL-05) saves one entry and
+     * answers the second arrival with it.
+     */
     @Transactional
     public FeedbackSnapshot submit(UUID workspaceId, UUID ticketId, UUID requestedResultId,
-            Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note) {
+            Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, UUID requestId) {
+        // The workspace lock comes first, as in TicketService, and is held until the insert commits. Concurrent
+        // submits then count one after the other; a concurrent reset finishes before the ticket and result are read,
+        // so a deleted ticket is a 404 instead of a foreign-key failure on the insert; and a workspace the retention
+        // sweep deleted after the token check is a 401 (session ended) instead of a 404 for its ticket (CL3-03).
+        workspaces.lockForUpdate(workspaceId);
+        if (requestId != null) {
+            var earlier = feedback.findByIdAndWorkspaceId(requestId, workspaceId);
+            if (earlier.isPresent()) {
+                // A resend is the same request. The same id with another body is a client error, not a resend.
+                if (!earlier.get().sameSubmission(ticketId, requestedResultId, correctedCategory, correctedUrgency,
+                        correctedSlaRisk, note)) {
+                    throw new IllegalArgumentException("The request id was used for another feedback entry");
+                }
+                return FeedbackSnapshot.from(earlier.get());
+            }
+            if (feedback.existsById(requestId)) throw new IllegalArgumentException("The request id is already in use");
+        }
         if (correctedCategory != null && !packs.forWorkspace(workspaceId).categories().contains(correctedCategory)) {
             // Same 400 "Validation failed" answer an unknown enum value gave before categories came from packs.
             throw new ConstraintViolationException("Category is not part of this workspace's industry", Set.of());
@@ -52,18 +75,22 @@ public class FeedbackService {
         if (!result.getTicketId().equals(ticket.getId())) {
             throw new IllegalArgumentException("Triage result does not belong to the ticket");
         }
-        TriageFeedback candidate = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketId, result.getId(),
+        TriageFeedback candidate = TriageFeedback.submit(requestId == null ? UUID.randomUUID() : requestId, workspaceId, ticketId, result.getId(),
                 correctedCategory, correctedUrgency, correctedSlaRisk, note, "demo-reviewer", clock.instant());
         if (!candidate.differsFrom(result)) {
             throw new IllegalArgumentException("Feedback must change at least one triage field");
         }
-        // The workspace lock, held until the insert commits, makes concurrent submits count one after the other.
-        workspaces.lockForUpdate(workspaceId);
         if (feedback.countByWorkspaceId(workspaceId) >= maxFeedbackPerWorkspace) {
             throw new WorkspaceLimitExceededException("feedback entries", maxFeedbackPerWorkspace);
         }
-        TriageFeedback saved = feedback.save(candidate);
-        return FeedbackSnapshot.from(saved);
+        if (requestId == null) return FeedbackSnapshot.from(feedback.save(candidate));
+        try {
+            // Flushed here so that a second workspace racing on the same id fails on the primary key inside this
+            // method (TriageFeedback is persisted, never merged) and answers 409 like the check above.
+            return FeedbackSnapshot.from(feedback.saveAndFlush(candidate));
+        } catch (DataIntegrityViolationException collision) {
+            throw new IllegalArgumentException("The request id is already in use");
+        }
     }
 
     @Transactional(readOnly = true)

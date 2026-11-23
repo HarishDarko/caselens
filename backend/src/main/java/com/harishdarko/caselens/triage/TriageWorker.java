@@ -84,7 +84,8 @@ public class TriageWorker {
      * connection is held during the provider call. A worker that dies after the claim leaves the job in PROCESSING
      * until the claim lease ends (TriageJobRepository.CLAIM_LEASE); then the redelivered message takes it again.
      * A delivery that meets a live claim asks for redelivery instead of being dropped (see claimNotTaken), and the
-     * final writes only land while this worker still owns the claim (see stillOwned).
+     * final writes only land while this worker still owns the claim (see stillOwned). Each step takes the ticket row
+     * lock before it touches the job (see lockTicket).
      */
     private WorkerResult processInternal(QueueMessage message) {
         Claim claim = transactions.execute(status -> claim(message));
@@ -105,6 +106,7 @@ public class TriageWorker {
     }
 
     private Claim claim(QueueMessage message) {
+        lockTicket(message.ticketId(), message.workspaceId());
         TriageJob job = jobs.findByEventId(message.eventId()).orElse(null);
         if (job == null) {
             metrics.terminalFailure();
@@ -156,6 +158,16 @@ public class TriageWorker {
         ticket.processing(clock.instant());
         tickets.save(ticket);
         return new Claim(job, ticket, attempt, null);
+    }
+
+    /**
+     * Takes the ticket row lock for the rest of the step's transaction, before any write to the job. Request, replay
+     * and reset lock the ticket first too (reset deletes it, which cascades to its jobs), so all of them take the
+     * ticket, then the job. The worker used to update the job first and the ticket last, which deadlocked against a
+     * reviewer replay of the same ticket (CL3-01). A missing ticket takes no lock; the steps below handle that case.
+     */
+    private void lockTicket(java.util.UUID ticketId, java.util.UUID workspaceId) {
+        tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId);
     }
 
     /**
@@ -215,6 +227,7 @@ public class TriageWorker {
     }
 
     private WorkerResult complete(QueueMessage message, Claim claim, TriageDecision decision) {
+        lockTicket(claim.job().getTicketId(), claim.job().getWorkspaceId());
         if (!stillOwned(message, claim)) return WorkerResult.retry("CLAIM_LOST");
         TriageJob job = claim.job();
         Ticket ticket = claim.ticket();
@@ -237,6 +250,7 @@ public class TriageWorker {
     }
 
     private WorkerResult recordFailure(QueueMessage message, Claim claim, RuntimeException failure) {
+        lockTicket(claim.job().getTicketId(), claim.job().getWorkspaceId());
         if (!stillOwned(message, claim)) return WorkerResult.retry("CLAIM_LOST");
         TriageJob job = claim.job();
         Ticket ticket = claim.ticket();

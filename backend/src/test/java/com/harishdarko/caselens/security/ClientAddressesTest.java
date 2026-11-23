@@ -42,6 +42,24 @@ class ClientAddressesTest {
     }
 
     @Test
+    void readsTheGatewayClientAddressOnlyWhenTrusted() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.5");
+        request.addHeader(ClientAddresses.GATEWAY_HEADER, "198.51.100.10");
+
+        assertThat(addresses.address(request)).isEqualTo("198.51.100.10");
+        assertThat(new ClientAddresses(false, SECRET).address(request)).isEqualTo("10.0.0.5");
+    }
+
+    @Test
+    void capsTheLengthOfAClientAddress() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(ClientAddresses.GATEWAY_HEADER, "9".repeat(5_000));
+
+        assertThat(addresses.address(request)).hasSize(ClientAddresses.MAX_CLIENT_ADDRESS_LENGTH);
+    }
+
+    @Test
     void theRequestKeyFollowsTheSameTrustRuleAsTheRateLimits() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("10.0.0.5");

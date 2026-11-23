@@ -159,4 +159,22 @@ class TicketRedactorTest {
 
         assertThat(redacted.message()).contains("CHG-CA-1042", "SESSION-DEMO-88421", "connector 2");
     }
+
+    /** CL3-02: a rejected plain word can start the next label, and a label word is never the value. */
+    @Test
+    void aLabelRightAfterAnotherLabelIsStillRedacted() {
+        assertThat(redactor.redact("Subject x", "My RFID payment reference PAY-DEMO-7319 was declined").message())
+                .isEqualTo("My RFID payment reference [PAYMENT_ID_1] was declined");
+        assertThat(redactor.redact("Subject x", "RFID: payment id PAY-99821").message())
+                .isEqualTo("RFID: payment id [PAYMENT_ID_1]");
+        assertThat(redactor.redact("Subject x", "RFID transaction id TX-55AA failed").message())
+                .isEqualTo("RFID transaction id [TRANSACTION_ID_1] failed");
+        assertThat(redactor.redact("Subject x", "Payment reference: RFID 04A1B2C3D4").message())
+                .isEqualTo("Payment reference: RFID [RFID_1]");
+        assertThat(redactor.redact("Subject x", "PAYMENT ID: TRANSACTION ID TX-1234").message())
+                .isEqualTo("PAYMENT ID: TRANSACTION ID [TRANSACTION_ID_1]");
+        // A rejected word that starts no label stays as written, and so does the rest of the sentence.
+        assertThat(redactor.redact("Subject x", "payment id is missing and RFID 04A1B2C3D4 fails").message())
+                .isEqualTo("payment id is missing and RFID [RFID_1] fails");
+    }
 }

@@ -14,6 +14,8 @@ public final class TicketRedactor {
     private static final String DESCRIPTOR_WORDS =
             "tokens?|cards?|badges?|tags?|chips?|fobs?|ids?|numbers?|no\\.?|ref|reference|codes?|value";
     private static final Pattern DESCRIPTOR = Pattern.compile("(?i)(?:" + DESCRIPTOR_WORDS + ")");
+    /** The first word of a label. It starts the next label, so it is never the value of the one before it. */
+    private static final Pattern LABEL_WORD = Pattern.compile("(?i)(?:payment|transaction|rfid)");
     /**
      * A labelled identifier: the label, up to two descriptor words (each may follow a ":", "#", "," or "-", as in
      * "payment id: ref PAY-1" or "RFID, card 04A1"), an optional separator (":", "#", "-" or "is"), then a candidate
@@ -54,7 +56,9 @@ public final class TicketRedactor {
     /**
      * Replaces each labelled identifier with its placeholder, keeping the label and descriptor words (separators are
      * dropped, as before: "Transaction id: TX-55AA" becomes "Transaction id [TRANSACTION_ID_1]"). Identifiers listed
-     * right after a redacted one get the same type. A match whose candidate is a plain word is left as written.
+     * right after a redacted one get the same type. A match whose candidate is a plain word is left as written, and
+     * the search goes on from that word, not after it, so the word can start the next label: in "RFID payment
+     * reference PAY-1" the rejected "payment" begins "payment reference PAY-1" (CL3-02).
      */
     private String redactLabelled(String input, State state) {
         Matcher match = LABELLED_TOKEN.matcher(input);
@@ -64,8 +68,8 @@ public final class TicketRedactor {
             output.append(input, position, match.start());
             String candidate = match.group(5);
             if (!looksLikeIdentifier(candidate)) {
-                output.append(match.group());
-                position = match.end();
+                output.append(input, match.start(), match.start(5));
+                position = match.start(5);
                 continue;
             }
             String label = match.group(1);
@@ -92,10 +96,12 @@ public final class TicketRedactor {
      * word with lowercase letters and no digit, underscore or hyphen ("RFID card is rejected", "payment id missing").
      * So "04A1B2C3D4", "RFID-DEMO-A19", "ABCDEFGH", "ABCD-EFGH" and "pi_3NxYz" are all redacted, and so is 8 or more
      * lowercase hex ("RFID: deadbeef"). A separator does not change this: "RFID: declined at every charger" and
-     * "payment reference: pending" stay readable, because the classifiers need those words.
+     * "payment reference: pending" stay readable, because the classifiers need those words. A label word is never
+     * an identifier, even in capitals: in "Payment reference: RFID 04A1B2C3D4" the identifier is 04A1B2C3D4.
      */
     static boolean looksLikeIdentifier(String candidate) {
         if (DESCRIPTOR.matcher(candidate).matches()) return false;
+        if (LABEL_WORD.matcher(candidate).matches()) return false;
         if (candidate.chars().anyMatch(c -> Character.isDigit(c) || c == '_' || c == '-')) return true;
         if (LOWERCASE_HEX.matcher(candidate).matches()) return true;
         return candidate.equals(candidate.toUpperCase(Locale.ROOT));

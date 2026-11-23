@@ -161,8 +161,15 @@ configured headers "to the response from an integration", and a throttled 429
 (or a gateway 5xx) never reaches the integration, so the setting is not
 documented to help there. It would also make API Gateway ignore Spring's CORS
 headers, moving origin ownership into a second place. The browser therefore
-sees a gateway 429 as a failed fetch (TypeError), and the frontend retries an
-idempotent GET once after a TypeError, the same way it retries a 429 or 503.
+sees a gateway 429 as a failed fetch (TypeError), and the frontend sends the
+request once more after a TypeError, the same way it retries a 429 or 503.
+That covers every GET and every POST that is safe to receive twice: the triage
+POST returns the ticket's existing job, a failure retry returns the replacement
+it already queued, reset seeds the same set again, and the scenario and
+feedback POSTs carry a `requestId` that the API uses as the new row's id, so a
+resend returns the row the first one saved (the same id with a different body
+is a 409). Creating a session is never resent, because a second request would
+open an extra workspace; the reviewer starts the demo again instead.
 Raising the throttle is a cost decision, not a fix for this.
 
 ## Neon compute guardrail

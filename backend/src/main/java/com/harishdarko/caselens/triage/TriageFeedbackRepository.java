@@ -8,4 +8,5 @@ public interface TriageFeedbackRepository extends JpaRepository<TriageFeedback, 
     List<TriageFeedback> findByWorkspaceIdOrderByCreatedAtAscIdAsc(UUID workspaceId);
     List<TriageFeedback> findByTicketIdAndWorkspaceIdOrderByCreatedAtAscIdAsc(UUID ticketId, UUID workspaceId);
     long countByWorkspaceId(UUID workspaceId);
+    java.util.Optional<TriageFeedback> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
 }
