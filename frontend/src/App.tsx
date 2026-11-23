@@ -73,6 +73,13 @@ function App() {
   const resumeLiveRef = useRef<(() => void) | null>(null)
   // Reads Quality and operations once, now, without waiting for the next 5-second tick.
   const refreshLiveRef = useRef<(() => void) | null>(null)
+  // Retries a failed job through the same reads as the live refresh: one request at a time, aborted when the screen
+  // closes, and an answer that started before the retry never overwrites the state after it.
+  const retryLiveRef = useRef<((jobId: string) => Promise<boolean>) | null>(null)
+  // A synchronous guard against a double click, and the retry demo ticket kept when its triage request failed.
+  const retryDemoRef = useRef<{ running: boolean; ticketId: string | null }>({ running: false, ticketId: null })
+  // Bumped after Refresh now, Simulate provider timeout and Retry case, so focus moves to the recovery banner heading.
+  const [qualityFocus, setQualityFocus] = useState(0)
   // Every request a workspace starts carries this signal. Closing the demo or opening another workspace aborts it, so a
   // triage poll from the old workspace stops and never writes into the next one.
   const sessionAbortRef = useRef(new AbortController())
@@ -104,7 +111,10 @@ function App() {
   useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen])
   // Once the simulated failure is listed, the demo is no longer pending; after its retry the banner reads healthy again.
   useEffect(() => {
-    if (retryDemoStartedAt !== null && failures?.content.some((failure) => failure.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT')) setRetryDemoStartedAt(null)
+    if (retryDemoStartedAt !== null && failures?.content.some((failure) => failure.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT')) {
+      setRetryDemoStartedAt(null)
+      setAnnouncement('Recovery required. The synthetic provider timeout is ready to retry.')
+    }
   }, [failures, retryDemoStartedAt])
   useEffect(() => {
     if (!restartFocusRef.current) return
@@ -137,17 +147,22 @@ function App() {
     let paused = false
     let inFlight = false
     let cancelled = false
+    // queued: a refresh asked for while one is in flight runs right after it. generation: a retry bumps it, so an
+    // answer that was already on its way is dropped instead of overwriting the newer state.
+    let queued = false
+    let generation = 0
     // Leaving the view or closing the demo aborts these reads, including any retry they are waiting to send.
     const controller = new AbortController()
     const { signal } = controller
-    const refresh = async () => {
+    const refresh = async (queue = false) => {
       // One request at a time: during a cold start a response can take longer than the 5-second interval.
-      if (inFlight) return
+      if (inFlight) { if (queue) queued = true; return }
       inFlight = true
+      const started = generation
       try {
         // The same three reads the separate Evaluation and Operations screens made, together and never overlapping.
         const [next, overview, failurePage] = await Promise.all([api.getEvaluation(signal), api.getOperationsOverview(signal), api.listFailures(signal)])
-        if (cancelled) return
+        if (cancelled || started !== generation) return
         setEvaluation(next)
         setOperationsOverview(overview)
         setFailures(failurePage)
@@ -155,13 +170,14 @@ function App() {
         setLastUpdated(new Date())
         if (!paused) setLiveState('live')
       } catch (cause: unknown) {
-        if (cancelled) return
+        if (cancelled || started !== generation) return
         // An expired or unknown token will not come back, so stop refreshing and offer a new demo instead.
         if (cause instanceof ApiError && cause.status === 401) { stop(); setSessionEnded(true); return }
         // The status line says what failed in plain words; the raw error ("Failed to fetch", a status code) is not shown.
         if (!paused) setLiveState('failed')
       } finally {
         inFlight = false
+        if (queued && !cancelled) { queued = false; void refresh() }
       }
     }
     const stop = () => { if (interval !== undefined) { window.clearInterval(interval); interval = undefined } }
@@ -179,7 +195,14 @@ function App() {
     const onVisibility = () => { if (document.visibilityState === 'hidden') stop(); else if (!paused) resume() }
     const onActivity = () => { lastActivity = Date.now(); if (paused) resume() }
     resumeLiveRef.current = resume
-    refreshLiveRef.current = () => { void refresh() }
+    refreshLiveRef.current = () => { generation += 1; void refresh(true) }
+    retryLiveRef.current = async (jobId: string) => {
+      await api.retryFailure(jobId, signal)
+      if (cancelled) return false
+      generation += 1
+      void refresh(true)
+      return true
+    }
     setLiveState('loading')
     setLastUpdated(null)
     resume()
@@ -192,6 +215,7 @@ function App() {
       stop()
       resumeLiveRef.current = null
       refreshLiveRef.current = null
+      retryLiveRef.current = null
       document.removeEventListener('visibilitychange', onVisibility)
       activityEvents.forEach((name) => window.removeEventListener(name, onActivity))
     }
@@ -209,7 +233,7 @@ function App() {
     api.setToken('')
     setTickets([]); setSelectedTicketId(null); setPane('list')
     setEvaluation(null); setOperationsOverview(null); setFailures(null); setRuntime(null); setWorkspaceIndustryId(null)
-    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null); setRetryDemoStartedAt(null)
+    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null); setRetryDemoStartedAt(null); retryDemoRef.current = { running: false, ticketId: null }
   }
   function closeDemo() { startSession(); resetWorkspace(); setBusy(false); setSessionOpen(false) }
   function startNewDemo() { restartFocusRef.current = true; closeDemo(); void openWorkspace() }
@@ -367,28 +391,52 @@ function App() {
     }
     finally { if (!signal.aborted) { saving.delete(ticketId); setSavingTicketIds(new Set(saving)) } }
   }
+  // The retry goes through the screen's own reads: its follow-up refresh failing never reports the retry as failed,
+  // and leaving the screen drops it quietly.
   async function retryFailure() {
-    const failure = failures?.content[0]; if (!failure) return
+    const failure = failures?.content[0]
+    const retry = retryLiveRef.current
+    if (!failure || !retry) return
     const signal = sessionAbortRef.current.signal
     setBusy(true); setError(null)
-    try { await api.retryFailure(failure.id, signal); clearTicketError(failure.ticketId); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(signal), api.listFailures(signal)]); if (signal.aborted) return; setOperationsOverview(overview); setFailures(failurePage) }
-    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not retry the failed case. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
+    try {
+      if (!(await retry(failure.id)) || signal.aborted) return
+      clearTicketError(failure.ticketId)
+      setFailures((current) => current && { ...current, content: current.content.filter((item) => item.id !== failure.id), totalElements: Math.max(0, current.totalElements - 1) })
+      announce('Retried. The job is back in the queue and there are no unresolved failures.')
+      setQualityFocus((value) => value + 1)
+    }
+    catch (cause: unknown) { if (!signal.aborted && retryLiveRef.current === retry) showActionError(cause, 'Could not retry the failed case. Try again in a few seconds.') }
+    finally { if (!signal.aborted) setBusy(false) }
   }
   // The retry demo creates its ticket and sends it to the worker, which records a synthetic provider timeout. The
   // failure then shows in Quality and operations, where the reviewer retries it. The page stays there.
   async function runRetryDemo() {
+    const demo = retryDemoRef.current
+    if (demo.running) return
+    demo.running = true
     const signal = sessionAbortRef.current.signal
     setBusy(true); setError(null)
     try {
-      const created = mapApiTicket(await api.createScenario(RETRY_DEMO_SCENARIO, signal))
+      // A ticket created by an earlier click whose triage request failed is sent again instead of creating another.
+      let ticketId = demo.ticketId
+      if (!ticketId) {
+        const created = mapApiTicket(await api.createScenario(RETRY_DEMO_SCENARIO, signal))
+        if (signal.aborted) return
+        setTickets((current) => current.some((ticket) => ticket.backendId === created.backendId) ? current : [...current, created])
+        ticketId = created.backendId
+        demo.ticketId = ticketId
+      }
+      await api.requestTriage(ticketId, signal)
       if (signal.aborted) return
-      setTickets((current) => current.some((ticket) => ticket.backendId === created.backendId) ? current : [...current, created])
-      await api.requestTriage(created.backendId, signal)
-      if (signal.aborted) return
+      demo.ticketId = null
       setRetryDemoStartedAt(Date.now())
+      announce('Simulating a provider timeout. The failure shows here in a few seconds.')
+      setQualityFocus((value) => value + 1)
       refreshLiveRef.current?.()
     }
-    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not start the retry demo. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
+    catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not start the retry demo. Try again in a few seconds.') }
+    finally { demo.running = false; if (!signal.aborted) setBusy(false) }
   }
 
   function navigate(next: NavView) { setView(next); setError(null) }
@@ -453,7 +501,8 @@ function App() {
           <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
         </>}
         {view === 'quality' && <QualityOps evaluation={evaluation} overview={operationsOverview} failures={failures}
-          live={<LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}
+          live={<LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => { resumeLiveRef.current?.(); setQualityFocus((value) => value + 1) }} />}
+          loading={!sessionEnded && liveState === 'loading'} focusToken={qualityFocus} announcement={announcement}
           recovery={{ busy, pending: retryDemoPending }} onSimulate={() => void runRetryDemo()} onRetry={() => void retryFailure()} />}
       </main>
       {dialog === 'menu' && <PhoneMenu industryName={industryName} view={view} onNavigate={navigate} onShowBuilt={() => setDialog('built')} onCloseDemo={closeDemo} onClose={() => setDialog(null)} />}

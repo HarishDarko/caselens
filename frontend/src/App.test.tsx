@@ -368,11 +368,14 @@ async function openQuality() {
 
 test('simulates a provider timeout from Quality and operations, then offers Retry case, and keeps the ticket out of the inbox', async () => {
   let failed = false
+  let retriedOnce = false
   const backend = mockBackend()
   const fetchMock = stubOver(backend, (url) => {
     if (url.endsWith('/ticket-a105/triage')) { failed = true; return undefined }
-    if (url.endsWith('/job-retry-1/retry')) { failed = false; return response({ id: 'job-retry-2', eventId: 'event-retry-1', ticketId: 'ticket-a105', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }) }
+    if (url.endsWith('/job-retry-1/retry')) { failed = false; retriedOnce = true; return response({ id: 'job-retry-2', eventId: 'event-retry-1', ticketId: 'ticket-a105', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }) }
     if (url.includes('/api/operations/failures') && failed) return response({ content: [{ id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-a105', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    // The replayed job stays a RETRYABLE_FAILURE row in the queue counts; only the failures list drops it.
+    if (url.endsWith('/api/operations/overview') && retriedOnce) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 0, completed: 1, retryableFailures: 1, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [], providers: [] })
     return undefined
   })
   render(<App />)
@@ -390,10 +393,19 @@ test('simulates a provider timeout from Quality and operations, then offers Retr
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Recovery required' })).toBeInTheDocument())
   expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled()
   expect(screen.getByText('Recovery required', { selector: '.qo-health' })).toBeInTheDocument()
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Recovery required. The synthetic provider timeout is ready to retry.')
+  const failuresCard = () => screen.getByText('Recoverable failures', { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(failuresCard()).toHaveTextContent('1')
+  expect(failuresCard()).toHaveClass('tone-coral')
   fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
-  // After the retry the banner reads healthy again, and the demo can run again.
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  // After the retry the banner reads healthy again, focus moves to it, and the demo can run again.
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toHaveFocus())
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Retried. The job is back in the queue and there are no unresolved failures.')
   expect(screen.getByRole('button', { name: 'Simulate provider timeout' })).toBeEnabled()
+  // The card follows the failures list, not the queue's cumulative failed rows, so it agrees with the banner.
+  await waitFor(() => expect(failuresCard()).toHaveTextContent('None waiting; 1 failed attempt in all'))
+  expect(failuresCard().querySelector('.qo-value')).toHaveTextContent('0')
+  expect(failuresCard()).not.toHaveClass('tone-coral')
   fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
   expect(screen.queryByText('Synthetic provider timeout for retry review')).not.toBeInTheDocument()
 })
@@ -405,8 +417,9 @@ test('shows a pending simulation until the failure is listed', async () => {
   await openQuality()
 
   fireEvent.click(screen.getByRole('button', { name: 'Simulate provider timeout' }))
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'Simulating a provider timeout' })).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Simulating a provider timeout' })).toHaveFocus())
   expect(screen.getByRole('button', { name: 'Simulate provider timeout' })).toBeDisabled()
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Simulating a provider timeout. The failure shows here in a few seconds.')
   expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/demo/scenarios/provider-retry-demo'))).toHaveLength(1)
 })
 
@@ -414,7 +427,7 @@ test('shows live queue, reliability, quality and review figures, the job log and
   const backend = mockBackend()
   stubOver(backend, (url) => {
     if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 5, evaluatedResults: 4, categoryAgreementRate: 1, urgencyAgreementRate: 0.75, agreementRate: 0.75, correctionRate: 0.2, medianLatencyMs: 2900, p95LatencyMs: 4100, failureRate: 0, providerUsage: [], recentEvents: [], reviewedResults: 4, acceptedResults: 3, acceptanceRate: 0.75, overrideRate: 0.25, recordedResults: 3 })
-    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 1, completed: 2, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 1, providerFailureCount: 0, recent: [{ jobId: 'job-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:14:00Z', updatedAt: '2026-07-11T09:14:02Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', latencyMs: 2900 }, { jobId: 'job-2', ticketId: 'ticket-a103', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:15:00Z', updatedAt: '2026-07-11T09:15:03Z', completedAt: '2026-07-11T09:15:03Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'RULES_FALLBACK', latencyMs: 3100 }], providers: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2000, outputTokens: 600, averageLatencyMs: 2950 }] })
+    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 1, completed: 2, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 1, providerFailureCount: 0, recent: [{ jobId: 'job-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:14:00Z', updatedAt: '2026-07-11T09:14:02Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', latencyMs: 2900 }, { jobId: 'job-2', ticketId: 'ticket-a103', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:15:00Z', updatedAt: '2026-07-11T09:15:03Z', completedAt: '2026-07-11T09:15:03Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'RULES_FALLBACK', latencyMs: 3100 }, { jobId: 'job-3', ticketId: 'ticket-a104', status: 'TERMINAL_FAILURE', attemptCount: 3, createdAt: '2026-07-11T09:16:00Z', updatedAt: '2026-07-11T09:18:00Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', provider: 'groq', modelVersion: null, decisionSource: null, latencyMs: null }, { jobId: 'job-4', ticketId: 'ticket-a105', status: 'RETRYABLE_FAILURE', attemptCount: 1, createdAt: '2026-07-11T09:19:00Z', updatedAt: '2026-07-11T09:19:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', provider: null, modelVersion: null, decisionSource: null, latencyMs: null }], providers: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2000, outputTokens: 600, averageLatencyMs: 2950 }] })
     return undefined
   })
   render(<App />)
@@ -437,7 +450,108 @@ test('shows live queue, reliability, quality and review figures, the job log and
   expect(document.querySelector('.qo-providers li')).toHaveTextContent('Groq · 2 calls · 2 succeeded · 0 failed · 2600 tokens')
   expect(screen.getByText('How retries and dead-letter recovery work')).toBeInTheDocument()
   expect(screen.getByText('Healthy', { selector: '.qo-health' })).toBeInTheDocument()
+  const logRow = (status: string) => screen.getByText(status, { selector: '.qo-log b' }).closest('li')!
+  expect(logRow('Failed').querySelector('.qo-log-latency')).toHaveTextContent('Not measured yet')
+  expect(logRow('Stopped on purpose').querySelector('.qo-log-latency')).toHaveTextContent('Not measured yet')
+  expect(screen.queryByText('Pending')).not.toBeInTheDocument()
+  expect(screen.queryByText('Retrying')).not.toBeInTheDocument()
+  expect(screen.queryByText('Needs a newer backend')).not.toBeInTheDocument()
   expect(document.body.textContent).not.toContain('\u2014')
+})
+
+test('asks for a newer backend when an API sends no reviewer figures, and uses its correction rate for overrides', async () => {
+  render(<App />)
+  await openInbox()
+  await openQuality()
+
+  const figure = (label: string) => screen.getByText(label, { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(figure('Reviewer acceptance')).toHaveTextContent('Needs a newer backend')
+  expect(figure('Reviewer acceptance')).toHaveTextContent('Not measured yet')
+  expect(figure('Override rate')).toHaveTextContent('0%')
+  expect(figure('Override rate')).toHaveTextContent('Corrections as a share of results')
+  expect(screen.queryByText('No reviews yet')).not.toBeInTheDocument()
+})
+
+test('shows the session-ended state, not a loading line, when the first read is refused', async () => {
+  // The seeded open reads nothing from evaluation, so only the screen's first read is refused.
+  stubOver(mockSeededBackend(), (url) => url.endsWith('/api/evaluation') ? response({ detail: 'Unauthorized' }, 401) : undefined)
+  render(<App />)
+  await openInbox()
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your demo session has ended, so live updates stopped.'))
+  expect(screen.queryByText(/Loading the latest numbers/)).not.toBeInTheDocument()
+  expect(document.querySelector('.qo-skeleton')).toBeNull()
+})
+
+test('creates one retry demo ticket on a double click, and reuses it when its triage request failed', async () => {
+  let triageAttempts = 0
+  const fetchMock = stubOver(mockBackend(), (url) => url.endsWith('/ticket-a105/triage') && triageAttempts++ === 0 ? response({ detail: 'Busy' }, 500) : undefined)
+  render(<App />)
+  await openInbox()
+  await openQuality()
+  const scenarioPosts = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/demo/scenarios/provider-retry-demo')).length
+  const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a105/triage') && init?.method === 'POST').length
+
+  const simulate = screen.getByRole('button', { name: 'Simulate provider timeout' })
+  act(() => { simulate.click(); simulate.click() })
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem.'))
+  expect(scenarioPosts()).toBe(1)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate provider timeout' }))
+  await waitFor(() => expect(triagePosts()).toBe(2))
+  expect(scenarioPosts()).toBe(1)
+})
+
+test('drops a refresh that was already on its way when a retry lands, so the old failure never comes back', async () => {
+  let failed = true
+  let hold: () => void = () => undefined
+  let holdNext = false
+  const failure = { id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-retry-1', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }
+  const page = (withFailure: boolean) => response(withFailure ? { content: [failure], page: 0, size: 50, totalElements: 1, totalPages: 1 } : { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 })
+  const fetchMock = stubOver(mockBackend(), (url) => {
+    if (url.endsWith('/retry')) { failed = false; return response({ ...failure, id: 'job-retry-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.includes('/api/operations/failures') && holdNext) { holdNext = false; const answer = page(failed); return new Promise<Response>((resolve) => { hold = () => resolve(answer) }) as unknown as Response }
+    if (url.includes('/api/operations/failures')) return page(failed)
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled())
+
+  // A routine refresh starts and its failure list (read before the retry) is slow to answer.
+  holdNext = true
+  await advance(5_000)
+  const reads = calls(fetchMock, '/api/operations/overview')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  // No second set of reads runs beside the one in flight.
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(reads)
+
+  await act(async () => { hold() })
+  await waitFor(() => expect(calls(fetchMock, '/api/operations/overview')).toBe(reads + 1))
+  expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Recovery required' })).not.toBeInTheDocument()
+})
+
+test('never reports a retry as failed because the refresh after it was throttled', async () => {
+  let retried = false
+  const failure = { id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-retry-1', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }
+  stubOver(mockBackend(), (url) => {
+    if (url.endsWith('/retry')) { retried = true; return response({ ...failure, id: 'job-retry-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.endsWith('/api/operations/overview') && retried) return response({ detail: 'Busy' }, 503)
+    if (url.includes('/api/operations/failures')) return response({ content: [failure], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  await openQuality()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers.'), { timeout: 3_000 })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
@@ -657,7 +771,8 @@ test('loads Quality and operations when it is opened, and never shows numbers fr
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
   await openInbox()
   fireEvent.click(screen.getByRole('button', { name: QO }))
-  expect(screen.getByText('Loading the latest numbers for this workspace...')).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('Loading the latest numbers for this workspace.')
+  expect(document.querySelector('.qo-skeleton')).toBeInTheDocument()
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Live queue and reliability' })).toBeInTheDocument())
 })
 

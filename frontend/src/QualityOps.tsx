@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { EvaluationSummary, FailurePage, OperationsOverview } from './api'
 import { humanize } from './model'
 import { CheckIcon } from './ui'
@@ -54,38 +54,66 @@ function Figure({ label, value, detail, tone = 'plain' }: { label: string; value
   return <div className={`qo-figure tone-${tone}`}><span className="qo-label">{label}</span><strong className="qo-value num">{value}</strong><span className="qo-detail">{detail}</span></div>
 }
 
-const STATUS_LABEL: Record<OperationsOverview['recent'][number]['status'], string> = {
+type RecentJob = OperationsOverview['recent'][number]
+const STATUS_LABEL: Record<RecentJob['status'], string> = {
   QUEUED: 'Queued', PROCESSING: 'Processing', COMPLETED: 'Completed', RETRYABLE_FAILURE: 'Retrying', TERMINAL_FAILURE: 'Failed',
+}
+// The retry demo's job is stopped on purpose and acknowledged, so SQS is not retrying it: it is not "Retrying".
+const statusLabel = (job: RecentJob) => job.status === 'RETRYABLE_FAILURE' && job.lastErrorCode === SYNTHETIC ? 'Stopped on purpose' : STATUS_LABEL[job.status]
+// Pending only while a job can still finish; a failed or stopped job has no latency to wait for.
+const stillRunning = (job: RecentJob) => job.status === 'QUEUED' || job.status === 'PROCESSING' || (job.status === 'RETRYABLE_FAILURE' && job.lastErrorCode !== SYNTHETIC)
+function JobLatency({ job }: { job: RecentJob }) {
+  if (isNumber(job.latencyMs)) return <>{job.latencyMs} ms</>
+  return stillRunning(job) ? <>Pending</> : <Empty />
 }
 
 export type RecoveryState = { pending: boolean; busy: boolean }
 
-export function QualityOps({ evaluation, overview, failures, live, recovery, onSimulate, onRetry }: {
+export function QualityOps({ evaluation, overview, failures, live, loading, recovery, focusToken, announcement, onSimulate, onRetry }: {
   evaluation: EvaluationSummary | null
   overview: OperationsOverview | null
   failures: FailurePage | null
   live: ReactNode
+  /** The first numbers are on their way; the live line says so, and the page shows placeholders. */
+  loading: boolean
   recovery: RecoveryState
+  /** Changes after Refresh now, Simulate provider timeout and Retry case: focus goes to the recovery banner heading. */
+  focusToken: number
+  announcement: string
   onSimulate: () => void
   onRetry: () => void
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!focusToken) return
+    // The effect runs after the new banner is in the DOM, so focus can move at once.
+    ;(ref.current?.querySelector<HTMLElement>('#qo-recovery-title') ?? ref.current?.querySelector<HTMLElement>('h1'))?.focus({ preventScroll: true })
+  }, [focusToken])
+  // This screen's own polite region: recovery steps are announced here; the live line keeps its state sentence.
+  const said = <p className="sr-only" aria-live="polite">{announcement}</p>
   const head = (health?: { text: string; tone: Tone }) => (
     <header className="qo-head">
       <div className="qo-title"><h1 tabIndex={-1}>Quality and operations</h1>{health && <span className={`qo-health tone-${health.tone}`}>{health.text}</span>}</div>
       {live}
     </header>
   )
-  if (!evaluation || !overview) return <div className="qo">{head()}<p className="qo-loading">Loading the latest numbers for this workspace...</p></div>
+  // Before the first numbers arrive the live line carries the state (loading, failed, paused or ended); nothing repeats it.
+  if (!evaluation || !overview) return <div className="qo" ref={ref}>{head()}{loading && <div className="qo-skeleton" aria-hidden="true"><span /><span /><span /></div>}{said}</div>
 
   const count = failures?.totalElements ?? 0
   const firstFailure = failures?.content[0]
   const synthetic = firstFailure?.lastErrorCode === SYNTHETIC
   const queue = overview.queue
   const inFlight = queue.queued + queue.processing
-  const failed = queue.retryableFailures + queue.terminalFailures
+  // The failures still waiting for a retry, so the card agrees with the banner; a replayed job leaves the list.
+  const failed = count
+  const attempts = queue.retryableFailures + queue.terminalFailures
   const health: { text: string; tone: Tone } = count ? { text: 'Recovery required', tone: 'coral' }
     : overview.providerFailureCount > 0 ? { text: 'Degraded', tone: 'amber' } : { text: 'Healthy', tone: 'teal' }
   const reviewed = evaluation.reviewedResults
+  // An API from before recorded results sends no reviewer figures; its correction rate is the nearest it has.
+  const reviewerFigures = evaluation.reviewedResults !== undefined
+  const overrideRate = reviewerFigures ? evaluation.overrideRate : evaluation.triageResults > 0 ? evaluation.correctionRate : null
   const recorded = evaluation.recordedResults
   const recent = overview.recent.slice(0, 20)
   const providers = overview.providers
@@ -95,20 +123,21 @@ export function QualityOps({ evaluation, overview, failures, live, recovery, onS
   const p95 = queue.completed > 0 ? evaluation.p95LatencyMs : null
 
   return (
-    <div className="qo">
+    <div className="qo" ref={ref}>
       {head(health)}
+      {said}
 
       <section className={count ? 'qo-recovery tone-coral' : 'qo-recovery'} aria-labelledby="qo-recovery-title">
         <span className="qo-recovery-icon" aria-hidden="true">{count ? '!' : <CheckIcon />}</span>
         <div className="qo-recovery-text">
           {count ? <>
-            <h2 id="qo-recovery-title">{synthetic ? 'Recovery required' : `${count} failed job${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} a retry`}</h2>
+            <h2 id="qo-recovery-title" tabIndex={-1}>{synthetic ? 'Recovery required' : `${count} failed job${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} a retry`}</h2>
             <p>{synthetic ? 'A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.' : `Job ${firstFailure?.id ?? ''} stays here until a reviewer retries it.`}</p>
           </> : recovery.pending ? <>
-            <h2 id="qo-recovery-title">Simulating a provider timeout</h2>
+            <h2 id="qo-recovery-title" tabIndex={-1}>Simulating a provider timeout</h2>
             <p>A demo ticket is on its way to a provider that never answers. The worker records the timeout in a few seconds, and it shows here for a retry.</p>
           </> : <>
-            <h2 id="qo-recovery-title">No unresolved failures</h2>
+            <h2 id="qo-recovery-title" tabIndex={-1}>No unresolved failures</h2>
             <p>Simulate provider timeout sends one demo ticket to a provider that never answers, so you can watch the failure land here and retry it.</p>
           </>}
         </div>
@@ -122,7 +151,7 @@ export function QualityOps({ evaluation, overview, failures, live, recovery, onS
         <div className="qo-figures">
           <Figure label="In flight" value={inFlight} detail={`${queue.queued} queued, ${queue.processing} processing`} />
           <Figure label="Completed live" value={queue.completed} detail="Live worker runs; recorded results are not counted" tone={queue.completed ? 'teal' : 'plain'} />
-          <Figure label="Recoverable failures" value={failed} detail={`${queue.retryableFailures} retryable, ${queue.terminalFailures} terminal`} tone={failed ? 'coral' : 'plain'} />
+          <Figure label="Recoverable failures" value={failed} detail={failed ? `Waiting for a retry here; ${attempts} failed attempt${attempts === 1 ? '' : 's'} in all` : `None waiting; ${attempts} failed attempt${attempts === 1 ? '' : 's'} in all`} tone={failed ? 'coral' : 'plain'} />
           <Figure label="Rules fallbacks" value={overview.fallbackCount} detail={`${overview.providerFailureCount} provider failure${overview.providerFailureCount === 1 ? '' : 's'}`} tone={overview.fallbackCount ? 'amber' : 'plain'} />
         </div>
       </section>
@@ -130,8 +159,8 @@ export function QualityOps({ evaluation, overview, failures, live, recovery, onS
       <section className="qo-block" aria-labelledby="qo-quality-title">
         <h2 id="qo-quality-title" className="qo-block-title">Model quality and review</h2>
         <div className="qo-figures">
-          <Figure label="Reviewer acceptance" value={<Percent value={evaluation.acceptanceRate} />} detail={isNumber(reviewed) && reviewed > 0 ? `${evaluation.acceptedResults ?? 0} of ${reviewed} reviewed results accepted` : 'No reviews yet'} />
-          <Figure label="Override rate" value={<Percent value={evaluation.overrideRate} />} detail="Reviews that changed the urgency" tone={evaluation.overrideRate ? 'coral' : 'plain'} />
+          <Figure label="Reviewer acceptance" value={<Percent value={evaluation.acceptanceRate} />} detail={!reviewerFigures ? 'Needs a newer backend' : isNumber(reviewed) && reviewed > 0 ? `${evaluation.acceptedResults ?? 0} of ${reviewed} reviewed results accepted` : 'No reviews yet'} />
+          <Figure label="Override rate" value={<Percent value={overrideRate} />} detail={reviewerFigures ? 'Reviews that changed the urgency' : 'Corrections as a share of results'} tone={overrideRate ? 'coral' : 'plain'} />
           <Figure label="Benchmark match" value={<Percent value={benchmark} />} detail={`${evaluation.evaluatedResults} result${evaluation.evaluatedResults === 1 ? '' : 's'} scored against the answer key`} />
           <Figure label="Live latency" value={<>p50 <Millis value={p50} /></>} detail={isNumber(p95) ? `p95 ${p95} ms` : 'p95 not measured yet'} />
         </div>
@@ -148,13 +177,13 @@ export function QualityOps({ evaluation, overview, failures, live, recovery, onS
             <li key={job.jobId} className="qo-log-row">
               <div className="qo-log-main">
                 <span className="qo-log-line">
-                  <b>{STATUS_LABEL[job.status]}</b>
+                  <b>{statusLabel(job)}</b>
                   {job.decisionSource && <span className={job.decisionSource === 'AI_VALIDATED' ? 'badge b-verified' : 'badge b-fallback'}>{job.decisionSource === 'AI_VALIDATED' ? 'AI verified' : 'Rules fallback'}</span>}
                   {job.lastErrorCode && <span className="badge b-error">{humanize(job.lastErrorCode)}</span>}
                 </span>
                 <span className="qo-log-meta">{[job.provider ? humanize(job.provider) : 'Not called', job.modelVersion].filter(Boolean).join(' · ')} · {job.attemptCount} attempt{job.attemptCount === 1 ? '' : 's'} · updated {formatTime(job.updatedAt)}</span>
               </div>
-              <span className="qo-log-latency num">{job.latencyMs === null || job.latencyMs === undefined ? 'Pending' : `${job.latencyMs} ms`}</span>
+              <span className="qo-log-latency num"><JobLatency job={job} /></span>
             </li>
           ))}
         </ol> : <p className="qo-empty">No live worker runs yet. Open any untriaged ticket in the Inbox to run it live, or use Simulate provider timeout above to test failure recovery.</p>}

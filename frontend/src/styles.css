@@ -493,7 +493,9 @@ mark.ev .ref { display: inline-grid; place-items: center; min-width: 16px; heigh
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); }
 .live-status.paused .live-dot { background: var(--control); }
 .live-updated { color: var(--faint); }
-.qo-loading { color: var(--muted); }
+.qo-skeleton { display: grid; gap: 10px; }
+.qo-skeleton span { display: block; height: 72px; border-radius: 10px; background: var(--raised); border: 1px solid var(--border); }
+.qo-recovery-text h2:focus:not(:focus-visible) { outline: none; }
 
 .qo-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding: 16px; border-radius: 10px; border: 1px solid #bcdcd3; background: var(--teal-soft); }
 .qo-recovery.tone-coral { border-color: #e3b9ae; background: var(--coral-soft); }
