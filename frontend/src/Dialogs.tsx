@@ -59,7 +59,7 @@ export function HowItsBuilt({ runtime, onClose }: { runtime: RuntimeSummary | nu
           <div>
             <h3 className="step-h">A relay puts the job on the queue</h3>
             <p className="step-p">Failed attempts retry on their own. A job that keeps failing waits in a dead-letter queue until someone replays it.</p>
-            <div className="chips"><span className="chip">Amazon SQS</span><span className="chip">Dead-letter queue</span><span className="chip">Replay from Operations</span></div>
+            <div className="chips"><span className="chip">Amazon SQS</span><span className="chip">Dead-letter queue</span><span className="chip">Replay from Quality and operations</span></div>
           </div>
         </li>
         <li>
@@ -108,7 +108,7 @@ export function HowItsBuilt({ runtime, onClose }: { runtime: RuntimeSummary | nu
   )
 }
 
-export type NavView = 'inbox' | 'evaluation' | 'operations'
+export type NavView = 'inbox' | 'quality'
 
 /** The phone and tablet menu: the screens, How it's built, Close demo and the byline. */
 export function PhoneMenu({ industryName, view, onNavigate, onShowBuilt, onCloseDemo, onClose }: { industryName: string; view: NavView; onNavigate: (view: NavView) => void; onShowBuilt: () => void; onCloseDemo: () => void; onClose: () => void }) {
@@ -124,8 +124,7 @@ export function PhoneMenu({ industryName, view, onNavigate, onShowBuilt, onClose
       <p className="menu-scope">Demo workspace, {industryName}</p>
       <nav className="menu-nav" aria-label="Screens">
         {item('inbox', 'Inbox')}
-        {item('evaluation', 'Evaluation')}
-        {item('operations', 'Operations')}
+        {item('quality', 'Quality and operations')}
         <button type="button" className="nav-item" onClick={onShowBuilt}><span>How it's built</span></button>
         <button type="button" className="nav-item" onClick={() => { onClose(); onCloseDemo() }}><span>Close demo</span></button>
       </nav>

@@ -22,7 +22,7 @@ export type Ticket = {
 export const URGENCIES: Urgency[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
 export const URGENCY_LABEL: Record<Urgency, string> = { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High', CRITICAL: 'Critical' }
 
-// The retry demo ticket fails on purpose. It belongs to Operations, never to the inbox (an older API still seeds it).
+// The retry demo ticket fails on purpose. It belongs to Quality and operations, never to the inbox (an older API still seeds it).
 export const RETRY_DEMO_SCENARIO = 'provider-retry-demo'
 
 // A worker whose SnapStart snapshot was dropped after 14 idle days rebuilds it before SQS redelivers the job (about
@@ -43,8 +43,8 @@ export const TRIAGE_STAGE_TEXT = {
 } as const
 export type TriageStage = keyof typeof TRIAGE_STAGE_TEXT
 export const WAKING_TEXT = 'Waking the triage worker. The first live run after a quiet spell can take up to a minute.'
-export const TRIAGE_FAILED_TEXT = 'This ticket could not be triaged. Open Operations to retry it.'
-export const RETRY_DEMO_STOPPED_TEXT = 'The retry demo stopped this triage on purpose. Open Operations to retry it.'
+export const TRIAGE_FAILED_TEXT = 'This ticket could not be triaged. Open Quality and operations to retry it.'
+export const RETRY_DEMO_STOPPED_TEXT = 'The retry demo stopped this triage on purpose. Open Quality and operations to retry it.'
 export const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the ticket again in a minute to see the result.'
 
 export const SESSION_ENDED_TEXT = 'Your demo session has ended. Close the demo and open a new one.'

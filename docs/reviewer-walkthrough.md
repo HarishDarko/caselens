@@ -4,24 +4,26 @@
    The page is labelled as a demo and contains synthetic records only.
    The CloudFront URL remains a fallback if the custom domain is unavailable:
    [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.cloudfront.net).
-2. Select **Launch live demo**. CaseLens creates an isolated, 24-hour
-   workspace containing synthetic records only. No account is required.
-3. In **Ticket inbox**, scan the seeded queue. Use **Load
-   charger-offline-site-wide** to create a fresh synthetic case.
-4. Open the new case. Review the category, urgency, SLA risk, deterministic
-   priority, exact evidence, policy, next actions, and suggested reply.
-5. Check **Durable processing trace**. Point out the outbox event, queue job,
+2. Pick a sample queue and select **Open the ... queue**. CaseLens creates an
+   isolated, 24-hour workspace containing synthetic records only. No account
+   is required.
+3. The **Inbox** opens on the most urgent recorded ticket. Its evidence quotes
+   are highlighted in the customer's own words, numbered to the reasons.
+4. Open a ticket under **Not triaged yet** to run it live. Review the category,
+   urgency, deterministic priority, evidence, policy, next steps, and
+   suggested reply.
+5. Expand the trace line. Point out the outbox event, queue job,
    worker attempt, Groq model, decision source, and latency recorded by the
    backend. `AI_VALIDATED` means the provider output passed
    evidence and policy validation; `RULES_FALLBACK` means the deterministic
    safe path handled a provider or validation failure.
-6. Select a different urgency and save a correction. The original result stays
-   immutable while feedback is appended.
-7. Open **Evaluation** to see agreement, correction rate, latency, failures,
-   and provider usage calculated from persisted records.
-8. Return to Inbox and select **Run controlled retry demo**. The backend records
-   one synthetic provider timeout. Open **Operations**, inspect the retryable
-   job, and use **Retry failed case**. The replay guard prevents a failure loop.
+6. **Accept** the call or **Override urgency**. The original result stays
+   immutable while each review is appended.
+7. Open **Quality and operations** to see the live queue, reviewer acceptance,
+   override rate, benchmark match, live latency and provider usage.
+8. Select **Simulate provider timeout**. The backend records one synthetic
+   provider timeout and the banner turns to **Recovery required**. Use
+   **Retry case**. The replay guard prevents a failure loop.
 
 The reviewer can inspect why the result was produced, trace its durable queue
 states, correct it, and recover a failed job. The model supplies a bounded

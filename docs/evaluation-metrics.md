@@ -22,7 +22,7 @@ events. It does not use fabricated dashboard values.
   source, whether ground truth exists, and whether the latest reviewer
   feedback changed the result.
 
-The Operations view uses a separate workspace-scoped overview endpoint:
+The Quality and operations screen reads this summary together with a workspace-scoped operations overview and the failure list, once per refresh:
 
 - queue counts are derived from persisted triage jobs;
 - fallback results are counted from `RULES_FALLBACK` results;

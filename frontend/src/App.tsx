@@ -3,17 +3,17 @@ import bundledSessionOptions from './industries.json'
 import { ApiError, createCaseLensApi, type EvaluationSummary, type FailurePage, type OperationsOverview, type RuntimeSummary, type SessionOptions, type TriageResult } from './api'
 import { HowItsBuilt, PhoneMenu, type NavView } from './Dialogs'
 import { Landing } from './Landing'
-import { EvaluationView, LiveStatus, OperationsView, type LiveState } from './LegacyViews'
 import {
   applyReview, CORRECTION_CONFLICT_TEXT, isPhone, mapApiTicket, pause, plainError, PlainError, RETRY_DEMO_SCENARIO, RETRY_DEMO_STOPPED_TEXT,
   reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
   TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
+import { LiveStatus, QualityOps, type LiveState } from './QualityOps'
 import { Queue, type TicketActivity } from './Queue'
 import { TicketDetail } from './TicketDetail'
 import { Byline, Wordmark } from './ui'
 
-// Evaluation and Operations refresh every 5 seconds while someone is looking. They pause in a hidden tab and stop
+// Quality and operations refreshes every 5 seconds while someone is looking. They pause in a hidden tab and stop
 // after 10 minutes without a click, key press, scroll or touch, so an open tab does not keep the API and Neon awake.
 const LIVE_REFRESH_MS = 5_000
 const LIVE_IDLE_MS = 10 * 60_000
@@ -30,10 +30,12 @@ type Pane = 'list' | 'detail'
 type TicketError = { text: string; hold: boolean; resume: boolean }
 type Stage = { stage: TriageStage; slow: boolean }
 
-const VIEW_TITLE: Record<NavView, string> = { inbox: 'Inbox', evaluation: 'Evaluation', operations: 'Operations' }
+const VIEW_TITLE: Record<NavView, string> = { inbox: 'Inbox', quality: 'Quality and operations' }
+// The retry demo shows as pending until its failure is listed, or for at most this long.
+const RETRY_DEMO_PENDING_MS = 90_000
 
 function NavIcon({ view }: { view: NavView }) {
-  const path = view === 'inbox' ? 'M2 9.5h3.2l1 2h3.6l1-2H14M2 9.5 4 3h8l2 6.5V13H2z' : view === 'evaluation' ? 'M2 13.5h12M4 11V7.5M8 11V3.5M12 11V6' : 'M2 8h2.5l1.5-4 3 8 1.5-4H14'
+  const path = view === 'inbox' ? 'M2 9.5h3.2l1 2h3.6l1-2H14M2 9.5 4 3h8l2 6.5V13H2z' : 'M2 13.5h12M4 11V7.5M8 11V3.5M12 11V6'
   return <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d={path} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
@@ -65,10 +67,11 @@ function App() {
   const [liveState, setLiveState] = useState<LiveState>('loading')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dialog, setDialog] = useState<'built' | 'menu' | null>(null)
+  const [retryDemoStartedAt, setRetryDemoStartedAt] = useState<number | null>(null)
   // One polite live region carries state changes (triage stage, review saved). It is never refreshed on a timer.
   const [announcement, setAnnouncement] = useState('')
   const resumeLiveRef = useRef<(() => void) | null>(null)
-  // Reads Evaluation or Operations once, now, without waiting for the next 5-second tick.
+  // Reads Quality and operations once, now, without waiting for the next 5-second tick.
   const refreshLiveRef = useRef<(() => void) | null>(null)
   // Every request a workspace starts carries this signal. Closing the demo or opening another workspace aborts it, so a
   // triage poll from the old workspace stops and never writes into the next one.
@@ -81,7 +84,7 @@ function App() {
   // The industry list may arrive after the workspace opens; without an id the workspace is the default industry.
   const workspaceIndustry = useMemo(() => sessionOptions.industries.find((industry) => industry.id === (workspaceIndustryId ?? sessionOptions.defaultIndustry)) ?? null, [sessionOptions, workspaceIndustryId])
   const industryName = workspaceIndustry?.name ?? 'demo'
-  // The retry demo ticket fails on purpose; it lives in Operations, never in the inbox.
+  // The retry demo ticket fails on purpose; it lives in Quality and operations, never in the inbox.
   const inboxTickets = useMemo(() => tickets.filter((ticket) => ticket.scenarioKey !== RETRY_DEMO_SCENARIO), [tickets])
   const selectedTicket = useMemo(() => inboxTickets.find((ticket) => ticket.id === selectedTicketId) ?? null, [selectedTicketId, inboxTickets])
   selectedRef.current = selectedTicket?.backendId ?? null
@@ -99,6 +102,10 @@ function App() {
   }, [])
 
   useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen])
+  // Once the simulated failure is listed, the demo is no longer pending; after its retry the banner reads healthy again.
+  useEffect(() => {
+    if (retryDemoStartedAt !== null && failures?.content.some((failure) => failure.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT')) setRetryDemoStartedAt(null)
+  }, [failures, retryDemoStartedAt])
   useEffect(() => {
     if (!restartFocusRef.current) return
     const target = sessionOpen ? document.getElementById('inbox-title') : document.getElementById('caselens-title')
@@ -124,7 +131,7 @@ function App() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
   useEffect(() => {
-    if (!sessionOpen || sessionEnded || (view !== 'evaluation' && view !== 'operations')) return
+    if (!sessionOpen || sessionEnded || view !== 'quality') return
     let interval: number | undefined
     let lastActivity = Date.now()
     let paused = false
@@ -138,16 +145,12 @@ function App() {
       if (inFlight) return
       inFlight = true
       try {
-        if (view === 'evaluation') {
-          const next = await api.getEvaluation(signal)
-          if (cancelled) return
-          setEvaluation(next)
-        } else {
-          const [overview, failurePage] = await Promise.all([api.getOperationsOverview(signal), api.listFailures(signal)])
-          if (cancelled) return
-          setOperationsOverview(overview)
-          setFailures(failurePage)
-        }
+        // The same three reads the separate Evaluation and Operations screens made, together and never overlapping.
+        const [next, overview, failurePage] = await Promise.all([api.getEvaluation(signal), api.getOperationsOverview(signal), api.listFailures(signal)])
+        if (cancelled) return
+        setEvaluation(next)
+        setOperationsOverview(overview)
+        setFailures(failurePage)
         // A background refresh leaves the error banner alone: it belongs to the reviewer's last action.
         setLastUpdated(new Date())
         if (!paused) setLiveState('live')
@@ -206,7 +209,7 @@ function App() {
     api.setToken('')
     setTickets([]); setSelectedTicketId(null); setPane('list')
     setEvaluation(null); setOperationsOverview(null); setFailures(null); setRuntime(null); setWorkspaceIndustryId(null)
-    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null)
+    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null); setRetryDemoStartedAt(null)
   }
   function closeDemo() { startSession(); resetWorkspace(); setBusy(false); setSessionOpen(false) }
   function startNewDemo() { restartFocusRef.current = true; closeDemo(); void openWorkspace() }
@@ -231,7 +234,7 @@ function App() {
     const signal = startSession()
     resetWorkspace(); setBusy(true)
     try {
-      // One call opens a seeded workspace. Evaluation and Operations load themselves when they are opened, so a new
+      // One call opens a seeded workspace. Quality and operations loads itself when it is opened, so a new
       // workspace never shows the numbers of the one before it.
       const session = await api.createSession(industryId, true)
       if (signal.aborted) return
@@ -354,7 +357,7 @@ function App() {
       if (!stillShows(ticketId, result.id)) return false
       const by = deciderOf(result)
       announce(decision === 'ACCEPTED' ? `Accepted. The ${by.possessive} call is logged as confirmed.` : `Override logged. ${by.name} ${URGENCY_LABEL[result.urgency]}, you ${URGENCY_LABEL[urgency ?? result.urgency]}.`)
-      // The review is saved; a failed metrics read must not say otherwise. Evaluation reloads itself when opened.
+      // The review is saved; a failed metrics read must not say otherwise. Quality and operations reloads itself.
       api.getEvaluation(signal).then((next) => { if (!signal.aborted) setEvaluation(next) }).catch(() => undefined)
       return true
     }
@@ -372,7 +375,7 @@ function App() {
     catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not retry the failed case. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
   }
   // The retry demo creates its ticket and sends it to the worker, which records a synthetic provider timeout. The
-  // failure then shows in Operations, where the reviewer retries it. The page stays on Operations.
+  // failure then shows in Quality and operations, where the reviewer retries it. The page stays there.
   async function runRetryDemo() {
     const signal = sessionAbortRef.current.signal
     setBusy(true); setError(null)
@@ -382,6 +385,7 @@ function App() {
       setTickets((current) => current.some((ticket) => ticket.backendId === created.backendId) ? current : [...current, created])
       await api.requestTriage(created.backendId, signal)
       if (signal.aborted) return
+      setRetryDemoStartedAt(Date.now())
       refreshLiveRef.current?.()
     }
     catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not start the retry demo. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
@@ -390,6 +394,9 @@ function App() {
   function navigate(next: NavView) { setView(next); setError(null) }
   const activity = (ticket: Ticket): TicketActivity => ({ running: busyTicketIds.has(ticket.backendId), stage: triageStages[ticket.backendId]?.stage ?? null, failed: Boolean(ticketErrors[ticket.backendId]) })
   const hasRecorded = inboxTickets.some((ticket) => ticket.result?.recorded)
+  // Pending from the click until the synthetic failure is listed (each 5-second refresh re-checks), or 90 seconds.
+  const retryDemoListed = Boolean(failures?.content.some((failure) => failure.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT'))
+  const retryDemoPending = retryDemoStartedAt !== null && !retryDemoListed && Date.now() - retryDemoStartedAt < RETRY_DEMO_PENDING_MS
   const toReview = inboxTickets.filter((ticket) => ticket.result && !ticket.review && !busyTicketIds.has(ticket.backendId)).length
 
   const builtDialog = dialog === 'built' && <HowItsBuilt runtime={runtime} onClose={() => setDialog(null)} />
@@ -402,7 +409,7 @@ function App() {
     <button type="button" aria-label={VIEW_TITLE[target]} className="nav-item" aria-current={view === target ? 'page' : undefined} onClick={() => navigate(target)}>
       <NavIcon view={target} /><span>{VIEW_TITLE[target]}</span>
       {target === 'inbox' && toReview > 0 && <span className="nav-count">{toReview} to review</span>}
-      {target === 'operations' && failures?.totalElements ? <span className="nav-count">{failures.totalElements} failed</span> : null}
+      {target === 'quality' && failures?.totalElements ? <span className="nav-count">{failures.totalElements}<span className="sr-only"> failed</span></span> : null}
     </button>
   )
   const banner = sessionEnded
@@ -420,7 +427,7 @@ function App() {
       <aside className="sidebar" aria-label="CaseLens">
         <Wordmark />
         <div className="scope"><span className="scope-label">Demo workspace</span><span className="scope-name">{industryName}</span></div>
-        <nav className="nav" aria-label="Screens">{navItem('inbox')}{navItem('evaluation')}{navItem('operations')}</nav>
+        <nav className="nav" aria-label="Screens">{navItem('inbox')}{navItem('quality')}</nav>
         <div className="sidebar-foot">
           <button type="button" className="nav-item" onClick={() => setDialog('built')}><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 3.5h10v3H3zM3 9.5h10v3H3z" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg><span>How it's built</span></button>
           <button type="button" className="nav-item" onClick={closeDemo}><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Close demo</span></button>
@@ -445,11 +452,9 @@ function App() {
             : <section className="detail" aria-label="Ticket detail"><div className="detail-empty"><p>{inboxTickets.some((ticket) => ticket.result) ? 'Pick a ticket from the inbox.' : 'Pick a ticket to run the live AI on it. Triage takes a few seconds.'}</p></div></section>}
           <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
         </>}
-        {view !== 'inbox' && <div className="legacy-view">
-          <LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />
-          {view === 'evaluation' && <EvaluationView evaluation={evaluation} />}
-          {view === 'operations' && <OperationsView overview={operationsOverview} failures={failures} busy={busy} onRetry={retryFailure} onRunRetryDemo={runRetryDemo} />}
-        </div>}
+        {view === 'quality' && <QualityOps evaluation={evaluation} overview={operationsOverview} failures={failures}
+          live={<LiveStatus state={sessionEnded ? 'ended' : liveState} lastUpdated={lastUpdated} onRefresh={() => resumeLiveRef.current?.()} />}
+          recovery={{ busy, pending: retryDemoPending }} onSimulate={() => void runRetryDemo()} onRetry={() => void retryFailure()} />}
       </main>
       {dialog === 'menu' && <PhoneMenu industryName={industryName} view={view} onNavigate={navigate} onShowBuilt={() => setDialog('built')} onCloseDemo={closeDemo} onClose={() => setDialog(null)} />}
       {builtDialog}
