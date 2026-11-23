@@ -242,11 +242,27 @@ public class TriageWorker {
             attempts.save(attempt);
         }
         metrics.completed();
-        if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) metrics.fallback();
+        if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) {
+            metrics.fallback();
+            logFallback(message, job, decision.fallback());
+        }
         log.info("triage.completed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} source={}",
                 message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(),
                 message.eventId(), decision.decisionSource());
         return WorkerResult.ack();
+    }
+
+    /**
+     * One WARN line per saved rules-fallback result, so the reasons can be counted in CloudWatch Logs Insights. Every
+     * value is an id or a fixed code (see FallbackCause): never ticket text, evidence quotes or model output.
+     */
+    private void logFallback(QueueMessage message, TriageJob job, FallbackCause cause) {
+        FallbackCause known = cause != null ? cause : FallbackCause.of(null, null, null, null);
+        log.warn("triage.fallback correlationId={} workspaceId={} ticketId={} jobId={} eventId={} pack={} provider={}"
+                        + " errorCode={} check={} reason={}",
+                message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId(),
+                known.pack(), known.provider(), known.errorCode(),
+                known.failedCheck() == null ? "none" : known.failedCheck(), known.reason());
     }
 
     private WorkerResult recordFailure(QueueMessage message, Claim claim, RuntimeException failure) {

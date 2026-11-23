@@ -50,7 +50,8 @@ public class TriageController {
     record ProcessingResponse(JobResponse job, ResultResponse result) {
         static ProcessingResponse from(TriageProcessingSnapshot snapshot, ObjectMapper mapper) {
             return new ProcessingResponse(JobResponse.from(snapshot.job(), snapshot.attempts()),
-                    snapshot.result() == null ? null : ResultResponse.from(snapshot.result(), mapper));
+                    snapshot.result() == null ? null
+                            : ResultResponse.from(snapshot.result(), snapshot.fallbackReason(), mapper));
         }
     }
 
@@ -70,15 +71,16 @@ public class TriageController {
             Sentiment sentiment, String summary, JsonNode evidence, JsonNode policyIds, String explanation,
             JsonNode recommendedActions, String suggestedReply, ReliabilitySignal reliabilitySignal, JsonNode warnings,
             int priorityScore, JsonNode appliedRules, DecisionSource decisionSource, String modelVersion,
-            String promptVersion, Instant createdAt) {
-        static ResultResponse from(TriageResult result, ObjectMapper mapper) {
+            String promptVersion, Instant createdAt, FallbackReason fallbackReason) {
+        /** {@code fallbackReason} is null for an AI-validated result; the warnings keep their old text for old clients. */
+        static ResultResponse from(TriageResult result, FallbackReason fallbackReason, ObjectMapper mapper) {
             try {
                 return new ResultResponse(result.getId(), result.getTicketId(), result.getCategory(), result.getUrgency(),
                         result.getSlaRisk(), result.getSentiment(), result.getSummary(), mapper.readTree(result.getEvidenceJson()),
                         mapper.readTree(result.getPolicyIdsJson()), result.getExplanation(), mapper.readTree(result.getRecommendedActionsJson()),
                         result.getSuggestedReply(), result.getReliabilitySignal(), mapper.readTree(result.getWarningsJson()),
                         result.getPriorityScore(), mapper.readTree(result.getAppliedRulesJson()), result.getDecisionSource(),
-                        result.getModelVersion(), result.getPromptVersion(), result.getCreatedAt());
+                        result.getModelVersion(), result.getPromptVersion(), result.getCreatedAt(), fallbackReason);
             } catch (JacksonException exception) {
                 throw new IllegalStateException("Stored triage result is not readable", exception);
             }
