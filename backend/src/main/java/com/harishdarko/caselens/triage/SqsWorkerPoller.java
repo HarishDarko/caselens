@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.MessageSystemAttributeName;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import tools.jackson.databind.ObjectMapper;
 
@@ -35,12 +36,23 @@ public class SqsWorkerPoller {
     @Scheduled(fixedDelayString = "${caselens.worker.poll-delay-ms:1000}")
     public void poll() {
         var response = client.receiveMessage(ReceiveMessageRequest.builder()
-                .queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(1).build());
+                .queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(1)
+                .messageSystemAttributeNames(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT).build());
         for (Message message : response.messages()) {
             if (shouldDelete(message)) {
                 client.deleteMessage(DeleteMessageRequest.builder().queueUrl(queueUrl)
                         .receiptHandle(message.receiptHandle()).build());
             }
+        }
+    }
+
+    /** SQS's ApproximateReceiveCount for this message, or 0 when it is missing or unreadable (treated as final). */
+    private static int receiveCount(Message message) {
+        String value = message.attributes().get(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT);
+        try {
+            return value == null ? 0 : Math.max(0, Integer.parseInt(value));
+        } catch (NumberFormatException unreadable) {
+            return 0;
         }
     }
 
@@ -55,7 +67,7 @@ public class SqsWorkerPoller {
             return true;
         }
         try {
-            return worker.process(decoded).status() != WorkerResultStatus.RETRY;
+            return worker.process(decoded, receiveCount(message)).status() != WorkerResultStatus.RETRY;
         } catch (RuntimeException processingFailure) {
             log.warn("triage.worker_failed messageId={} eventId={} correlationId={} errorType={}",
                     SensitiveDataSanitizer.text(message.messageId()), decoded.eventId(), CorrelationIds.normalize(decoded.correlationId()),

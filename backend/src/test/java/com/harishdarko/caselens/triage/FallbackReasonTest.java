@@ -10,6 +10,7 @@ class FallbackReasonTest {
     @ParameterizedTest
     @CsvSource({
         "HTTP_429, PROVIDER_RATE_LIMITED",
+        "HTTP_413, PROVIDER_RATE_LIMITED",
         "AI_BUDGET_EXHAUSTED, BUDGET_SPENT",
         "AI_BUDGET_SHARE_EXHAUSTED, BUDGET_SPENT",
         "SEMANTIC_VALIDATION, ANSWER_FAILED_CHECKS",

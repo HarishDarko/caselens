@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 import ch.qos.logback.core.read.ListAppender;
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketChannel;
@@ -25,6 +26,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
@@ -227,6 +230,122 @@ class TriageWorkerTest {
                 worker(new MockTriageProvider()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1)));
 
         assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.fallback "));
+    }
+
+    @Test
+    void aRateLimitOnAnEarlyDeliveryLeavesTheJobForSqsToRetryInsteadOfFallingBack() {
+        TriageJob job = claimableJob();
+        List<ILoggingEvent> lines = captureWorkerLog(() -> {
+            WorkerResult result = worker(rateLimited()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), 1);
+
+            assertThat(result.status()).isEqualTo(WorkerResultStatus.RETRY);
+            assertThat(result.errorCode()).isEqualTo("PROVIDER_RATE_LIMIT");
+        });
+
+        assertThat(job.getStatus()).isEqualTo(TriageJobStatus.RETRYABLE_FAILURE);
+        assertThat(job.getLastErrorCode()).isEqualTo("PROVIDER_RATE_LIMIT");
+        verify(results, never()).save(any());
+        assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.fallback "));
+    }
+
+    @Test
+    void theFinalDeliveryFallsBackToTheRulesWithTheRateLimitReason() {
+        TriageJob job = claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        List<ILoggingEvent> lines = captureWorkerLog(() -> {
+            WorkerResult result = worker(rateLimited()).process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1),
+                    TriageWorker.MAX_DELIVERIES);
+            assertThat(result.status()).isEqualTo(WorkerResultStatus.ACK);
+        });
+
+        assertThat(job.getStatus()).isEqualTo(TriageJobStatus.COMPLETED);
+        verify(results).save(any(TriageResult.class));
+        assertThat(lines).anyMatch(line -> line.getFormattedMessage().startsWith("triage.fallback ")
+                && line.getFormattedMessage().contains("reason=PROVIDER_RATE_LIMITED"));
+    }
+
+    @Test
+    void writesTheFallbackLineOnlyAfterTheResultTransactionCommits() {
+        claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        List<String> order = new java.util.concurrent.CopyOnWriteArrayList<>();
+        TransactionOperations committing = new TransactionOperations() {
+            @Override
+            public <T> T execute(TransactionCallback<T> action) {
+                T result = action.doInTransaction(null);
+                order.add("commit");
+                return result;
+            }
+        };
+
+        Logger logger = (Logger) LoggerFactory.getLogger(TriageWorker.class);
+        AppenderBase<ILoggingEvent> live = new AppenderBase<>() {
+            @Override
+            protected void append(ILoggingEvent event) {
+                if (event.getFormattedMessage().startsWith("triage.fallback ")) order.add("log");
+            }
+        };
+        live.start();
+        logger.addAppender(live);
+        try {
+            transactionalWorker(rateLimited(), committing)
+                    .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.MAX_DELIVERIES);
+        } finally {
+            logger.detachAppender(live);
+        }
+
+        assertThat(order).containsExactly("commit", "commit", "log");
+    }
+
+    @Test
+    void writesNoFallbackLineWhenTheResultTransactionFailsToCommit() {
+        claimableJob();
+        when(results.save(any(TriageResult.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        java.util.concurrent.atomic.AtomicInteger transactionsRun = new java.util.concurrent.atomic.AtomicInteger();
+        TransactionOperations failingSecondCommit = new TransactionOperations() {
+            @Override
+            public <T> T execute(TransactionCallback<T> action) {
+                T result = action.doInTransaction(null);
+                if (transactionsRun.incrementAndGet() == 2) throw new IllegalStateException("commit failed");
+                return result;
+            }
+        };
+
+        List<ILoggingEvent> lines = captureWorkerLog(() -> org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                transactionalWorker(rateLimited(), failingSecondCommit)
+                        .process(new QueueMessage(eventId, workspaceId, ticketId, "corr", 1), TriageWorker.MAX_DELIVERIES))
+                .hasMessage("commit failed"));
+
+        assertThat(lines).noneMatch(line -> line.getFormattedMessage().startsWith("triage.fallback "));
+    }
+
+    private TriageJob claimableJob() {
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), eventId, workspaceId, ticketId, 1, clock.instant());
+        when(jobs.findByEventId(eventId)).thenReturn(Optional.of(job));
+        when(jobs.claimForProcessing(eq(eventId), any(Instant.class))).thenAnswer(invocation -> {
+            job.claim(invocation.getArgument(1));
+            return 1;
+        });
+        when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.of(ticket()));
+        stillOwnsTheClaim();
+        return job;
+    }
+
+    private TriageProvider rateLimited() {
+        return new TriageProvider() {
+            @Override
+            public ProviderCall analyze(TriageRequest request, RedactedTicket redacted) {
+                throw new ProviderCallException("Groq provider request failed", "HTTP_429");
+            }
+
+            @Override public String providerName() { return "groq"; }
+        };
+    }
+
+    private TriageWorker transactionalWorker(TriageProvider provider, TransactionOperations transactions) {
+        return new TriageWorker(jobs, tickets, results, null, transientEngine(provider), new ObjectMapper(), clock,
+                TriageMetrics.noop(), new DemoFailurePolicy(false), workspace -> PackRules.evCharging(), transactions);
     }
 
     @Test

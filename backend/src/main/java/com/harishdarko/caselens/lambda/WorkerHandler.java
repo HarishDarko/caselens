@@ -50,6 +50,16 @@ public final class WorkerHandler implements RequestStreamHandler {
      * reported back as a batch item failure, so SQS redelivers it and, after maxReceiveCount, moves it to the DLQ
      * where the alarm sees it, instead of acknowledging it silently.
      */
+    /** SQS's ApproximateReceiveCount for this record, or 0 when it is missing or unreadable (treated as final). */
+    static int receiveCount(JsonNode record) {
+        String value = record.path("attributes").path("ApproximateReceiveCount").asText("");
+        try {
+            return value.isEmpty() ? 0 : Math.max(0, Integer.parseInt(value));
+        } catch (NumberFormatException unreadable) {
+            return 0;
+        }
+    }
+
     static List<Map<String, String>> retryableFailures(JsonNode records, QueueMessageCodec codec, TriageWorker worker) {
         List<Map<String, String>> failures = new ArrayList<>();
         for (JsonNode record : records) {
@@ -63,7 +73,7 @@ public final class WorkerHandler implements RequestStreamHandler {
                 continue;
             }
             try {
-                var result = worker.process(message);
+                var result = worker.process(message, receiveCount(record));
                 if (result.status() == WorkerResultStatus.RETRY) failures.add(Map.of("itemIdentifier", messageId));
             } catch (RuntimeException processingFailure) {
                 log.warn("triage.worker_failed messageId={} eventId={} correlationId={} errorType={}",

@@ -2,6 +2,7 @@ package com.harishdarko.caselens.lambda;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -50,7 +51,7 @@ class LambdaHandlerContractTest {
         String valid = "{\"schemaVersion\":1,\"eventId\":\"%s\",\"workspaceId\":\"%s\",\"ticketId\":\"%s\",\"correlationId\":\"corr\"}"
                 .formatted(eventId, UUID.randomUUID(), UUID.randomUUID());
         TriageWorker worker = mock(TriageWorker.class);
-        when(worker.process(any())).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
+        when(worker.process(any(), anyInt())).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
         JsonNode records = mapper.readTree("""
                 {"Records":[
                   {"messageId":"retry-1","body":%s},
@@ -69,7 +70,7 @@ class LambdaHandlerContractTest {
         UUID databaseDown = UUID.randomUUID();
         UUID completed = UUID.randomUUID();
         TriageWorker worker = mock(TriageWorker.class);
-        when(worker.process(any())).thenAnswer(invocation -> {
+        when(worker.process(any(), anyInt())).thenAnswer(invocation -> {
             UUID eventId = ((com.harishdarko.caselens.triage.QueueMessage) invocation.getArgument(0)).eventId();
             if (eventId.equals(illegalArgument)) throw new IllegalArgumentException("thrown deep inside processing");
             if (eventId.equals(databaseDown)) throw new IllegalStateException("database unavailable");
@@ -87,6 +88,24 @@ class LambdaHandlerContractTest {
 
         assertThat(WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker))
                 .containsExactly(Map.of("itemIdentifier", "iae-1"), Map.of("itemIdentifier", "db-1"));
+    }
+
+    @Test
+    void passesSqsReceiveCountToTheWorkerSoItKnowsTheFinalDelivery() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        TriageWorker worker = mock(TriageWorker.class);
+        when(worker.process(any(), anyInt())).thenReturn(WorkerResult.ack());
+        JsonNode records = mapper.readTree("""
+                {"Records":[
+                  {"messageId":"third","attributes":{"ApproximateReceiveCount":"3"},"body":%s},
+                  {"messageId":"unknown","body":%s}
+                ]}
+                """.formatted(body(mapper, UUID.randomUUID()), body(mapper, UUID.randomUUID()))).path("Records");
+
+        WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker);
+
+        org.mockito.Mockito.verify(worker).process(any(), org.mockito.ArgumentMatchers.eq(3));
+        org.mockito.Mockito.verify(worker).process(any(), org.mockito.ArgumentMatchers.eq(0));
     }
 
     private static String body(ObjectMapper mapper, UUID eventId) throws Exception {

@@ -28,7 +28,7 @@ public record FallbackCause(FallbackReason reason, String errorCode, String fail
         return new FallbackCause(FallbackReason.fromErrorCode(safeCode), safeCode, failedCheck, pack, provider);
     }
 
-    private static String code(String value) {
+    static String code(String value) {
         return value != null && CODE.matcher(value).matches() ? value : UNRECOGNIZED;
     }
 

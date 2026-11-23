@@ -13,6 +13,12 @@ import tools.jackson.databind.ObjectMapper;
 public class TriageWorker {
     private static final Logger log = LoggerFactory.getLogger(TriageWorker.class);
     static final String CLAIM_LEASE_EXPIRED = "CLAIM_LEASE_EXPIRED";
+    /**
+     * SQS maxReceiveCount on the triage queue (infra/terraform/main.tf, checked by WorkerTimingContractTest). On this
+     * delivery a rate-limited provider call falls back to the rules instead of asking for another delivery, so a rate
+     * limit never sends a job to the DLQ.
+     */
+    static final int MAX_DELIVERIES = 5;
     private final TriageJobRepository jobs;
     private final com.harishdarko.caselens.ticket.TicketRepository tickets;
     private final TriageResultRepository results;
@@ -69,10 +75,20 @@ public class TriageWorker {
         this.transactions = Objects.requireNonNull(transactions);
     }
 
+    /** A delivery whose receive count is not known is treated as the final one: every failure falls back. */
     public WorkerResult process(QueueMessage message) {
+        return process(message, 0);
+    }
+
+    /**
+     * {@code receiveCount} is SQS's ApproximateReceiveCount for this delivery (1 for the first), or 0 when unknown.
+     * Before the final delivery (MAX_DELIVERIES) a rate-limited provider call ends the attempt as a retryable failure
+     * and SQS delivers the message again after its visibility timeout.
+     */
+    public WorkerResult process(QueueMessage message, int receiveCount) {
         Timer.Sample latency = metrics.startLatency();
         try {
-            return processInternal(message);
+            return processInternal(message, receiveCount <= 0 || receiveCount >= MAX_DELIVERIES);
         } finally {
             metrics.stopLatency(latency);
         }
@@ -87,7 +103,7 @@ public class TriageWorker {
      * final writes only land while this worker still owns the claim (see stillOwned). Each step takes the ticket row
      * lock before it touches the job (see lockTicket).
      */
-    private WorkerResult processInternal(QueueMessage message) {
+    private WorkerResult processInternal(QueueMessage message, boolean finalDelivery) {
         Claim claim = transactions.execute(status -> claim(message));
         if (claim.outcome() != null) return claim.outcome();
         TriageJob job = claim.job();
@@ -98,11 +114,16 @@ public class TriageWorker {
                 throw new SyntheticDemoRetryException();
             }
             decision = engine.triage(new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
-                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())), job.getEventId());
+                    ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId())), job.getEventId(), finalDelivery);
         } catch (RuntimeException failure) {
             return transactions.execute(status -> recordFailure(message, claim, failure));
         }
-        return transactions.execute(status -> complete(message, claim, decision));
+        WorkerResult outcome = transactions.execute(status -> complete(message, claim, decision));
+        // After the commit, so a line is only ever written for a result that was saved.
+        if (outcome.status() == WorkerResultStatus.ACK && decision.decisionSource() == DecisionSource.RULES_FALLBACK) {
+            logFallback(message, job, decision.fallback());
+        }
+        return outcome;
     }
 
     private Claim claim(QueueMessage message) {
@@ -242,10 +263,7 @@ public class TriageWorker {
             attempts.save(attempt);
         }
         metrics.completed();
-        if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) {
-            metrics.fallback();
-            logFallback(message, job, decision.fallback());
-        }
+        if (decision.decisionSource() == DecisionSource.RULES_FALLBACK) metrics.fallback();
         log.info("triage.completed correlationId={} workspaceId={} ticketId={} jobId={} eventId={} source={}",
                 message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(),
                 message.eventId(), decision.decisionSource());
@@ -253,8 +271,9 @@ public class TriageWorker {
     }
 
     /**
-     * One WARN line per saved rules-fallback result, so the reasons can be counted in CloudWatch Logs Insights. Every
-     * value is an id or a fixed code (see FallbackCause): never ticket text, evidence quotes or model output.
+     * One WARN line per saved rules-fallback result, written after its transaction commits, so the reasons can be
+     * counted in CloudWatch Logs Insights. Every value is an id or a fixed code (see FallbackCause): never ticket text,
+     * evidence quotes or model output.
      */
     private void logFallback(QueueMessage message, TriageJob job, FallbackCause cause) {
         FallbackCause known = cause != null ? cause : FallbackCause.of(null, null, null, null);

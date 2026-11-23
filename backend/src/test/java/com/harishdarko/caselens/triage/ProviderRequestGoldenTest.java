@@ -27,7 +27,9 @@ import tools.jackson.databind.ObjectMapper;
  */
 class ProviderRequestGoldenTest {
     // triage-v2 (PR 3, CL-07): the PR #11 digest 014530508f70... plus the industry block and the new prompt version.
-    private static final String EXPECTED_SHA256 = "ae3a39f1f27a6ca380733cf9e8cc9a60936eff6898867dc3d93f5b2026f555a4";
+    // PR A2: the triage-v2 digest ae3a39f1f27a... plus max_completion_tokens on every Groq request and
+    // reasoning_effort "low" on gpt-oss; the Gemini requests and every parsed outcome are unchanged.
+    private static final String EXPECTED_SHA256 = "8c0dec36b6c1c570893097ac7c3cff67edb16b52bd72de71d9d1ca3d37f2b940";
     private static final TriageRequest REQUEST = new TriageRequest(UUID.fromString("00000000-0000-0000-0000-000000000042"),
             "Payment accepted", "Payment accepted but session never started. Please check it.", TicketChannel.WEB, 0);
     private static final RedactedTicket REDACTED = new RedactedTicket(REQUEST.subject(), REQUEST.message());

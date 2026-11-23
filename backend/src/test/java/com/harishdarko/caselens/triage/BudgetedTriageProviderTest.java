@@ -1,10 +1,16 @@
 package com.harishdarko.caselens.triage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.harishdarko.caselens.security.AiCallBudget;
 import com.harishdarko.caselens.security.RateLimitService;
 import com.harishdarko.caselens.ticket.TicketChannel;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -16,6 +22,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 class BudgetedTriageProviderTest {
     private final TriageRequest request = new TriageRequest(UUID.randomUUID(), "Charger failed",
@@ -147,6 +154,58 @@ class BudgetedTriageProviderTest {
 
         assertThat(TriageConfiguration.budgeted(new MockTriageProvider(), budget)).isInstanceOf(MockTriageProvider.class);
         assertThat(TriageConfiguration.budgeted(groq, budget)).isInstanceOf(BudgetedTriageProvider.class);
+    }
+
+    /**
+     * One budget unit per triage attempt that reaches the provider: Groq's in-call retry after a 429 does not spend a
+     * second unit, and a job that SQS redelivers spends one more only because that delivery makes a new call.
+     */
+    @Test
+    void aRateLimitRetryInsideTheCallSpendsNoExtraUnitAndARedeliverySpendsOneForItsNewCall() throws Exception {
+        AtomicInteger httpRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/groq", exchange -> {
+            int call = httpRequests.incrementAndGet();
+            byte[] body = (call <= 2 ? "rate limited" : groqAnswer()).getBytes(StandardCharsets.UTF_8);
+            if (call <= 2) exchange.getResponseHeaders().add("retry-after", "1");
+            exchange.sendResponseHeaders(call <= 2 ? 429 : 200, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        server.start();
+        try {
+            GroqTriageProvider groq = new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort() + "/groq"),
+                    "key", "llama-3.1-8b-instant", HttpClient.newHttpClient(), new ObjectMapper(), Duration.ofSeconds(2),
+                    () -> 0, GroqTriageProvider.CALL_BUDGET, () -> 0L, millis -> { });
+            AiCallBudget budget = new AiCallBudget(new RateLimitService(clock, 30, Duration.ofMinutes(1)), clock, 2);
+            TriageEngine engine = new TriageEngine(new TicketRedactor(), new BudgetedTriageProvider(groq, budget),
+                    new RulesFallbackProvider(), new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer(),
+                    ignored -> { }, clock);
+            UUID eventId = UUID.randomUUID();
+
+            assertThatThrownBy(() -> engine.triage(request, eventId, false)).isInstanceOf(ProviderCallException.class);
+            assertThat(httpRequests).as("the call and its in-call retry").hasValue(2);
+            assertThat(engine.triage(request, eventId, false).decisionSource()).isEqualTo(DecisionSource.AI_VALIDATED);
+            assertThat(httpRequests).hasValue(3);
+
+            TriageDecision spent = engine.triage(request, UUID.randomUUID(), true);
+            assertThat(spent.fallbackReason()).as("two attempts, two units").isEqualTo(FallbackReason.BUDGET_SPENT);
+            assertThat(httpRequests).hasValue(3);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static String groqAnswer() {
+        String content = "{\"category\":\"CHARGER_HARDWARE\",\"urgency\":\"HIGH\",\"slaRisk\":\"HIGH\",\"sentiment\":\"NEGATIVE\","
+                + "\"summary\":\"The charger connector failed for this session.\","
+                + "\"evidence\":[{\"quote\":\"The charger connector failed\",\"meaning\":\"Hardware fault.\"}],"
+                + "\"policyIds\":[],\"explanation\":\"The connector failed and charging never started, so this needs review.\","
+                + "\"recommendedActions\":[\"Inspect the connector\"],"
+                + "\"suggestedReply\":\"We are checking the charger connector now.\",\"warnings\":[]}";
+        ObjectMapper mapper = new ObjectMapper();
+        var root = mapper.createObjectNode();
+        root.putArray("choices").addObject().putObject("message").put("content", content);
+        return root.toString();
     }
 
     private static TriageRequest request() {
