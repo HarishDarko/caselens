@@ -859,6 +859,53 @@ test('shows a background failure when the ticket is opened again, and retries on
   expect(triagePosts()).toBe(2)
 })
 
+test('reads the status again, without a new triage request, when a ticket whose wait ran out is opened again', async () => {
+  let running = true
+  const fetchMock = mockSeededBackend([apiTicket, recordedReceipt], { 'ticket-a102': () => running ? pendingJob('PROCESSING') : completedProcessing('ticket-a102', 82, 'HIGH') })
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST').length
+
+  fireEvent.click(row(PAYMENT))
+  await act(async () => { await vi.advanceTimersByTimeAsync(125_000) })
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running. Open the ticket again in a minute to see the result.'))
+  running = false
+  fireEvent.click(row('Receipt requested'))
+  const reads = calls(fetchMock, '/ticket-a102/processing')
+  fireEvent.click(row(PAYMENT))
+
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
+  expect(triagePosts()).toBe(1)
+  expect(calls(fetchMock, '/ticket-a102/processing')).toBeGreaterThan(reads)
+})
+
+test('clears a ticket\'s failure once Operations retries it, so opening it loads the result', async () => {
+  const backend = mockBackend({ pollSteps: ['TERMINAL_FAILURE'] })
+  let retried = false
+  const failedJob = { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'TERMINAL_FAILURE', attemptCount: 3, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', attempts: [] }
+  const fetchMock = stubOver(backend, (url) => {
+    if (url.endsWith('/retry')) { retried = true; return response({ ...failedJob, id: 'job-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.includes('/api/operations/failures')) return response(retried ? { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 } : { content: [failedJob], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.'))
+
+  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry failed case' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed case' }))
+  await waitFor(() => expect(retried).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+  await waitFor(() => expect(row(PAYMENT)).not.toHaveTextContent('Triage failed'))
+  fireEvent.click(row(PAYMENT))
+
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST')).toHaveLength(2)
+})
+
 test('keeps Re-run live off while a review is being saved', async () => {
   const seeded = mockSeededBackend([recordedOffline])
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/feedback') ? new Promise<Response>(() => undefined) : seeded(input, init)))

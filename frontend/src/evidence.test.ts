@@ -119,6 +119,22 @@ describe('evidence highlighter', () => {
     ])
   })
 
+  it('starts a highlight at the quoted descriptor word, never at the label or separator before it', () => {
+    const code = 'Transaction ID reference code TXN-5512 is missing'
+    expect(marked(code, placeEvidence('', code, ['code [TRANSACTION_ID_1] is missing']).message)).toEqual([{ text: 'code TXN-5512 is missing', refs: [1] }])
+    const ref = 'Our payment id: ref PAY-99821 failed'
+    expect(marked(ref, placeEvidence('', ref, ['ref [PAYMENT_ID_1] failed']).message)).toEqual([{ text: 'ref PAY-99821 failed', refs: [1] }])
+    const token = 'Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19.'
+    expect(marked(token, placeEvidence('', token, ['token [RFID_1]']).message)).toEqual([{ text: 'token RFID-DEMO-A19', refs: [1] }])
+  })
+
+  it('counts a quote found only in the redacted text as matched after redaction, even without a placeholder', () => {
+    const text = 'Our payment id: ref PAY-99821 failed'
+    const placement = placeEvidence('', text, ['payment id ref'])
+    expect(marked(text, placement.message)).toEqual([{ text: 'payment id: ref', refs: [1] }])
+    expect(quoteSummary(1, placement)).toBe('0 of 1 quotes found word for word, 1 matched after redaction')
+  })
+
   it('reports a quote it cannot find instead of dropping it silently', () => {
     const placement = placeEvidence('Subject', 'The charger is fine today.', ['The charger is fine', 'words that are not in the ticket'])
 

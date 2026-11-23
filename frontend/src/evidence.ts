@@ -38,7 +38,8 @@ function locateIn(original: string, redacted: MappedText, quote: string): Locate
   }
   const at = find(redacted.text, wanted)
   if (!at || at.end <= at.start) return null
-  return { start: redacted.start[at.start], end: redacted.end[at.end - 1], redacted: HAS_PLACEHOLDER.test(wanted) }
+  // Found only in the redacted text, so not word for word in what the visitor reads, with or without a placeholder.
+  return { start: redacted.start[at.start], end: redacted.end[at.end - 1], redacted: true }
 }
 
 /** Where a quote sits in one text, allowing for redaction placeholders and spacing. */

@@ -160,6 +160,14 @@ export function fallbackText(result: TriageResult): string {
   return reason ?? 'The live AI was unavailable or its answer failed a check.'
 }
 
+/**
+ * Records a saved review on its ticket, but only while the ticket still shows the result the review was made on:
+ * a newer result (a re-run that finished first) starts unreviewed.
+ */
+export function applyReview(tickets: Ticket[], ticketId: string, resultId: string, review: Review): Ticket[] {
+  return tickets.map((item) => item.backendId === ticketId && item.result?.id === resultId ? { ...item, review, reviewsLogged: item.reviewsLogged + 1 } : item)
+}
+
 const SLA_RISK_RANK: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 // Triaged tickets first, the highest priority score first and then the higher SLA risk. Tickets not triaged yet come
 // after them in the order the API sent (newest first); the sort is stable, so equal tickets keep that order too.

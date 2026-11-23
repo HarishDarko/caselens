@@ -5,7 +5,7 @@ import { HowItsBuilt, PhoneMenu, type NavView } from './Dialogs'
 import { Landing } from './Landing'
 import { EvaluationView, LiveStatus, OperationsView, type LiveState } from './LegacyViews'
 import {
-  CORRECTION_CONFLICT_TEXT, isPhone, mapApiTicket, pause, plainError, PlainError, RETRY_DEMO_SCENARIO, RETRY_DEMO_STOPPED_TEXT,
+  applyReview, CORRECTION_CONFLICT_TEXT, isPhone, mapApiTicket, pause, plainError, PlainError, RETRY_DEMO_SCENARIO, RETRY_DEMO_STOPPED_TEXT,
   reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
   TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
@@ -27,6 +27,7 @@ const PREFERRED_INDUSTRY = 'saas-support'
 const preferredIndustry = (options: SessionOptions) => options.industries.some((industry) => industry.id === PREFERRED_INDUSTRY) ? PREFERRED_INDUSTRY : options.defaultIndustry
 
 type Pane = 'list' | 'detail'
+type TicketError = { text: string; hold: boolean; resume: boolean }
 type Stage = { stage: TriageStage; slow: boolean }
 
 const VIEW_TITLE: Record<NavView, string> = { inbox: 'Inbox', evaluation: 'Evaluation', operations: 'Operations' }
@@ -52,7 +53,9 @@ function App() {
   const [savingTicketIds, setSavingTicketIds] = useState<ReadonlySet<string>>(() => new Set())
   const [triageStages, setTriageStages] = useState<Record<string, Stage>>({})
   // An error from a ticket action belongs to that ticket and shows on it; workspace errors show above the sheet.
-  const [ticketErrors, setTicketErrors] = useState<Record<string, string>>({})
+  // hold: a failure a reload cannot fix (the worker gave up), shown until the reviewer acts on it. resume: the wait
+  // ran out while the job was still going, so opening the ticket again only reads its status.
+  const [ticketErrors, setTicketErrors] = useState<Record<string, TicketError>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sessionEnded, setSessionEnded] = useState(false)
@@ -82,6 +85,18 @@ function App() {
   const inboxTickets = useMemo(() => tickets.filter((ticket) => ticket.scenarioKey !== RETRY_DEMO_SCENARIO), [tickets])
   const selectedTicket = useMemo(() => inboxTickets.find((ticket) => ticket.id === selectedTicketId) ?? null, [selectedTicketId, inboxTickets])
   selectedRef.current = selectedTicket?.backendId ?? null
+  const ticketsRef = useRef(tickets)
+  ticketsRef.current = tickets
+  const stillShows = (ticketId: string, resultId: string) => ticketsRef.current.find((item) => item.backendId === ticketId)?.result?.id === resultId
+  // The phone layout follows the viewport, including a rotation, so the ticket heading is the h1 only while the list is hidden.
+  const [phoneLayout, setPhoneLayout] = useState(isPhone)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(max-width: 699px)')
+    const onChange = () => setPhoneLayout(query.matches)
+    query.addEventListener?.('change', onChange)
+    return () => query.removeEventListener?.('change', onChange)
+  }, [])
 
   useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0 }, [view, sessionOpen])
   useEffect(() => {
@@ -203,7 +218,9 @@ function App() {
   function showTicketError(ticketId: string, cause: unknown, fallback: string, conflict?: string) {
     if (cause instanceof ApiError && cause.status === 401) { setSessionEnded(true); return }
     const text = plainError(cause, fallback, conflict)
-    setTicketErrors((current) => ({ ...current, [ticketId]: text }))
+    const plain = cause instanceof PlainError ? cause.message : null
+    const error: TicketError = { text, hold: plain === TRIAGE_FAILED_TEXT || plain === RETRY_DEMO_STOPPED_TEXT, resume: plain === TRIAGE_STILL_RUNNING_TEXT }
+    setTicketErrors((current) => ({ ...current, [ticketId]: error }))
   }
   function clearTicketError(ticketId: string) {
     setTicketErrors((current) => ticketId in current ? Object.fromEntries(Object.entries(current).filter(([id]) => id !== ticketId)) : current)
@@ -243,7 +260,8 @@ function App() {
   }
   // Sends a ticket through the live pipeline and waits for its result. A recorded result is replaced only by a newer
   // one: the poll ignores a result it already has.
-  async function hydrateTriage(ticket: Ticket, { rerun = false } = {}) {
+  // resume: the ticket's job is already queued, so only its status is read (GET), never a new triage request (POST).
+  async function hydrateTriage(ticket: Ticket, { rerun = false, resume = false } = {}) {
     // A review being saved belongs to the current result, so a re-run waits until it is saved.
     if (!ticket.backendId || (ticket.result && !rerun) || busyTicketsRef.current.has(ticket.backendId) || savingTicketsRef.current.has(ticket.backendId)) return
     const ticketId = ticket.backendId
@@ -256,7 +274,7 @@ function App() {
     let lastAnnounced: string = TRIAGE_STAGE_TEXT.SENDING
     const say = (text: string) => { if (text !== lastAnnounced && isSelected()) { lastAnnounced = text; announce(text) } }
     try {
-      await api.requestTriage(ticketId, signal)
+      if (!resume) await api.requestTriage(ticketId, signal)
       const startedAt = Date.now()
       while (!signal.aborted && Date.now() - startedAt < TRIAGE_WAIT_MS) {
         const processing = await api.getProcessing(ticketId, signal)
@@ -304,8 +322,10 @@ function App() {
       if (phone) { try { window.scrollTo(0, 0) } catch { /* jsdom and old browsers */ } }
       document.getElementById('detail-subject')?.focus({ preventScroll: true })
     })
-    // A ticket whose live run failed shows the failure first; its Try again button runs it again.
-    if (ticket && !ticketErrors[ticket.backendId]) void hydrateTriage(ticket)
+    // A ticket whose worker gave up shows the failure first; its Try again button runs it again. A ticket whose wait ran
+    // out reads its status again; any other error (network, busy) simply tries again.
+    const failure = ticket ? ticketErrors[ticket.backendId] : undefined
+    if (ticket && !failure?.hold) void hydrateTriage(ticket, { resume: Boolean(failure?.resume) })
   }
   function backToList() {
     const id = selectedTicketId
@@ -316,7 +336,8 @@ function App() {
 
   async function submitReview(ticket: Ticket, decision: 'ACCEPTED' | 'CORRECTED', urgency: Urgency | null, note: string): Promise<boolean> {
     const result = ticket.result
-    if (!result || savingTicketsRef.current.has(ticket.backendId)) return false
+    // A ticket in a live run has no settled result to review yet.
+    if (!result || savingTicketsRef.current.has(ticket.backendId) || busyTicketsRef.current.has(ticket.backendId)) return false
     const ticketId = ticket.backendId
     const signal = sessionAbortRef.current.signal
     const saving = savingTicketsRef.current
@@ -328,8 +349,9 @@ function App() {
         ? { triageResultId: result.id, decision }
         : { triageResultId: result.id, ...(legacy ? {} : { decision }), urgency: urgency ?? undefined, ...(note ? { note } : {}) }, signal)
       if (signal.aborted) return false
-      // The review belongs to the result it was made on; a newer result on the ticket starts unreviewed.
-      setTickets((current) => current.map((item) => item.backendId === ticketId && item.result?.id === result.id ? { ...item, review: { decision, urgency, note: note || null }, reviewsLogged: item.reviewsLogged + 1 } : item))
+      // The review belongs to the result it was made on; a newer result on the ticket starts unreviewed and hears nothing.
+      setTickets((current) => applyReview(current, ticketId, result.id, { decision, urgency, note: note || null }))
+      if (!stillShows(ticketId, result.id)) return false
       const by = deciderOf(result)
       announce(decision === 'ACCEPTED' ? `Accepted. The ${by.possessive} call is logged as confirmed.` : `Override logged. ${by.name} ${URGENCY_LABEL[result.urgency]}, you ${URGENCY_LABEL[urgency ?? result.urgency]}.`)
       // The review is saved; a failed metrics read must not say otherwise. Evaluation reloads itself when opened.
@@ -337,7 +359,7 @@ function App() {
       return true
     }
     catch (cause: unknown) {
-      if (!signal.aborted) showTicketError(ticketId, cause, 'Could not save the review. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT)
+      if (!signal.aborted && stillShows(ticketId, result.id)) showTicketError(ticketId, cause, 'Could not save the review. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT)
       return false
     }
     finally { if (!signal.aborted) { saving.delete(ticketId); setSavingTicketIds(new Set(saving)) } }
@@ -346,7 +368,7 @@ function App() {
     const failure = failures?.content[0]; if (!failure) return
     const signal = sessionAbortRef.current.signal
     setBusy(true); setError(null)
-    try { await api.retryFailure(failure.id, signal); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(signal), api.listFailures(signal)]); if (signal.aborted) return; setOperationsOverview(overview); setFailures(failurePage) }
+    try { await api.retryFailure(failure.id, signal); clearTicketError(failure.ticketId); const [overview, failurePage] = await Promise.all([api.getOperationsOverview(signal), api.listFailures(signal)]); if (signal.aborted) return; setOperationsOverview(overview); setFailures(failurePage) }
     catch (cause: unknown) { if (!signal.aborted) showActionError(cause, 'Could not retry the failed case. Try again in a few seconds.') } finally { if (!signal.aborted) setBusy(false) }
   }
   // The retry demo creates its ticket and sends it to the worker, which records a synthetic provider timeout. The
@@ -390,7 +412,7 @@ function App() {
     running: busyTicketIds.has(selectedTicket.backendId),
     stage: triageStages[selectedTicket.backendId]?.stage ?? null,
     slow: triageStages[selectedTicket.backendId]?.slow ?? false,
-    error: ticketErrors[selectedTicket.backendId] ?? null,
+    error: ticketErrors[selectedTicket.backendId]?.text ?? null,
     saving: savingTicketIds.has(selectedTicket.backendId),
   }
   return (
@@ -417,7 +439,7 @@ function App() {
         {view === 'inbox' && <>
           <Queue tickets={inboxTickets} activity={activity} selectedId={selectedTicket?.id ?? null} onSelect={selectTicket} />
           {selectedTicket && detailState
-            ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded} headingLevel={pane === 'detail' && isPhone() ? 'h1' : 'h2'}
+            ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded} headingLevel={pane === 'detail' && phoneLayout ? 'h1' : 'h2'}
               actions={{ onAccept: (ticket) => submitReview(ticket, 'ACCEPTED', null, ''), onOverride: (ticket, urgency, note) => submitReview(ticket, 'CORRECTED', urgency, note) }}
               onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { rerun: true })} />
             : <section className="detail" aria-label="Ticket detail"><div className="detail-empty"><p>{inboxTickets.some((ticket) => ticket.result) ? 'Pick a ticket from the inbox.' : 'Pick a ticket to run the live AI on it. Triage takes a few seconds.'}</p></div></section>}

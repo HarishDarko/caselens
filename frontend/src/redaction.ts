@@ -9,19 +9,22 @@
 export type MappedText = { text: string; start: number[]; end: number[] }
 
 const DESCRIPTOR_WORDS = 'tokens?|cards?|badges?|tags?|chips?|fobs?|ids?|numbers?|no\\.?|ref|reference|codes?|value'
+// Java's \s without UNICODE_CHARACTER_CLASS: ASCII whitespace only, so a no-break space never joins a label to its value.
+const WS = '[ \\t\\n\\v\\f\\r]'
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
 const CARD = /(?<!\d)(?:\d[ -]?){13,19}(?!\d)/g
 const DESCRIPTOR = new RegExp(`^(?:${DESCRIPTOR_WORDS})$`, 'i')
 const LABEL_WORD = /^(?:payment|transaction|rfid)$/i
 const LABELLED_TOKEN = new RegExp(
-  '\\b(payment\\s*id|payment\\s*ref(?:erence)?s?|transaction\\s*id|rfid)(?![A-Za-z0-9_])'
-  + `((?:\\s*[:#,-]?\\s*(?:${DESCRIPTOR_WORDS})(?![A-Za-z0-9_])){0,2})`
-  + '\\s*(?:([:#-])|(is)(?![A-Za-z0-9_]))?\\s*'
+  `\\b(payment${WS}*id|payment${WS}*ref(?:erence)?s?|transaction${WS}*id|rfid)(?![A-Za-z0-9_])`
+  + `((?:${WS}*[:#,-]?${WS}*(?:${DESCRIPTOR_WORDS})(?![A-Za-z0-9_])){0,2})`
+  + `${WS}*(?:([:#-])|(is)(?![A-Za-z0-9_]))?${WS}*`
   + '([A-Za-z0-9_][A-Za-z0-9_-]{3,})', 'dgi')
-const LIST_TAIL = /(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or|&)\s+)([A-Za-z0-9_][A-Za-z0-9_-]{3,})/dyi
+const LIST_TAIL = new RegExp(`(?:${WS}*,${WS}*(?:(?:and|or)${WS}+)?|${WS}+(?:and|or|&)${WS}+)([A-Za-z0-9_][A-Za-z0-9_-]{3,})`, 'dyi')
 const LEADING_LETTERS = /^[A-Za-z]*/
+const DESCRIPTOR_TOKEN = /[^ \t\n\v\f\r:#,-]+/g
 const LOWERCASE_HEX = /^[0-9a-f]{8,}$/
-const PHONE = /(?<!\w)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\w)/g
+const PHONE = /(?<!\w)(?:\+?1[ \t\n\v\f\r.-]?)?(?:\(?\d{3}\)?[ \t\n\v\f\r.-]?)\d{3}[ \t\n\v\f\r.-]?\d{4}(?!\w)/g
 const DIGIT = /\p{Nd}/u
 const LETTER = /\p{L}/u
 
@@ -110,11 +113,22 @@ function redactLabelled(source: MappedText, state: State): MappedText {
     }
     const lower = match[1].toLowerCase()
     const type = lower.startsWith('transaction') ? 'TRANSACTION_ID' : lower.startsWith('payment') ? 'PAYMENT_ID' : 'RFID'
-    const words = match[2].replace(/[:#,-]/g, ' ').trim().replace(/\s+/g, ' ')
-    const descriptor = words ? ` ${words}` : ''
-    const is = match[4] === undefined ? '' : ` ${match[4]}`
+    // The label, each descriptor word and "is" keep their own characters; separators collapse to one space. Each
+    // written space stands for the character before the word it precedes, so a quote that starts at a descriptor word
+    // never takes in the label or the separator before it.
     out.copy(source, labelStart, labelEnd)
-    out.write(`${descriptor}${is} `, source, labelEnd, candidateStart)
+    const [descriptorStart, descriptorEnd] = match.indices[2] ?? [labelEnd, labelEnd]
+    for (const word of input.slice(descriptorStart, descriptorEnd).matchAll(DESCRIPTOR_TOKEN)) {
+      const at = descriptorStart + (word.index ?? 0)
+      out.write(' ', source, at - 1, at)
+      out.copy(source, at, at + word[0].length)
+    }
+    if (match.indices[4]) {
+      const [isStart, isEnd] = match.indices[4]
+      out.write(' ', source, isStart - 1, isStart)
+      out.copy(source, isStart, isEnd)
+    }
+    out.write(' ', source, candidateStart - 1, candidateStart)
     out.write(state.placeholder(type, candidate), source, candidateStart, candidateEnd)
     position = match.index + match[0].length
     for (;;) {

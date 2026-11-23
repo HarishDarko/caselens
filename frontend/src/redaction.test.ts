@@ -57,6 +57,17 @@ describe('redaction port matches TicketRedactor', () => {
     expect(message(input)).toBe(expected)
   })
 
+  it('treats a no-break space as Java does: not whitespace, so it does not join a label to its value', () => {
+    expect(message('payment\u00A0id PAY-1001 and payment id PAY-1002')).toBe('payment\u00A0id PAY-1001 and payment id [PAYMENT_ID_1]')
+  })
+
+  it.each([
+    'RFID card is rejected', 'Registered RFID card is rejected', 'RFID: declined at every charger', 'RFID: blocked', 'payment id: failed again',
+    'payment id: duplicate charge', 'Transaction ID: refunded twice', 'payment reference: pending', 'RFID #declined', 'RFID: blocked again',
+  ])('leaves the subject "%s" as written', (subject) => {
+    expect(redactTicket(subject, 'Message body for the subject check.').subject.text).toBe(subject)
+  })
+
   it('numbers placeholders across subject and message and keeps ordinary references', () => {
     const redacted = redactTicket('Contact reviewer@example.test about payment ID PAY-99821',
       'reviewer@example.test called +1 555-010-0188. Card 4111 1111 1111 1111. Payment ID PAY-99821 and RFID RFID-DEMO-A19 were rejected.')
