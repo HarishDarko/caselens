@@ -183,11 +183,11 @@ export class ApiError extends Error {
 
 // One more try after a throttle (429, any method: the request was refused before it ran) or a 503 on an idempotent
 // request. A POST is never sent twice after a 503, because the first one may have run, unless sending it twice is
-// harmless. Every POST the app sends is now harmless to send twice (CL-05): the triage POST returns the ticket's
-// existing job, a failure retry returns the replacement it already queued, reset seeds the same set again, a new
-// session that lost its answer is never used and expires, and a scenario or a feedback entry carries a requestId
-// that the API turns into its id, so a resend returns the entry the first one saved. A long rate-limit window is
-// not waited out. An idempotent request is also tried once more when fetch itself fails with a TypeError. API Gateway
+// harmless (CL-05): the triage POST returns the ticket's existing job, a failure retry returns the replacement it
+// already queued, reset seeds the same set again, and a scenario or a feedback entry carries a requestId that the
+// API turns into its id, so a resend returns the entry the first one saved. Creating a session is not resent: a
+// second one would open an extra workspace and spend a session rate-limit token, and the reviewer can simply try
+// again. A long rate-limit window is not waited out. An idempotent request is also tried once more when fetch itself fails with a TypeError. API Gateway
 // answers its own throttle (429) and errors without CORS headers, so the browser hides that answer and fetch rejects
 // instead of returning the status.
 const RETRY_DEFAULT_MS = 1_000
@@ -251,7 +251,7 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     getSessionOptions: () => request<SessionOptions>('/api/demo/session'),
     createSession: (industry, seed = false) => request<DemoSession>(seed ? '/api/demo/session?seed=true' : '/api/demo/session', {
       method: 'POST', ...(industry ? { body: JSON.stringify({ industry }) } : {}),
-    }, { idempotent: true }),
+    }),
     setToken: (value) => { token = value },
     resetDemo: () => request<{ seeded: number }>('/api/demo/reset', { method: 'POST' }, { idempotent: true }),
     getRuntimeSummary: () => request<RuntimeSummary>('/api/demo/runtime'),

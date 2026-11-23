@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -67,12 +68,25 @@ public class TicketService {
         workspaces.lockForUpdate(workspaceId);
         if (requestId != null) {
             var earlier = tickets.findByIdAndWorkspaceId(requestId, workspaceId);
-            if (earlier.isPresent()) return earlier.get();
+            if (earlier.isPresent()) {
+                // A resend is the same request. The same id with another scenario is a client error, not a resend.
+                if (!key.equals(earlier.get().getScenarioKey())) {
+                    throw new IllegalArgumentException("The request id was used for another scenario");
+                }
+                return earlier.get();
+            }
             if (tickets.existsById(requestId)) throw new IllegalArgumentException("The request id is already in use");
         }
         DemoScenario scenario = scenarios.require(workspaceId, key);
         requireRoom(workspaceId);
-        return saveScenario(workspaceId, scenario, requestId == null ? UUID.randomUUID() : requestId);
+        if (requestId == null) return saveScenario(workspaceId, scenario, UUID.randomUUID());
+        try {
+            // Flushed here so that a second workspace racing on the same id fails on the primary key inside this
+            // method (Ticket is persisted, never merged) and answers 409 like the check above.
+            return tickets.saveAndFlush(scenarioTicket(workspaceId, scenario, requestId));
+        } catch (DataIntegrityViolationException collision) {
+            throw new IllegalArgumentException("The request id is already in use");
+        }
     }
 
     /** Holds the workspace lock, so a reset never interleaves with an add and leaves more tickets than the cap. */
@@ -98,8 +112,11 @@ public class TicketService {
     }
 
     private Ticket saveScenario(UUID workspaceId, DemoScenario scenario, UUID id) {
-        Ticket ticket = Ticket.create(id, workspaceId, scenario.subject(), scenario.message(),
-                scenario.channel(), scenario.key(), clock.instant());
-        return tickets.save(ticket);
+        return tickets.save(scenarioTicket(workspaceId, scenario, id));
+    }
+
+    private Ticket scenarioTicket(UUID workspaceId, DemoScenario scenario, UUID id) {
+        return Ticket.create(id, workspaceId, scenario.subject(), scenario.message(), scenario.channel(), scenario.key(),
+                clock.instant());
     }
 }

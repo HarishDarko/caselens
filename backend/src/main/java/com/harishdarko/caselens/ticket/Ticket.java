@@ -5,15 +5,19 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.data.domain.Persistable;
 
 @Entity
 @Table(name = "tickets")
-public class Ticket {
+public class Ticket implements Persistable<UUID> {
     @Id private UUID id;
     @Column(name = "workspace_id", nullable = false) private UUID workspaceId;
     @Column(name = "display_id", nullable = false, length = 9) private String displayId;
@@ -58,6 +62,7 @@ public class Ticket {
         return new Ticket(id, workspaceId, subject, message, channel, scenarioKey, now);
     }
 
+    @Override
     public UUID getId() { return id; }
     public UUID getWorkspaceId() { return workspaceId; }
     public String getDisplayId() { return displayId; }
@@ -79,4 +84,18 @@ public class Ticket {
         this.status = Objects.requireNonNull(next, "Ticket status is required");
         this.updatedAt = now;
     }
+
+    /**
+     * New until it is inserted or loaded. Spring Data then saves a new instance with persist (one INSERT) instead of
+     * merge (a SELECT, then an INSERT or an UPDATE). With client-chosen ids (a scenario or feedback requestId) a
+     * merge could update another workspace's row that won a race on the same id; persist fails on the primary key.
+     */
+    @Transient private boolean stored;
+
+    @PostLoad
+    @PostPersist
+    void markStored() { stored = true; }
+
+    @Override
+    public boolean isNew() { return !stored; }
 }

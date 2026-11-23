@@ -158,6 +158,77 @@ class FeedbackEvaluationApiIntegrationTest {
                 .andExpect(jsonPath("$.content.length()").value(1));
     }
 
+    /** A requestId is one request: reusing it with another body, or from another workspace, is a 409. */
+    @Test
+    void aRequestIdReusedWithAnotherBodyOrFromAnotherWorkspaceIsAConflict() throws Exception {
+        String token = session();
+        String otherToken = session();
+        DemoPrincipal principal = tokens.verify(token);
+        UUID scenarioId = UUID.randomUUID();
+        String scenarioBody = "{\"requestId\":\"" + scenarioId + "\"}";
+        String ticketId = scenario(token, scenarioBody);
+
+        // The same id for another scenario, and the same id from another workspace.
+        mvc.perform(post("/api/demo/scenarios/charger-offline-site-wide")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content(scenarioBody))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/demo/scenarios/payment-captured-session-not-started")
+                        .header("Authorization", "Bearer " + otherToken)
+                        .contentType(MediaType.APPLICATION_JSON).content(scenarioBody))
+                .andExpect(status().isConflict());
+        assertThat(tickets.findById(scenarioId).orElseThrow().getWorkspaceId()).isEqualTo(principal.workspaceId());
+
+        Ticket ticket = tickets.findById(UUID.fromString(ticketId)).orElseThrow();
+        TriageResult original = TriageResult.from(UUID.randomUUID(), principal.workspaceId(), new TriageDecision(ticket.getId(),
+                Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
+                "Charging did not start", List.of(), List.of(), "The session did not start.",
+                List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.HIGH,
+                List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"), RESULT_CREATED, objectMapper);
+        results.save(original);
+        UUID feedbackId = UUID.randomUUID();
+        mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(feedbackBody(original.getId(), "HIGH", "Escalation confirmed", feedbackId)))
+                .andExpect(status().isCreated());
+        // A resend with a different note or urgency is not the same request.
+        mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(feedbackBody(original.getId(), "HIGH", "Another note", feedbackId)))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(feedbackBody(original.getId(), "LOW", "Escalation confirmed", feedbackId)))
+                .andExpect(status().isConflict());
+        mvc.perform(get("/api/tickets/{id}/feedback", ticketId).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].note").value("Escalation confirmed"));
+    }
+
+    @Test
+    void aMalformedRequestIdIsAValidationError() throws Exception {
+        String token = session();
+        String ticketId = createScenario(token);
+
+        mvc.perform(post("/api/demo/scenarios/payment-captured-session-not-started")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"requestId\":\"not-a-uuid\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/tickets/{id}/feedback", ticketId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"urgency\":\"HIGH\",\"note\":\"Escalation confirmed\",\"requestId\":\"12345\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    private static String feedbackBody(UUID resultId, String urgency, String note, UUID requestId) {
+        return "{\"triageResultId\":\"" + resultId + "\",\"urgency\":\"" + urgency + "\",\"note\":\"" + note
+                + "\",\"requestId\":\"" + requestId + "\"}";
+    }
+
     private String scenario(String token, String body) throws Exception {
         String response = mvc.perform(post("/api/demo/scenarios/payment-captured-session-not-started")
                         .header("Authorization", "Bearer " + token)

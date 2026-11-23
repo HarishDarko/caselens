@@ -6,14 +6,18 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.data.domain.Persistable;
 
 @Entity
 @Table(name = "triage_feedback")
-public class TriageFeedback {
+public class TriageFeedback implements Persistable<UUID> {
     @Id private UUID id;
     @Column(name = "workspace_id", nullable = false) private UUID workspaceId;
     @Column(name = "ticket_id", nullable = false) private UUID ticketId;
@@ -52,6 +56,20 @@ public class TriageFeedback {
                 correctedUrgency, correctedSlaRisk, note, submittedBy, createdAt);
     }
 
+    /**
+     * True when a resent submit carries the same body as this entry. A resend without a result id names the ticket's
+     * latest result, which this entry recorded, so only an explicit result id is compared.
+     */
+    boolean sameSubmission(UUID ticketId, UUID requestedResultId, Category category, Urgency urgency, SlaRisk slaRisk,
+            String note) {
+        return this.ticketId.equals(ticketId)
+                && (requestedResultId == null || originalResultId.equals(requestedResultId))
+                && Objects.equals(correctedCategory, category)
+                && correctedUrgency == urgency
+                && correctedSlaRisk == slaRisk
+                && this.note.equals(note);
+    }
+
     private static String required(String value, int maxLength, String label) {
         if (value == null || value.isBlank() || value.length() > maxLength) {
             throw new IllegalArgumentException(label + " is invalid");
@@ -75,6 +93,7 @@ public class TriageFeedback {
                 || (correctedSlaRisk != null && correctedSlaRisk != slaRisk);
     }
 
+    @Override
     public UUID getId() { return id; }
     public UUID getWorkspaceId() { return workspaceId; }
     public UUID getTicketId() { return ticketId; }
@@ -85,4 +104,18 @@ public class TriageFeedback {
     public String getNote() { return note; }
     public String getSubmittedBy() { return submittedBy; }
     public Instant getCreatedAt() { return createdAt; }
+
+    /**
+     * New until it is inserted or loaded. Spring Data then saves a new instance with persist (one INSERT) instead of
+     * merge (a SELECT, then an INSERT or an UPDATE). With client-chosen ids (a scenario or feedback requestId) a
+     * merge could update another workspace's row that won a race on the same id; persist fails on the primary key.
+     */
+    @Transient private boolean stored;
+
+    @PostLoad
+    @PostPersist
+    void markStored() { stored = true; }
+
+    @Override
+    public boolean isNew() { return !stored; }
 }

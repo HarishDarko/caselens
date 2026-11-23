@@ -112,10 +112,9 @@ describe('CaseLens API client', () => {
     }
   })
 
-  // CL-05 leftover: every POST the app sends is safe to send twice, so a gateway 429 that the browser reports as a
-  // TypeError no longer fails a session, reset, scenario, feedback or failure retry outright.
+  // CL-05 leftover: these POSTs are safe to send twice, so a gateway 429 that the browser reports as a TypeError no
+  // longer fails a reset, scenario, feedback or failure retry outright.
   it.each([
-    ['createSession', (api: ReturnType<typeof createCaseLensApi>) => api.createSession()],
     ['resetDemo', (api: ReturnType<typeof createCaseLensApi>) => api.resetDemo()],
     ['createScenario', (api: ReturnType<typeof createCaseLensApi>) => api.createScenario('provider-retry-demo')],
     ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })],
@@ -141,6 +140,24 @@ describe('CaseLens API client', () => {
       expect(fetcher.mock.calls[1]?.[0]).toBe(fetcher.mock.calls[0]?.[0])
       expect(fetcher.mock.calls[1]?.[1]?.body).toBe(fetcher.mock.calls[0]?.[1]?.body)
       expect(fetcher.mock.calls[3]?.[1]?.body).toBe(fetcher.mock.calls[2]?.[1]?.body)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never sends a session request twice, so a lost answer cannot open a second workspace', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetcher = vi.fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+      const api = createCaseLensApi('', fetcher)
+
+      await expect(api.createSession()).rejects.toBeInstanceOf(TypeError)
+      const second = api.createSession().catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await second).toMatchObject({ status: 503 })
+      expect(fetcher).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }

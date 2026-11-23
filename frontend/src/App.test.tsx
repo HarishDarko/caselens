@@ -314,8 +314,7 @@ test('says plainly when the service cannot be reached', async () => {
   render(<App />)
   await launch()
 
-  // The session POST is sent once more a second after the first TypeError (CL-05), so the message comes after that.
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not reach the CaseLens service. Check your connection and try again.'), { timeout: 3_000 })
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not reach the CaseLens service. Check your connection and try again.'))
   expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
 })
 

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,8 +53,10 @@ public class FeedbackService {
         if (requestId != null) {
             var earlier = feedback.findByIdAndWorkspaceId(requestId, workspaceId);
             if (earlier.isPresent()) {
-                if (!earlier.get().getTicketId().equals(ticketId)) {
-                    throw new IllegalArgumentException("The request id belongs to another feedback entry");
+                // A resend is the same request. The same id with another body is a client error, not a resend.
+                if (!earlier.get().sameSubmission(ticketId, requestedResultId, correctedCategory, correctedUrgency,
+                        correctedSlaRisk, note)) {
+                    throw new IllegalArgumentException("The request id was used for another feedback entry");
                 }
                 return FeedbackSnapshot.from(earlier.get());
             }
@@ -80,8 +83,14 @@ public class FeedbackService {
         if (feedback.countByWorkspaceId(workspaceId) >= maxFeedbackPerWorkspace) {
             throw new WorkspaceLimitExceededException("feedback entries", maxFeedbackPerWorkspace);
         }
-        TriageFeedback saved = feedback.save(candidate);
-        return FeedbackSnapshot.from(saved);
+        if (requestId == null) return FeedbackSnapshot.from(feedback.save(candidate));
+        try {
+            // Flushed here so that a second workspace racing on the same id fails on the primary key inside this
+            // method (TriageFeedback is persisted, never merged) and answers 409 like the check above.
+            return FeedbackSnapshot.from(feedback.saveAndFlush(candidate));
+        } catch (DataIntegrityViolationException collision) {
+            throw new IllegalArgumentException("The request id is already in use");
+        }
     }
 
     @Transactional(readOnly = true)
