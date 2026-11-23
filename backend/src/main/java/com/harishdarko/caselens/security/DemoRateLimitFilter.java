@@ -18,7 +18,6 @@ import tools.jackson.databind.ObjectMapper;
 
 final class DemoRateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(DemoRateLimitFilter.class);
-    static final int MAX_CLIENT_ADDRESS_LENGTH = ClientAddresses.MAX_CLIENT_ADDRESS_LENGTH;
     private static final String TRIAGE_PATH = "/api/tickets/[^/]+/triage";
     private static final String FEEDBACK_PATH = "/api/tickets/[^/]+/feedback";
     private final RateLimitService limits;
@@ -78,10 +77,6 @@ final class DemoRateLimitFilter extends OncePerRequestFilter {
             return principal.workspaceId().toString();
         }
         return clientKey(request);
-    }
-
-    String clientAddress(HttpServletRequest request) {
-        return addresses.address(request);
     }
 
     /**

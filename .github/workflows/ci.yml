@@ -120,6 +120,11 @@ jobs:
       - name: Bootstrap Terraform validate
         working-directory: infra/terraform/bootstrap
         run: terraform validate
+      - name: Bootstrap Terraform test
+        working-directory: infra/terraform/bootstrap
+        # The destroy and deploy role assertions (tests/destroy_role.tftest.hcl). The test plans against
+        # mock_provider "aws", so it needs no AWS credentials and creates nothing.
+        run: terraform test
 
   security:
     runs-on: ubuntu-latest

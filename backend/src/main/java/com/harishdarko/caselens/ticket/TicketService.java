@@ -54,8 +54,25 @@ public class TicketService {
 
     @Transactional
     public Ticket createScenario(UUID workspaceId, String key) {
+        return createScenario(workspaceId, key, null);
+    }
+
+    /**
+     * requestId, when the client sends one, becomes the ticket id, so the same request arriving twice (the browser
+     * resends it after a throttled 429 it could not read, CL-05) adds one ticket and answers the second arrival
+     * with it. The check runs under the workspace lock, before the cap, so a resend never counts as a new ticket.
+     */
+    @Transactional
+    public Ticket createScenario(UUID workspaceId, String key, UUID requestId) {
+        workspaces.lockForUpdate(workspaceId);
+        if (requestId != null) {
+            var earlier = tickets.findByIdAndWorkspaceId(requestId, workspaceId);
+            if (earlier.isPresent()) return earlier.get();
+            if (tickets.existsById(requestId)) throw new IllegalArgumentException("The request id is already in use");
+        }
+        DemoScenario scenario = scenarios.require(workspaceId, key);
         requireRoom(workspaceId);
-        return saveScenario(workspaceId, scenarios.require(workspaceId, key));
+        return saveScenario(workspaceId, scenario, requestId == null ? UUID.randomUUID() : requestId);
     }
 
     /** Holds the workspace lock, so a reset never interleaves with an add and leaves more tickets than the cap. */
@@ -64,7 +81,7 @@ public class TicketService {
         workspaces.lockForUpdate(workspaceId);
         tickets.deleteByWorkspaceId(workspaceId);
         List<DemoScenario> all = scenarios.forWorkspace(workspaceId);
-        all.forEach(scenario -> saveScenario(workspaceId, scenario));
+        all.forEach(scenario -> saveScenario(workspaceId, scenario, UUID.randomUUID()));
         return all.size();
     }
 
@@ -80,8 +97,8 @@ public class TicketService {
         }
     }
 
-    private Ticket saveScenario(UUID workspaceId, DemoScenario scenario) {
-        Ticket ticket = Ticket.create(UUID.randomUUID(), workspaceId, scenario.subject(), scenario.message(),
+    private Ticket saveScenario(UUID workspaceId, DemoScenario scenario, UUID id) {
+        Ticket ticket = Ticket.create(id, workspaceId, scenario.subject(), scenario.message(),
                 scenario.channel(), scenario.key(), clock.instant());
         return tickets.save(ticket);
     }

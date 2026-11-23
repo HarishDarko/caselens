@@ -61,9 +61,18 @@ public class TriageFeedback {
 
     public boolean differsFrom(TriageResult original) {
         Objects.requireNonNull(original);
-        return (correctedCategory != null && !correctedCategory.equals(original.getCategory()))
-                || (correctedUrgency != null && correctedUrgency != original.getUrgency())
-                || (correctedSlaRisk != null && correctedSlaRisk != original.getSlaRisk());
+        return differsFrom(original.getCategory(), original.getUrgency(), original.getSlaRisk());
+    }
+
+    public boolean differsFrom(ResultFacts original) {
+        Objects.requireNonNull(original);
+        return differsFrom(original.category(), original.urgency(), original.slaRisk());
+    }
+
+    private boolean differsFrom(Category category, Urgency urgency, SlaRisk slaRisk) {
+        return (correctedCategory != null && !correctedCategory.equals(category))
+                || (correctedUrgency != null && correctedUrgency != urgency)
+                || (correctedSlaRisk != null && correctedSlaRisk != slaRisk);
     }
 
     public UUID getId() { return id; }

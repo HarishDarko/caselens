@@ -24,24 +24,6 @@ class DemoRateLimitFilterTest {
         SecurityContextHolder.clearContext();
     }
 
-    @Test
-    void readsTheGatewayClientAddressOnlyWhenTrusted() {
-        MockHttpServletRequest request = post("/api/demo/session");
-        request.setRemoteAddr("10.0.0.5");
-        request.addHeader("X-CaseLens-Client-Ip", "198.51.100.10");
-
-        assertThat(filter(true).clientAddress(request)).isEqualTo("198.51.100.10");
-        assertThat(filter(false).clientAddress(request)).isEqualTo("10.0.0.5");
-    }
-
-    @Test
-    void capsTheLengthOfAClientAddress() {
-        MockHttpServletRequest request = post("/api/demo/session");
-        request.addHeader("X-CaseLens-Client-Ip", "9".repeat(5_000));
-
-        assertThat(filter(true).clientAddress(request)).hasSize(DemoRateLimitFilter.MAX_CLIENT_ADDRESS_LENGTH);
-    }
-
     /** Follow-up to CL2-04: the bucket table never holds a raw address. */
     @Test
     void keysAnonymousBucketsByTheClientKeyAndNeverTheAddress() {

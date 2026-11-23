@@ -123,6 +123,50 @@ class FeedbackEvaluationApiIntegrationTest {
         assertThat(results.findById(original.getId()).orElseThrow().getUrgency()).isEqualTo(Urgency.MEDIUM);
     }
 
+    /** CL-05: the browser resends a scenario or feedback POST after a gateway 429 it cannot read. */
+    @Test
+    void aResentScenarioOrFeedbackRequestSavesOneEntry() throws Exception {
+        String token = session();
+        DemoPrincipal principal = tokens.verify(token);
+        long before = tickets.countByWorkspaceId(principal.workspaceId());
+        String scenarioBody = "{\"requestId\":\"" + UUID.randomUUID() + "\"}";
+        String first = scenario(token, scenarioBody);
+        String resent = scenario(token, scenarioBody);
+        assertThat(resent).isEqualTo(first);
+        assertThat(tickets.countByWorkspaceId(principal.workspaceId())).isEqualTo(before + 1);
+
+        Ticket ticket = tickets.findById(UUID.fromString(first)).orElseThrow();
+        TriageResult original = TriageResult.from(UUID.randomUUID(), principal.workspaceId(), new TriageDecision(ticket.getId(),
+                Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
+                "Charging did not start", List.of(), List.of(), "The session did not start.",
+                List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.HIGH,
+                List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"), RESULT_CREATED, objectMapper);
+        results.save(original);
+        UUID requestId = UUID.randomUUID();
+        String feedbackBody = "{\"triageResultId\":\"" + original.getId() + "\",\"urgency\":\"HIGH\","
+                + "\"note\":\"Escalation confirmed\",\"requestId\":\"" + requestId + "\"}";
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(post("/api/tickets/{id}/feedback", first)
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(feedbackBody))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.id").value(requestId.toString()));
+        }
+        mvc.perform(get("/api/tickets/{id}/feedback", first).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1));
+    }
+
+    private String scenario(String token, String body) throws Exception {
+        String response = mvc.perform(post("/api/demo/scenarios/payment-captured-session-not-started")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(response).get("id").asText();
+    }
+
     @Test
     void rejectsFeedbackWithoutACompletedResultOrCorrection() throws Exception {
         String token = session();

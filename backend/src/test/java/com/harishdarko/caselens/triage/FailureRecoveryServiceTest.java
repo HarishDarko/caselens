@@ -1,10 +1,11 @@
 package com.harishdarko.caselens.triage;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.harishdarko.caselens.ticket.TicketNotFoundException;
 import java.time.Instant;
@@ -17,135 +18,113 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class FailureRecoveryServiceTest {
+    private static final Instant NOW = Instant.parse("2026-11-22T12:00:00Z");
+
     @Mock TriageJobRepository jobs;
     @Mock TriageRequestService requests;
     @Mock TriageResultRepository results;
     @Mock ModelInvocationRepository invocations;
 
+    private FailureRecoveryService service() {
+        return new FailureRecoveryService(jobs, requests, results, invocations,
+                java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC));
+    }
+
     @Test
-    void rejectsCrossWorkspaceAndCompletedRecoveryAttempts() {
+    void aJobOfAnotherWorkspaceIsNotFound() {
         UUID jobId = UUID.randomUUID();
-        UUID workspaceId = UUID.randomUUID();
-        TriageJob completed = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1, Instant.now());
-        completed.claim(Instant.now());
-        completed.complete(Instant.now());
-        when(jobs.findByIdAndWorkspaceId(any(), any())).thenAnswer(invocation -> {
-            UUID requestedWorkspace = invocation.getArgument(1);
-            return workspaceId.equals(requestedWorkspace) ? Optional.of(completed) : Optional.empty();
-        });
+        when(jobs.findTicketIdByIdAndWorkspaceId(any(), any())).thenReturn(Optional.empty());
 
-        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations, java.time.Clock.systemUTC());
-
-        assertThatThrownBy(() -> service.retry(UUID.randomUUID(), jobId, "corr"))
+        assertThatThrownBy(() -> service().retry(UUID.randomUUID(), jobId, "corr"))
                 .isInstanceOf(TicketNotFoundException.class);
-        assertThatThrownBy(() -> service.retry(workspaceId, jobId, "corr"))
+        verify(requests, never()).replay(any(), any(), any(), any());
+    }
+
+    /**
+     * CL3-01: retry reads only the ticket id and leaves every check on the job to the replay, which makes it under the
+     * ticket lock. It never loads the job itself, so the replay cannot be served a copy read before the lock.
+     */
+    @Test
+    void handsTheJobToTheReplayWithoutLoadingIt() {
+        UUID workspaceId = UUID.randomUUID();
+        TriageJob terminal = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
+                NOW.minusSeconds(60));
+        terminal.claim(NOW.minusSeconds(30));
+        terminal.terminalFailure("INVALID_EVENT", NOW.minusSeconds(20));
+        when(jobs.findTicketIdByIdAndWorkspaceId(terminal.getId(), workspaceId))
+                .thenReturn(Optional.of(terminal.getTicketId()));
+        when(requests.replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr")).thenReturn(terminal.snapshot());
+
+        service().retry(workspaceId, terminal.getId(), "corr");
+
+        verify(requests).replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr");
+        verify(requests, never()).request(any(), any(), any());
+        verify(jobs, never()).findByIdAndWorkspaceId(any(), any());
+        verify(jobs, never()).findById(any());
+    }
+
+    @Test
+    void aCompletedJobCannotBeReplayed() {
+        TriageJob completed = job(NOW.minusSeconds(60));
+        completed.claim(NOW.minusSeconds(50));
+        completed.complete(NOW.minusSeconds(40));
+
+        assertThatThrownBy(() -> FailureRecoveryService.requireReplayable(completed, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Completed triage jobs cannot be retried");
     }
 
     @Test
-    void rejectsAutomaticRetryStateButAllowsTheAcknowledgedSyntheticRecovery() {
-        UUID workspaceId = UUID.randomUUID();
-        TriageJob automatic = failedJob(workspaceId, "PROVIDER_TIMEOUT");
-        TriageJob synthetic = failedJob(workspaceId, "SYNTHETIC_PROVIDER_TIMEOUT");
-        when(jobs.findByIdAndWorkspaceId(automatic.getId(), workspaceId)).thenReturn(Optional.of(automatic));
-        when(jobs.findByIdAndWorkspaceId(synthetic.getId(), workspaceId)).thenReturn(Optional.of(synthetic));
-        when(requests.replay(workspaceId, synthetic.getTicketId(), synthetic.getId(), "corr")).thenReturn(synthetic.snapshot());
-        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
-                java.time.Clock.systemUTC());
+    void aTerminalFailureAndTheAcknowledgedSyntheticFailureCanBeReplayedAtOnce() {
+        TriageJob terminal = job(NOW.minusSeconds(60));
+        terminal.claim(NOW.minusSeconds(50));
+        terminal.terminalFailure("INVALID_EVENT", NOW.minusSeconds(40));
+        TriageJob automatic = failed("PROVIDER_TIMEOUT", NOW.minusSeconds(5));
+        TriageJob synthetic = failed("SYNTHETIC_PROVIDER_TIMEOUT", NOW.minusSeconds(5));
 
-        assertThatThrownBy(() -> service.retry(workspaceId, automatic.getId(), "corr"))
+        assertThatCode(() -> FailureRecoveryService.requireReplayable(terminal, NOW)).doesNotThrowAnyException();
+        assertThatCode(() -> FailureRecoveryService.requireReplayable(synthetic, NOW)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> FailureRecoveryService.requireReplayable(automatic, NOW))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Retryable jobs remain owned by SQS");
-
-        service.retry(workspaceId, synthetic.getId(), "corr");
-        // Recovery uses the replay path; the triage button's request() would return the failed job unchanged.
-        verify(requests).replay(workspaceId, synthetic.getTicketId(), synthetic.getId(), "corr");
-        verify(requests, never()).request(any(), any(), any());
-        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(automatic.getId()), any());
     }
 
     @Test
-    void replaysATerminalFailureThroughTheReplayPath() {
-        UUID workspaceId = UUID.randomUUID();
-        TriageJob terminal = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                Instant.now());
-        terminal.claim(Instant.now());
-        terminal.terminalFailure("INVALID_EVENT", Instant.now());
-        when(jobs.findByIdAndWorkspaceId(terminal.getId(), workspaceId)).thenReturn(Optional.of(terminal));
-        when(requests.replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr")).thenReturn(terminal.snapshot());
+    void aRetryableFailureCanBeReplayedOnceSqsHasGivenUpOnIt() {
+        TriageJob recent = failed("PROVIDER_TIMEOUT", NOW.minusSeconds(60));
+        TriageJob abandoned = failed("PROVIDER_TIMEOUT",
+                NOW.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
 
-        new FailureRecoveryService(jobs, requests, results, invocations, java.time.Clock.systemUTC())
-                .retry(workspaceId, terminal.getId(), "corr");
-
-        verify(requests).replay(workspaceId, terminal.getTicketId(), terminal.getId(), "corr");
-        verify(requests, never()).request(any(), any(), any());
-    }
-
-    @Test
-    void replaysARetryableFailureOnceSqsHasGivenUpOnIt() {
-        UUID workspaceId = UUID.randomUUID();
-        Instant now = Instant.parse("2026-11-22T12:00:00Z");
-        TriageJob recent = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minusSeconds(900));
-        recent.claim(now.minusSeconds(120));
-        recent.retryableFailure("PROVIDER_TIMEOUT", now.minusSeconds(60));
-        TriageJob abandoned = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minusSeconds(1800));
-        abandoned.claim(now.minusSeconds(700));
-        abandoned.retryableFailure("PROVIDER_TIMEOUT", now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
-        when(jobs.findByIdAndWorkspaceId(recent.getId(), workspaceId)).thenReturn(Optional.of(recent));
-        when(jobs.findByIdAndWorkspaceId(abandoned.getId(), workspaceId)).thenReturn(Optional.of(abandoned));
-        when(requests.replay(workspaceId, abandoned.getTicketId(), abandoned.getId(), "corr")).thenReturn(abandoned.snapshot());
-        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
-                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
-
-        assertThatThrownBy(() -> service.retry(workspaceId, recent.getId(), "corr"))
+        assertThatThrownBy(() -> FailureRecoveryService.requireReplayable(recent, NOW))
                 .hasMessage("Retryable jobs remain owned by SQS");
-        service.retry(workspaceId, abandoned.getId(), "corr");
-
-        verify(requests).replay(workspaceId, abandoned.getTicketId(), abandoned.getId(), "corr");
+        assertThatCode(() -> FailureRecoveryService.requireReplayable(abandoned, NOW)).doesNotThrowAnyException();
     }
 
     @Test
-    void replaysAQueuedOrProcessingJobOnlyOnceItIsStranded() {
-        UUID workspaceId = UUID.randomUUID();
-        Instant now = Instant.parse("2026-11-22T12:00:00Z");
-        TriageJob freshQueued = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minusSeconds(120));
-        TriageJob liveProcessing = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minusSeconds(900));
-        liveProcessing.claim(now.minusSeconds(30));
-        TriageJob strandedQueued = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
-        TriageJob strandedProcessing = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                now.minusSeconds(1800));
-        strandedProcessing.claim(now.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
-        for (TriageJob job : java.util.List.of(freshQueued, liveProcessing, strandedQueued, strandedProcessing)) {
-            when(jobs.findByIdAndWorkspaceId(job.getId(), workspaceId)).thenReturn(Optional.of(job));
-        }
-        when(requests.replay(any(), any(), any(), any())).thenReturn(strandedQueued.snapshot());
-        FailureRecoveryService service = new FailureRecoveryService(jobs, requests, results, invocations,
-                java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+    void aQueuedOrProcessingJobCanBeReplayedOnlyOnceItIsStranded() {
+        TriageJob freshQueued = job(NOW.minusSeconds(120));
+        TriageJob liveProcessing = job(NOW.minusSeconds(900));
+        liveProcessing.claim(NOW.minusSeconds(30));
+        TriageJob strandedQueued = job(NOW.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
+        TriageJob strandedProcessing = job(NOW.minusSeconds(1800));
+        strandedProcessing.claim(NOW.minus(FailureRecoveryService.SQS_REDELIVERY_WINDOW).minusSeconds(1));
 
-        assertThatThrownBy(() -> service.retry(workspaceId, freshQueued.getId(), "corr"))
+        assertThatThrownBy(() -> FailureRecoveryService.requireReplayable(freshQueued, NOW))
                 .hasMessage("Active triage jobs remain owned by SQS");
-        assertThatThrownBy(() -> service.retry(workspaceId, liveProcessing.getId(), "corr"))
+        assertThatThrownBy(() -> FailureRecoveryService.requireReplayable(liveProcessing, NOW))
                 .hasMessage("Active triage jobs remain owned by SQS");
-        service.retry(workspaceId, strandedQueued.getId(), "corr");
-        service.retry(workspaceId, strandedProcessing.getId(), "corr");
-
-        verify(requests).replay(workspaceId, strandedQueued.getTicketId(), strandedQueued.getId(), "corr");
-        verify(requests).replay(workspaceId, strandedProcessing.getTicketId(), strandedProcessing.getId(), "corr");
-        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(freshQueued.getId()), any());
-        verify(requests, never()).replay(any(), any(), org.mockito.ArgumentMatchers.eq(liveProcessing.getId()), any());
+        assertThatCode(() -> FailureRecoveryService.requireReplayable(strandedQueued, NOW)).doesNotThrowAnyException();
+        assertThatCode(() -> FailureRecoveryService.requireReplayable(strandedProcessing, NOW)).doesNotThrowAnyException();
     }
 
-    private static TriageJob failedJob(UUID workspaceId, String errorCode) {
-        TriageJob job = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, UUID.randomUUID(), 1,
-                Instant.now());
-        job.claim(Instant.now());
-        job.retryableFailure(errorCode, Instant.now());
+    private static TriageJob job(Instant createdAt) {
+        return TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 1, createdAt);
+    }
+
+    private static TriageJob failed(String errorCode, Instant failedAt) {
+        TriageJob job = job(failedAt.minusSeconds(120));
+        job.claim(failedAt.minusSeconds(60));
+        job.retryableFailure(errorCode, failedAt);
         return job;
     }
 }

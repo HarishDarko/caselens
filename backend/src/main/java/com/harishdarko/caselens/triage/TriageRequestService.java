@@ -76,20 +76,27 @@ public class TriageRequestService {
     }
 
     /**
-     * Reviewer recovery. Only FailureRecoveryService.retry calls this, after it has checked that the failed job is
-     * one SQS no longer owns (terminal, the acknowledged synthetic demo failure, or a stranded QUEUED or PROCESSING
-     * job whose message went to the DLQ). A replacement is queued only while that job is still the ticket's latest
-     * job; otherwise the latest job is returned unchanged. The ticket row lock serializes this with request(), so a
-     * double click queues one replacement, and an old failure can never be replayed past a newer job that SQS still
-     * owns. A stranded job is first closed as TERMINAL_FAILURE (SQS_DELIVERY_EXHAUSTED, or STRANDED_UNPUBLISHED when
-     * its message was never published) by a conditional update, so a late, relayed or redriven original message is acknowledged as a duplicate before any provider call.
+     * Reviewer recovery. Only FailureRecoveryService.retry calls this. Under the ticket lock it reads the failed job
+     * and checks that SQS no longer owns it (FailureRecoveryService.requireReplayable: terminal, the acknowledged
+     * synthetic demo failure, a retryable failure past the redelivery window, or a stranded QUEUED or PROCESSING job
+     * whose message went to the DLQ). Every writer of a ticket's jobs takes this lock first (request, replay, and the
+     * worker's claim and final writes), so what is read here stays true until this transaction commits. A
+     * replacement is queued only while that job is still the ticket's latest job; otherwise the latest job is
+     * returned unchanged. So a double click queues one replacement, and an old failure can never be replayed past a
+     * newer job that SQS still owns. A stranded job is first closed as TERMINAL_FAILURE (SQS_DELIVERY_EXHAUSTED, or
+     * STRANDED_UNPUBLISHED when its message was never published) by a conditional update, so a late, relayed or
+     * redriven original message is acknowledged as a duplicate before any provider call.
      */
     @Transactional
     TriageJobSnapshot replay(UUID workspaceId, UUID ticketId, UUID failedJobId, String correlationId) {
-        metrics.requested();
         String safeCorrelationId = CorrelationIds.normalize(correlationId);
         Ticket ticket = tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)
                 .orElseThrow(TicketNotFoundException::new);
+        TriageJob failedJob = jobs.findByIdAndWorkspaceId(failedJobId, workspaceId)
+                .filter(job -> job.getTicketId().equals(ticketId))
+                .orElseThrow(TicketNotFoundException::new);
+        FailureRecoveryService.requireReplayable(failedJob, clock.instant());
+        metrics.requested();
         TriageJob latest = latestJob(workspaceId, ticketId).orElseThrow(TicketNotFoundException::new);
         if (!latest.getId().equals(failedJobId)) return latest.snapshot();
         boolean failed = latest.getStatus() == TriageJobStatus.TERMINAL_FAILURE

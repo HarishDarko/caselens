@@ -118,6 +118,10 @@ class OutboxWorkflowTest {
         when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(synthetic.getId(), workspaceId)).thenReturn(Optional.of(synthetic));
+
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, synthetic.getId(), "corr-recovery");
 
@@ -138,6 +142,10 @@ class OutboxWorkflowTest {
         when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
                 .thenReturn(Optional.of(replacement));
 
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(terminal.getId(), workspaceId)).thenReturn(Optional.of(terminal));
+
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, terminal.getId(), "corr-double-click");
 
@@ -154,6 +162,10 @@ class OutboxWorkflowTest {
         when(tickets.findByIdAndWorkspaceIdForUpdate(ticketId, workspaceId)).thenReturn(Optional.of(ticket));
         when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
                 .thenReturn(Optional.of(sqsOwned));
+
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(oldTerminal.getId(), workspaceId)).thenReturn(Optional.of(oldTerminal));
 
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, oldTerminal.getId(), "corr-stale-retry");
@@ -181,6 +193,10 @@ class OutboxWorkflowTest {
         when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(stranded.getId(), workspaceId)).thenReturn(Optional.of(stranded));
+
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, stranded.getId(), "corr-stranded");
 
@@ -207,6 +223,10 @@ class OutboxWorkflowTest {
         when(events.save(any(OutboxEvent.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(jobs.save(any(TriageJob.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(queued.getId(), workspaceId)).thenReturn(Optional.of(queued));
+
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, queued.getId(), "corr-unpublished");
 
@@ -224,6 +244,10 @@ class OutboxWorkflowTest {
         when(jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(ticketId, workspaceId, 1))
                 .thenReturn(Optional.of(queued));
         when(jobs.closeStranded(any(), any(), any(), any(), any())).thenReturn(0);
+
+        // The replay reads the failed job under the ticket lock and checks it there (CL3-01).
+
+        when(jobs.findByIdAndWorkspaceId(queued.getId(), workspaceId)).thenReturn(Optional.of(queued));
 
         TriageJobSnapshot snapshot = new TriageRequestService(tickets, events, jobs, publisher, clock)
                 .replay(workspaceId, ticketId, queued.getId(), "corr-race");

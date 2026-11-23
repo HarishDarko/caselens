@@ -29,7 +29,7 @@ class FeedbackController {
     FeedbackResponse submit(@AuthenticationPrincipal DemoPrincipal principal, @PathVariable UUID ticketId,
             @Valid @RequestBody FeedbackRequest request) {
         return FeedbackResponse.from(service.submit(principal.workspaceId(), ticketId, request.triageResultId(),
-                request.category(), request.urgency(), request.slaRisk(), request.note()));
+                request.category(), request.urgency(), request.slaRisk(), request.note(), request.requestId()));
     }
 
     @GetMapping("/{ticketId}/feedback")
@@ -37,8 +37,9 @@ class FeedbackController {
         return new FeedbackListResponse(service.list(principal.workspaceId(), ticketId));
     }
 
+    /** requestId is optional: a client id for this submit, so a resent request saves one entry (CL-05). */
     record FeedbackRequest(UUID triageResultId, Category category, Urgency urgency, SlaRisk slaRisk,
-            @NotBlank @Size(max = 500) String note) {}
+            @NotBlank @Size(max = 500) String note, UUID requestId) {}
 
     record FeedbackResponse(UUID id, UUID ticketId, UUID originalResultId, Category correctedCategory,
             Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, String submittedBy, Instant createdAt) {

@@ -1,7 +1,7 @@
 package com.harishdarko.caselens.triage;
 
-import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketRepository;
+import com.harishdarko.caselens.ticket.TicketScenarioKey;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -40,7 +40,9 @@ public class EvaluationService {
 
     @Transactional(readOnly = true)
     public EvaluationSummary summarize(UUID workspaceId) {
-        List<TriageResult> storedResults = results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId);
+        // Column reads for results and tickets, not entities: this runs on every 5 s Evaluation poll, and the result
+        // JSON columns and the 5 KB ticket message are never shown here (CL-20).
+        List<ResultFacts> storedResults = results.findFactsByWorkspaceId(workspaceId);
         List<TriageJob> storedJobs = jobs.findByWorkspaceId(workspaceId);
         Map<UUID, TriageJob> jobsByEvent = storedJobs.stream().collect(java.util.stream.Collectors.toMap(
                 TriageJob::getEventId, job -> job, (left, right) -> right));
@@ -55,23 +57,23 @@ public class EvaluationService {
         int corrections = 0;
         List<Long> latencies = new ArrayList<>();
         // A ticket triaged more than once has several results; look each ticket up once.
-        List<UUID> ticketIds = storedResults.stream().map(TriageResult::getTicketId).distinct().toList();
-        Map<UUID, Ticket> scopedTickets = ticketIds.isEmpty() ? Map.of()
-                : tickets.findByWorkspaceIdAndIdIn(workspaceId, new HashSet<>(ticketIds)).stream()
-                        .collect(java.util.stream.Collectors.toMap(Ticket::getId, ticket -> ticket));
-        for (TriageResult result : storedResults) {
-            TriageFeedback correction = latestFeedback.get(result.getId());
+        List<UUID> ticketIds = storedResults.stream().map(ResultFacts::ticketId).distinct().toList();
+        Map<UUID, TicketScenarioKey> scopedTickets = ticketIds.isEmpty() ? Map.of()
+                : tickets.findScenarioKeys(workspaceId, new HashSet<>(ticketIds)).stream()
+                        .collect(java.util.stream.Collectors.toMap(TicketScenarioKey::id, ticket -> ticket));
+        for (ResultFacts result : storedResults) {
+            TriageFeedback correction = latestFeedback.get(result.id());
             if (correction != null && correction.differsFrom(result)) corrections++;
-            TriageJob job = jobsByEvent.get(result.getEventId());
+            TriageJob job = jobsByEvent.get(result.eventId());
             if (job != null) {
-                latencies.add(Math.max(0, Duration.between(job.getCreatedAt(), result.getCreatedAt()).toMillis()));
+                latencies.add(Math.max(0, Duration.between(job.getCreatedAt(), result.createdAt()).toMillis()));
             }
-            Ticket ticket = scopedTickets.get(result.getTicketId());
-            EvaluationGroundTruth truth = ticket == null ? null : expected.get(ticket.getScenarioKey());
+            TicketScenarioKey ticket = scopedTickets.get(result.ticketId());
+            EvaluationGroundTruth truth = ticket == null ? null : expected.get(ticket.scenarioKey());
             if (truth == null) continue;
             evaluated++;
-            boolean categoryMatch = result.getCategory().equals(truth.getExpectedCategory());
-            boolean urgencyMatch = result.getUrgency() == truth.getExpectedUrgency();
+            boolean categoryMatch = result.category().equals(truth.getExpectedCategory());
+            boolean urgencyMatch = result.urgency() == truth.getExpectedUrgency();
             if (categoryMatch) categoryMatches++;
             if (urgencyMatch) urgencyMatches++;
             if (categoryMatch && urgencyMatch) fullMatches++;
@@ -88,25 +90,25 @@ public class EvaluationService {
                         (int) latestJobs.values().stream().filter(this::isFinal).count()), usage(storedInvocations), recentEvents);
     }
 
-    private List<EvaluationEvent> recentEvents(List<TriageResult> storedResults, Map<UUID, TriageJob> jobsByEvent,
+    private List<EvaluationEvent> recentEvents(List<ResultFacts> storedResults, Map<UUID, TriageJob> jobsByEvent,
             Map<UUID, TriageFeedback> latestFeedback, Map<String, EvaluationGroundTruth> expected,
-            Map<UUID, Ticket> scopedTickets, JobInvocations jobInvocations) {
+            Map<UUID, TicketScenarioKey> scopedTickets, JobInvocations jobInvocations) {
         return storedResults.stream()
-                .sorted(Comparator.comparing(TriageResult::getCreatedAt).reversed()
-                        .thenComparing(TriageResult::getId, Comparator.reverseOrder()))
+                .sorted(Comparator.comparing(ResultFacts::createdAt).reversed()
+                        .thenComparing(ResultFacts::id, Comparator.reverseOrder()))
                 .limit(20)
                 .map(result -> {
-                    TriageJob job = jobsByEvent.get(result.getEventId());
-                    Ticket ticket = scopedTickets.get(result.getTicketId());
-                    TriageFeedback correction = latestFeedback.get(result.getId());
-                    ModelInvocation invocation = job == null ? jobInvocations.latestForEvent(result.getEventId())
+                    TriageJob job = jobsByEvent.get(result.eventId());
+                    TicketScenarioKey ticket = scopedTickets.get(result.ticketId());
+                    TriageFeedback correction = latestFeedback.get(result.id());
+                    ModelInvocation invocation = job == null ? jobInvocations.latestForEvent(result.eventId())
                             : jobInvocations.latestFor(job);
-                    return new EvaluationEvent(result.getId(), result.getCreatedAt(),
-                            job == null ? 0 : Math.max(0, Duration.between(job.getCreatedAt(), result.getCreatedAt()).toMillis()),
+                    return new EvaluationEvent(result.id(), result.createdAt(),
+                            job == null ? 0 : Math.max(0, Duration.between(job.getCreatedAt(), result.createdAt()).toMillis()),
                             invocation == null ? null : invocation.getProvider(),
-                            invocation == null ? result.getModelVersion() : invocation.getModelVersion(),
-                            result.getDecisionSource().name(),
-                            ticket != null && expected.containsKey(ticket.getScenarioKey()),
+                            invocation == null ? result.modelVersion() : invocation.getModelVersion(),
+                            result.decisionSource().name(),
+                            ticket != null && expected.containsKey(ticket.scenarioKey()),
                             correction != null && correction.differsFrom(result));
                 })
                 .toList();

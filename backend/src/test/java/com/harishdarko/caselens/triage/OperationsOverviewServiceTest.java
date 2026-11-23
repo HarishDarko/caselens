@@ -49,7 +49,7 @@ class OperationsOverviewServiceTest {
 
         TriageResult fallback = result(completed.getEventId(), workspaceId, fallbackTicketId, DecisionSource.RULES_FALLBACK);
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(completed, queued, processing, retryable, terminal));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(fallback));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(fallback));
         when(invocations.findByTicketIds(any())).thenReturn(List.of(
                 ModelInvocation.from(new ModelInvocationRecord(fallbackTicketId, "groq", "openai/gpt-oss-20b", "triage-v1",
                         NOW.minusSeconds(2), NOW.minusSeconds(1), 1000, "FAILURE", "SCHEMA_FAILURE", null, null))));
@@ -92,7 +92,7 @@ class OperationsOverviewServiceTest {
         terminal.claim(NOW.minusSeconds(4));
         terminal.terminalFailure("INVALID_EVENT", NOW.minusSeconds(3));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(completed, queued, processing, retryable, terminal));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of(
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(
                 result(completed.getEventId(), workspaceId, ticketId, DecisionSource.AI_VALIDATED)));
         when(invocations.findByTicketIds(any())).thenReturn(List.of());
 
@@ -116,7 +116,7 @@ class OperationsOverviewServiceTest {
         replay.claim(NOW.minusSeconds(4));
         replay.complete(NOW.minusSeconds(1));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts());
         when(invocations.findByTicketIds(any())).thenReturn(List.of(
                 invocation(ticketId, original.getEventId(), "groq", NOW.minusSeconds(9), NOW.minusSeconds(8)),
                 invocation(ticketId, replay.getEventId(), "gemini", NOW.minusSeconds(4), NOW.minusSeconds(2))));
@@ -137,7 +137,7 @@ class OperationsOverviewServiceTest {
         TriageJob replay = TriageJob.queued(UUID.randomUUID(), UUID.randomUUID(), workspaceId, ticketId, 1, NOW.minusSeconds(5));
         replay.claim(NOW.minusSeconds(4));
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(original, replay));
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts());
         when(invocations.findByTicketIds(any())).thenReturn(List.of(
                 invocation(ticketId, null, "groq", NOW.minusSeconds(9), NOW.minusSeconds(8))));
 
@@ -163,7 +163,7 @@ class OperationsOverviewServiceTest {
                 .mapToObj(index -> job(workspaceId, UUID.randomUUID(), UUID.randomUUID()))
                 .toList();
         when(jobs.findByWorkspaceId(workspaceId)).thenReturn(jobsInWorkspace);
-        when(results.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts());
         when(invocations.findByTicketIds(any())).thenReturn(List.of());
 
         OperationsOverview overview = service.overview(workspaceId);
@@ -181,5 +181,9 @@ class OperationsOverviewServiceTest {
                 "The request is clear enough for a reviewer to determine the next step.", List.of("Review the request"),
                 "We are reviewing this request now.", ReliabilitySignal.MEDIUM, List.of(), 20, List.of(), source,
                 "openai/gpt-oss-20b", "triage-v1"), NOW, new ObjectMapper());
+    }
+
+    private static List<ResultFacts> facts(TriageResult... stored) {
+        return java.util.Arrays.stream(stored).map(ResultFacts::of).toList();
     }
 }

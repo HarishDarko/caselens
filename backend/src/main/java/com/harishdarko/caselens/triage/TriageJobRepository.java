@@ -15,6 +15,10 @@ import org.springframework.data.repository.query.Param;
 public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
     Optional<TriageJob> findByEventId(UUID eventId);
     Optional<TriageJob> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
+
+    /** The job's ticket id as a column read, so the job itself does not enter the persistence context. */
+    @Query("select job.ticketId from TriageJob job where job.id = :id and job.workspaceId = :workspaceId")
+    Optional<UUID> findTicketIdByIdAndWorkspaceId(@Param("id") UUID id, @Param("workspaceId") UUID workspaceId);
     Optional<TriageJob> findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(
             UUID ticketId, UUID workspaceId, int contentVersion);
     Page<TriageJob> findByWorkspaceIdAndStatusIn(UUID workspaceId, List<TriageJobStatus> statuses, Pageable pageable);
