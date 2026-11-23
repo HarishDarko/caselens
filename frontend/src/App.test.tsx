@@ -304,7 +304,7 @@ test('keeps waiting when one status check is throttled', async () => {
 test('keeps waiting while the worker retries a provider that did not answer', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['PROCESSING', 'RETRYABLE_FAILURE', 'RETRYABLE_FAILURE'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(1_500) })
-  expect(document.querySelector('.stage-note')).toHaveTextContent('The AI model did not answer. The worker tries again by itself in about a minute.')
+  expect(document.querySelector('.stage-note')).toHaveTextContent('The AI model is busy. The worker tries again by itself in about a minute and a half.')
 
   await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
   await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
@@ -868,7 +868,10 @@ test('reads the status again, without a new triage request, when a ticket whose 
   const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST').length
 
   fireEvent.click(row(PAYMENT))
-  await act(async () => { await vi.advanceTimersByTimeAsync(125_000) })
+  // The page waits 150 seconds (a rate-limited triage is retried once after about 90 s); still waiting at 140 s.
+  await act(async () => { await vi.advanceTimersByTimeAsync(140_000) })
+  expect(detail().queryByRole('alert')).not.toBeInTheDocument()
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
   await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running. Open the ticket again in a minute to see the result.'))
   running = false
   fireEvent.click(row('Receipt requested'))
@@ -1228,7 +1231,7 @@ test('keeps the stage text of a ticket still in triage when another ticket finis
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
 
-// CL2-09: a live triage can wait two minutes. Only that ticket waits; other tickets stay usable.
+// CL2-09: a live triage can wait two and a half minutes. Only that ticket waits; other tickets stay usable.
 test('keeps other tickets reviewable while one ticket waits for live triage', async () => {
   mockSeededBackend([chargerTicket, recordedReceipt], { 'ticket-a104': () => pendingJob('QUEUED', null, 'ticket-a104') })
   render(<App />)

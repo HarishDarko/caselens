@@ -25,9 +25,10 @@ export const URGENCY_LABEL: Record<Urgency, string> = { LOW: 'Low', MEDIUM: 'Med
 // The retry demo ticket fails on purpose. It belongs to Operations, never to the inbox (an older API still seeds it).
 export const RETRY_DEMO_SCENARIO = 'provider-retry-demo'
 
-// A worker whose SnapStart snapshot was dropped after 14 idle days rebuilds it before SQS redelivers
-// the job, which took about 90 seconds in production, so wait two minutes and back off while waiting.
-export const TRIAGE_WAIT_MS = 120_000
+// A worker whose SnapStart snapshot was dropped after 14 idle days rebuilds it before SQS redelivers the job (about
+// 90 seconds in production), and a rate-limited triage is retried once after about 90 seconds, so the worst case is
+// about 135 seconds. Wait 150 seconds and back off while waiting.
+export const TRIAGE_WAIT_MS = 150_000
 export const SLOW_TRIAGE_NOTICE_MS = 8_000
 // A triage takes about 4 to 6 seconds, and the API allows 5 requests a second for all visitors together, so check
 // once a second (every 2 seconds after 30 seconds). Checking four times a second only used up that shared budget.
@@ -38,7 +39,7 @@ export const TRIAGE_STAGE_TEXT = {
   SENDING: 'Sending the ticket to the triage queue.',
   QUEUED: 'Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.',
   PROCESSING: 'The AI model is reading the ticket. This usually takes a few seconds.',
-  RETRYABLE_FAILURE: 'The AI model did not answer. The worker tries again by itself in about a minute.',
+  RETRYABLE_FAILURE: 'The AI model is busy. The worker tries again by itself in about a minute and a half.',
 } as const
 export type TriageStage = keyof typeof TRIAGE_STAGE_TEXT
 export const WAKING_TEXT = 'Waking the triage worker. The first live run after a quiet spell can take up to a minute.'
