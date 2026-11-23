@@ -130,6 +130,17 @@ export const isOverridden = (ticket: Ticket) => ticket.review?.decision === 'COR
  */
 export const supportsAccept = (result: TriageResult | null) => typeof result?.recorded === 'boolean'
 
+/**
+ * Who made the call a reviewer accepts or overrides: the AI, or the pack's rules when the AI's answer was not used.
+ * A rules-fallback ticket never says "AI call".
+ */
+export type Decider = { name: 'AI' | 'Rules'; lower: 'AI' | 'rules'; possessive: "AI's" | "rules'"; Possessive: "AI's" | "Rules'" }
+export function deciderOf(result: TriageResult): Decider {
+  return result.decisionSource === 'RULES_FALLBACK'
+    ? { name: 'Rules', lower: 'rules', possessive: "rules'", Possessive: "Rules'" }
+    : { name: 'AI', lower: 'AI', possessive: "AI's", Possessive: "AI's" }
+}
+
 export type Provenance = 'recorded' | 'verified' | 'fallback'
 export function provenanceOf(result: TriageResult): Provenance {
   if (result.decisionSource === 'RULES_FALLBACK') return 'fallback'

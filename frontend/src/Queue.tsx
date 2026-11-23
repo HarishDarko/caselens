@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from 'react'
-import { categoryLabel, channelLabel, lowerFirst, provenanceOf, reviewOrder, shownUrgency, URGENCY_LABEL, type Ticket, type TriageStage } from './model'
+import { categoryLabel, channelLabel, deciderOf, lowerFirst, provenanceOf, reviewOrder, shownUrgency, URGENCY_LABEL, type Ticket, type TriageStage } from './model'
 import { UrgencyPill } from './ui'
 
 export type TicketActivity = { running: boolean; stage: TriageStage | null; failed: boolean }
@@ -7,7 +7,7 @@ export type TicketActivity = { running: boolean; stage: TriageStage | null; fail
 function rowWho(ticket: Ticket): { text: string; reviewed: boolean } {
   const result = ticket.result
   if (!result) return { text: '', reviewed: false }
-  if (ticket.review?.decision === 'CORRECTED' && ticket.review.urgency && ticket.review.urgency !== result.urgency) return { text: `You, AI said ${URGENCY_LABEL[result.urgency]}`, reviewed: true }
+  if (ticket.review?.decision === 'CORRECTED' && ticket.review.urgency && ticket.review.urgency !== result.urgency) return { text: `You, ${deciderOf(result).lower} said ${URGENCY_LABEL[result.urgency]}`, reviewed: true }
   if (ticket.review) return { text: ticket.review.decision === 'ACCEPTED' ? 'Accepted' : 'Corrected', reviewed: true }
   const provenance = provenanceOf(result)
   return { text: provenance === 'recorded' ? 'Recorded' : provenance === 'verified' ? 'AI verified' : 'Rules fallback', reviewed: false }

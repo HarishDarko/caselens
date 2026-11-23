@@ -707,7 +707,7 @@ test('accepts the AI call with one click and logs it, without a note or an urgen
   expect(bodies).toEqual([expect.objectContaining({ decision: 'ACCEPTED', triageResultId: 'result-ticket-a104', originalResultId: 'result-ticket-a104' })])
   expect(bodies[0]).not.toHaveProperty('urgency')
   expect(bodies[0]).not.toHaveProperty('note')
-  expect(screen.getByRole('status')).toHaveTextContent('Accepted. The AI call is logged as confirmed.')
+  expect(screen.getByRole('status')).toHaveTextContent("Accepted. The AI's call is logged as confirmed.")
   expect(row('Every charger')).toHaveTextContent('Accepted')
   expect(screen.getByRole('button', { name: 'Inbox' })).not.toHaveTextContent('to review')
   // There is no Undo: the next step is another review, added beside this one.
@@ -782,6 +782,32 @@ test('says plainly why the pack rules decided a ticket, and labels it as a rules
   expect(row(PAYMENT)).toHaveTextContent('Rules fallback')
 })
 
+test('calls a rules-fallback decision the rules\' call everywhere, never the AI\'s', async () => {
+  mockSeededBackend([apiTicket], { 'ticket-a102': () => response({ job: completedJob, result: enriched('ticket-a102', { decisionSource: 'RULES_FALLBACK', fallbackReason: 'PROVIDER_UNAVAILABLE', reliabilitySignal: 'LOW', urgency: 'MEDIUM', evidence: [{ quote: PAYMENT, meaning: 'Matched the pack keywords.' }] }) }) })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('Rules fallback', { selector: '.badge' })).toBeInTheDocument())
+
+  expect(document.querySelector('.rv-text')).toHaveTextContent('Rules call: Medium, General')
+  expect(detail().getByText("The number comes from fixed rules: the rules' urgency and response-time risk plus words in the ticket.")).toBeInTheDocument()
+  fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
+  await waitFor(() => expect(detail().getByText(/The rules' call is logged as confirmed\./)).toBeInTheDocument())
+  expect(screen.getByRole('status')).toHaveTextContent("Accepted. The rules' call is logged as confirmed.")
+
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  expect(detail().getByRole('button', { name: "Medium Rules' call" })).toBeDisabled()
+  expect(detail().getByPlaceholderText('What did the rules miss?')).toBeInTheDocument()
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(detail().getByText('Overridden.')).toBeInTheDocument())
+  expect(detail().getByText('Rules said Medium')).toBeInTheDocument()
+  expect(detail().getByText('Rules priority (original)')).toBeInTheDocument()
+  expect(row(PAYMENT)).toHaveTextContent('You, rules said Medium')
+  expect(screen.getByRole('status')).toHaveTextContent('Override logged. Rules Medium, you High.')
+  expect(document.body.textContent).not.toMatch(/AI call|AI said|AI's call|AI priority|from the AI's|AI: |the AI miss/)
+})
+
 test('gives a general fallback reason when an older API sends none', async () => {
   mockSeededBackend([apiTicket], { 'ticket-a102': () => response({ job: completedJob, result: { ...legacyResult, decisionSource: 'RULES_FALLBACK', reliabilitySignal: 'LOW' } }) })
   render(<App />)
@@ -789,6 +815,73 @@ test('gives a general fallback reason when an older API sends none', async () =>
   fireEvent.click(row(PAYMENT))
 
   await waitFor(() => expect(document.querySelector('.fallback-note')).toHaveTextContent('The live AI was unavailable or its answer failed a check.'))
+})
+
+test('lists every matched policy in the phone policy card, not only the first', async () => {
+  const policies = [{ id: 'OCPP_CONNECTIVITY', label: 'OCPP connectivity', guidance: 'Verify heartbeat and network path.' }, { id: 'CHARGER_SITE_OUTAGE', label: 'Charger site outage', guidance: 'Check the site network and notify the operator.' }]
+  mockSeededBackend([{ ...recordedOffline, latestResult: { ...recordedOffline.latestResult, policies } }])
+  render(<App />)
+  await openInbox()
+
+  const card = document.querySelector<HTMLElement>('.b-pol')!
+  expect(card).toHaveTextContent('OCPP connectivity policy')
+  expect(card).toHaveTextContent('Charger site outage policy')
+  expect(card).toHaveTextContent('Check the site network and notify the operator.')
+})
+
+test('lights every reason a shared highlight carries', async () => {
+  mockSeededBackend([{ ...recordedOffline, latestResult: enriched('ticket-a104', { recorded: true, evidence: [{ quote: 'three drivers are waiting', meaning: 'Drivers are blocked now.' }, { quote: 'drivers are waiting', meaning: 'People are on site.' }] }) }])
+  render(<App />)
+  await openInbox()
+
+  fireEvent.mouseEnter(document.querySelector('.msg mark.ev')!)
+  expect(detail().getByText('Drivers are blocked now.').closest('li')).toHaveClass('on')
+  expect(detail().getByText('People are on site.').closest('li')).toHaveClass('on')
+})
+
+test('shows a background failure when the ticket is opened again, and retries only on Try again', async () => {
+  let polls = 0
+  const fetchMock = mockSeededBackend([apiTicket, recordedReceipt], { 'ticket-a102': () => (polls++ === 0 ? pendingJob('TERMINAL_FAILURE') : completedProcessing('ticket-a102', 82, 'HIGH')) })
+  render(<App />)
+  await openInbox()
+  const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST').length
+
+  fireEvent.click(row(PAYMENT))
+  fireEvent.click(row('Receipt requested'))
+  await waitFor(() => expect(row(PAYMENT)).toHaveTextContent('Triage failed'))
+  fireEvent.click(row(PAYMENT))
+
+  expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.')
+  expect(detail().queryByText('Open this ticket to run the live AI on it.')).not.toBeInTheDocument()
+  expect(triagePosts()).toBe(1)
+  fireEvent.click(detail().getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
+  expect(triagePosts()).toBe(2)
+})
+
+test('keeps Re-run live off while a review is being saved', async () => {
+  const seeded = mockSeededBackend([recordedOffline])
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).endsWith('/feedback') ? new Promise<Response>(() => undefined) : seeded(input, init)))
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
+  await waitFor(() => expect(detail().getByRole('button', { name: 'Saving...' })).toBeDisabled())
+  for (const button of detail().getAllByRole('button', { name: 'Re-run live' })) expect(button).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
+})
+
+test('shows a dash, never 0% or "null ms", for rates and latencies an API leaves empty', async () => {
+  const backend = mockBackend()
+  stubOver(backend, (url) => url.endsWith('/api/evaluation') ? response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 3, evaluatedResults: 0, categoryAgreementRate: null, urgencyAgreementRate: null, agreementRate: null, correctionRate: null, medianLatencyMs: null, p95LatencyMs: null, failureRate: null, providerUsage: [], recentEvents: [] }) : undefined)
+  render(<App />)
+  await openInbox()
+  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+
+  await waitFor(() => expect(screen.getByText('Correction rate')).toBeInTheDocument())
+  expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  expect(screen.queryByText(/null/)).not.toBeInTheDocument()
+  expect(screen.getByText('p95 —')).toBeInTheDocument()
 })
 
 test('lists a reason whose quote is not in the ticket, and says how many quotes were found', async () => {
@@ -860,6 +953,8 @@ test('on a phone, opens on the list, shows a ticket as its own screen, and retur
   // The ticket screen starts at the top, with focus on its heading.
   await waitFor(() => expect(document.getElementById('detail-subject')).toHaveFocus())
   expect(scrollTo).toHaveBeenCalledWith(0, 0)
+  // With the list hidden, the ticket subject is the page's main heading.
+  expect(screen.getByRole('heading', { level: 1, name: /Every charger at the demo site appears offline/ })).toBeInTheDocument()
   expect(screen.getByRole('region', { name: 'Review' })).toBeInTheDocument()
   expect(detail().getByRole('button', { name: 'Accept' })).toBeInTheDocument()
 

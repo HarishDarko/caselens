@@ -114,11 +114,12 @@ export type EvaluationSummary = {
   evaluatedResults: number
   categoryAgreementRate: number
   urgencyAgreementRate: number
-  agreementRate: number
-  correctionRate: number
-  medianLatencyMs: number
-  p95LatencyMs: number
-  failureRate: number
+  // null when nothing has been measured yet (an API with recorded results); an older API sends 0.
+  agreementRate: number | null
+  correctionRate: number | null
+  medianLatencyMs: number | null
+  p95LatencyMs: number | null
+  failureRate: number | null
   providerUsage: Array<{ provider: string; requests: number; successes: number; failures: number; inputTokens: number; outputTokens: number }>
   recentEvents: EvaluationEvent[]
 }

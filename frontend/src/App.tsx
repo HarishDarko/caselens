@@ -7,7 +7,7 @@ import { EvaluationView, LiveStatus, OperationsView, type LiveState } from './Le
 import {
   CORRECTION_CONFLICT_TEXT, isPhone, mapApiTicket, pause, plainError, PlainError, RETRY_DEMO_SCENARIO, RETRY_DEMO_STOPPED_TEXT,
   reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
-  TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
+  TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
 import { Queue, type TicketActivity } from './Queue'
 import { TicketDetail } from './TicketDetail'
@@ -244,7 +244,8 @@ function App() {
   // Sends a ticket through the live pipeline and waits for its result. A recorded result is replaced only by a newer
   // one: the poll ignores a result it already has.
   async function hydrateTriage(ticket: Ticket, { rerun = false } = {}) {
-    if (!ticket.backendId || (ticket.result && !rerun) || busyTicketsRef.current.has(ticket.backendId)) return
+    // A review being saved belongs to the current result, so a re-run waits until it is saved.
+    if (!ticket.backendId || (ticket.result && !rerun) || busyTicketsRef.current.has(ticket.backendId) || savingTicketsRef.current.has(ticket.backendId)) return
     const ticketId = ticket.backendId
     const previousResultId = ticket.result?.id ?? null
     const signal = sessionAbortRef.current.signal
@@ -303,7 +304,8 @@ function App() {
       if (phone) { try { window.scrollTo(0, 0) } catch { /* jsdom and old browsers */ } }
       document.getElementById('detail-subject')?.focus({ preventScroll: true })
     })
-    if (ticket) void hydrateTriage(ticket)
+    // A ticket whose live run failed shows the failure first; its Try again button runs it again.
+    if (ticket && !ticketErrors[ticket.backendId]) void hydrateTriage(ticket)
   }
   function backToList() {
     const id = selectedTicketId
@@ -326,8 +328,10 @@ function App() {
         ? { triageResultId: result.id, decision }
         : { triageResultId: result.id, ...(legacy ? {} : { decision }), urgency: urgency ?? undefined, ...(note ? { note } : {}) }, signal)
       if (signal.aborted) return false
-      setTickets((current) => current.map((item) => item.backendId === ticketId ? { ...item, review: { decision, urgency, note: note || null }, reviewsLogged: item.reviewsLogged + 1 } : item))
-      announce(decision === 'ACCEPTED' ? 'Accepted. The AI call is logged as confirmed.' : `Override logged. AI ${URGENCY_LABEL[result.urgency]}, you ${URGENCY_LABEL[urgency ?? result.urgency]}.`)
+      // The review belongs to the result it was made on; a newer result on the ticket starts unreviewed.
+      setTickets((current) => current.map((item) => item.backendId === ticketId && item.result?.id === result.id ? { ...item, review: { decision, urgency, note: note || null }, reviewsLogged: item.reviewsLogged + 1 } : item))
+      const by = deciderOf(result)
+      announce(decision === 'ACCEPTED' ? `Accepted. The ${by.possessive} call is logged as confirmed.` : `Override logged. ${by.name} ${URGENCY_LABEL[result.urgency]}, you ${URGENCY_LABEL[urgency ?? result.urgency]}.`)
       // The review is saved; a failed metrics read must not say otherwise. Evaluation reloads itself when opened.
       api.getEvaluation(signal).then((next) => { if (!signal.aborted) setEvaluation(next) }).catch(() => undefined)
       return true
@@ -413,7 +417,7 @@ function App() {
         {view === 'inbox' && <>
           <Queue tickets={inboxTickets} activity={activity} selectedId={selectedTicket?.id ?? null} onSelect={selectTicket} />
           {selectedTicket && detailState
-            ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded}
+            ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded} headingLevel={pane === 'detail' && isPhone() ? 'h1' : 'h2'}
               actions={{ onAccept: (ticket) => submitReview(ticket, 'ACCEPTED', null, ''), onOverride: (ticket, urgency, note) => submitReview(ticket, 'CORRECTED', urgency, note) }}
               onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { rerun: true })} />
             : <section className="detail" aria-label="Ticket detail"><div className="detail-empty"><p>{inboxTickets.some((ticket) => ticket.result) ? 'Pick a ticket from the inbox.' : 'Pick a ticket to run the live AI on it. Triage takes a few seconds.'}</p></div></section>}

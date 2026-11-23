@@ -44,16 +44,17 @@ export function Byline({ children }: { children?: ReactNode }) {
  * A ticket text with its evidence quotes highlighted in place. Each highlight ends with the numbers of the reasons
  * it supports; the last word stays on the same line as its number.
  */
-export function EvidenceText({ text, marks, active, onActive }: { text: string; marks: EvidenceMark[]; active?: number | null; onActive?: (ref: number | null) => void }) {
+export function EvidenceText({ text, marks, active, onActive }: { text: string; marks: EvidenceMark[]; active?: readonly number[] | null; onActive?: (refs: number[] | null) => void }) {
   return (
     <>
       {segments(text, marks).map((segment, index) => {
         if (!segment.refs) return <Fragment key={index}>{segment.text}</Fragment>
         const refs = segment.refs
         const cut = segment.text.trimEnd().lastIndexOf(' ') + 1
-        const on = active !== null && active !== undefined && refs.includes(active)
+        const on = Boolean(active?.some((ref) => refs.includes(ref)))
+        // A highlight shared by overlapping quotes lights every reason it carries.
         return (
-          <mark key={index} className={on ? 'ev on' : 'ev'} data-ev={refs.join(' ')} onMouseEnter={() => onActive?.(refs[0])} onMouseLeave={() => onActive?.(null)}>
+          <mark key={index} className={on ? 'ev on' : 'ev'} data-ev={refs.join(' ')} onMouseEnter={() => onActive?.(refs)} onMouseLeave={() => onActive?.(null)}>
             {segment.text.slice(0, cut)}
             <span className="nw">{segment.text.slice(cut)}{refs.map((ref) => <sup className="ref" key={ref}><span className="sr-only"> evidence </span>{ref}</sup>)}</span>
           </mark>

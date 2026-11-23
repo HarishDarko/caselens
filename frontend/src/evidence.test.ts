@@ -100,6 +100,25 @@ describe('evidence highlighter', () => {
     expect(quoteSummary(1, placeEvidence('', message, ['At charger CHG-CA-1042']))).toBe('1 of 1 quotes found word for word in the ticket')
   })
 
+  it('never maps an identifier placeholder to a plain word', () => {
+    // Real seeded ticket: "[RFID_1]" is RFID-DEMO-A19, not "Demo".
+    const seeded = 'Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19. The token worked yesterday.'
+    expect(marked(seeded, placeEvidence('Registered RFID card is rejected', seeded, ['[RFID_1]']).message)).toEqual([{ text: 'RFID-DEMO-A19', refs: [1] }])
+    const twice = 'payment reference failed; payment reference PAY-1001 is pending'
+    expect(marked(twice, placeEvidence('', twice, ['payment reference [PAYMENT_ID_1]']).message)).toEqual([{ text: 'payment reference PAY-1001', refs: [1] }])
+    // Nothing was redacted here, so a placeholder quote matches nothing.
+    expect(locateQuote('RFID: declined at every charger', 'RFID [RFID_1] at every charger')).toBeNull()
+  })
+
+  it('follows the separators the redactor drops before descriptor words', () => {
+    const text = 'Our payment id: ref PAY-99821 failed and RFID, card 04A1B2C3D4 was declined.'
+    const placement = placeEvidence('', text, ['payment id ref [PAYMENT_ID_1] failed', 'RFID card [RFID_1] was declined'])
+    expect(marked(text, placement.message)).toEqual([
+      { text: 'payment id: ref PAY-99821 failed', refs: [1] },
+      { text: 'RFID, card 04A1B2C3D4 was declined', refs: [2] },
+    ])
+  })
+
   it('reports a quote it cannot find instead of dropping it silently', () => {
     const placement = placeEvidence('Subject', 'The charger is fine today.', ['The charger is fine', 'words that are not in the ticket'])
 

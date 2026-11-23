@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { TriageResult } from './api'
 import { meaningOf, placeEvidence, quoteOf, quoteSummary, type EvidencePlacement } from './evidence'
-import { categoryLabel, channelLabel, fallbackText, formatTime, isOverridden, policiesOf, provenanceOf, seconds, shownUrgency, TRIAGE_STAGE_TEXT, URGENCY_LABEL, WAKING_TEXT, type Ticket, type TriageStage } from './model'
+import { categoryLabel, channelLabel, deciderOf, fallbackText, formatTime, isOverridden, policiesOf, provenanceOf, seconds, shownUrgency, TRIAGE_STAGE_TEXT, URGENCY_LABEL, WAKING_TEXT, type Ticket, type TriageStage } from './model'
 import { ReviewBar, type ReviewActions } from './ReviewBar'
 import { CheckIcon, DashIcon, EvidenceText, UrgencyPill } from './ui'
 
@@ -33,9 +33,10 @@ function PriorityBlock({ ticket, result }: { ticket: Ticket; result: TriageResul
   const rules = result.appliedRules ?? []
   const raw = rules.reduce((sum, rule) => sum + rule.points, 0)
   const overridden = isOverridden(ticket)
+  const by = deciderOf(result)
   return (
     <section className="block prio" aria-label="Priority breakdown">
-      <div className="prio-head"><h3>{overridden ? 'AI priority (original)' : 'Priority'}</h3><span className="prio-score num">{result.priorityScore}<span className="of"> /100</span></span></div>
+      <div className="prio-head"><h3>{overridden ? `${by.name} priority (original)` : 'Priority'}</h3><span className="prio-score num">{result.priorityScore}<span className="of"> /100</span></span></div>
       <div className="prio-bar" role="img" aria-label={`Priority ${result.priorityScore} of 100`}>
         {rules.filter((rule) => rule.points > 0).map((rule, index) => <span key={rule.code} className={`seg seg-${Math.min(index, 3)}`} style={{ width: `${Math.min(rule.points, 100)}%` }} />)}
       </div>
@@ -44,8 +45,10 @@ function PriorityBlock({ ticket, result }: { ticket: Ticket; result: TriageResul
         {raw > 100 && <li className="cap"><span>Capped at 100</span><span className="num">{raw}</span></li>}
       </ul>}
       <p className="block-note">{overridden
-        ? `This score comes from the AI's original ${URGENCY_LABEL[result.urgency]} call and is never overwritten.`
-        : "The model never picks the number. Fixed rules add it up from the AI's urgency and response-time risk plus words in the ticket."}</p>
+        ? `This score comes from the ${by.possessive} original ${URGENCY_LABEL[result.urgency]} call and is never overwritten.`
+        : by.name === 'AI'
+          ? "The model never picks the number. Fixed rules add it up from the AI's urgency and response-time risk plus words in the ticket."
+          : "The number comes from fixed rules: the rules' urgency and response-time risk plus words in the ticket."}</p>
     </section>
   )
 }
@@ -73,11 +76,11 @@ function ChecksBlock({ result, placement, total, industryName }: { result: Triag
   )
 }
 
-function Trace({ ticket, result, onRerun }: { ticket: Ticket; result: TriageResult; onRerun: () => void }) {
+function Trace({ ticket, result, onRerun, rerunDisabled }: { ticket: Ticket; result: TriageResult; onRerun: () => void; rerunDisabled: boolean }) {
   const [open, setOpen] = useState(false)
   const job = ticket.job
   if (result.recorded && !job) {
-    return <section className="trace trace-recorded"><p>Recorded result from <code>{result.modelVersion}</code>. No live run on this visit.</p><button type="button" className="btn btn-quiet btn-small" onClick={onRerun}>Re-run live</button></section>
+    return <section className="trace trace-recorded"><p>Recorded result from <code>{result.modelVersion}</code>. No live run on this visit.</p><button type="button" className="btn btn-quiet btn-small" onClick={onRerun} disabled={rerunDisabled}>Re-run live</button></section>
   }
   if (!job) return <section className="trace trace-recorded"><p>Result from <code>{result.modelVersion}</code>.</p></section>
   const attempts = job.attemptCount
@@ -101,16 +104,17 @@ function Trace({ ticket, result, onRerun }: { ticket: Ticket; result: TriageResu
   )
 }
 
-export function TicketDetail({ ticket, state, industryName, hasRecorded, actions, onBack, onRerun }: { ticket: Ticket; state: DetailState; industryName: string; hasRecorded: boolean; actions: ReviewActions; onBack: () => void; onRerun: () => void }) {
-  const [active, setActive] = useState<number | null>(null)
-  const [copied, setCopied] = useState(false)
+export function TicketDetail({ ticket, state, industryName, hasRecorded, headingLevel = 'h2', actions, onBack, onRerun }: { ticket: Ticket; state: DetailState; industryName: string; hasRecorded: boolean; headingLevel?: 'h1' | 'h2'; actions: ReviewActions; onBack: () => void; onRerun: () => void }) {
+  const [active, setActive] = useState<number[] | null>(null)
+  // Keyed by result, so a re-run with a new reply never shows "Copied" for text that was not copied.
+  const [copiedResultId, setCopiedResultId] = useState<string | null>(null)
+  const Heading = headingLevel
   const result = state.running ? null : ticket.result
   const quotes = result ? result.evidence.map(quoteOf) : []
   const placement = placeEvidence(ticket.subject, ticket.message, quotes)
   const fallback = result?.decisionSource === 'RULES_FALLBACK'
   const urgency = result ? shownUrgency(ticket) : null
   const policies = result ? policiesOf(result) : []
-  const firstPolicy = policies[0]
   const found = placement.placed.size
   const error = state.error && <p className="error-banner" role="alert">{state.error}</p>
 
@@ -120,15 +124,15 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
         <button type="button" className="back" aria-label="Back to inbox" onClick={onBack}><BackIcon />Inbox</button>
         <p className="d-id"><code>{ticket.id}</code><span>{channelLabel(ticket.channel)}</span></p>
       </div>
-      <h2 className="d-subject" id="detail-subject" tabIndex={-1}><EvidenceText text={ticket.subject} marks={placement.subject} active={active} onActive={setActive} /></h2>
+      <Heading className="d-subject" id="detail-subject" tabIndex={-1}><EvidenceText text={ticket.subject} marks={placement.subject} active={active} onActive={setActive} /></Heading>
       {result && urgency ? (
         <div className="tags">
           <UrgencyPill urgency={urgency} />
-          {isOverridden(ticket) && <span className="tag tag-was">AI said {URGENCY_LABEL[result.urgency]}</span>}
+          {isOverridden(ticket) && <span className="tag tag-was">{deciderOf(result).name} said {URGENCY_LABEL[result.urgency]}</span>}
           <span className="tag">Priority <b className="num">{result.priorityScore}</b></span>
           <span className="tag tag-cat">{categoryLabel(result)}</span>
           <Provenance result={result} />
-          {result.recorded && !ticket.job && <button type="button" className="link-button head-rerun" onClick={onRerun}>Re-run live</button>}
+          {result.recorded && !ticket.job && <button type="button" className="link-button head-rerun" onClick={onRerun} disabled={state.saving}>Re-run live</button>}
         </div>
       ) : state.running ? <>
         <Stages stage={state.stage} />
@@ -148,7 +152,11 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
         <div className="d-grid">
           <div className="d-main">
             <section className="block b-msg"><h3>Customer message</h3><p className="msg">{ticket.message}</p></section>
-            <section className="block b-why"><h3>Why the AI decided this</h3><p className="block-note">{state.running ? 'Evidence appears once every quote has been checked against the message.' : state.error ?? 'Open this ticket to run the live AI on it.'}</p>{state.running && <div className="skeleton gap-top"><span style={{ width: '82%' }} /><span style={{ width: '64%' }} /></div>}</section>
+            <section className="block b-why"><h3>Why the AI decided this</h3>
+              {state.running ? <><p className="block-note">Evidence appears once every quote has been checked against the message.</p><div className="skeleton gap-top"><span style={{ width: '82%' }} /><span style={{ width: '64%' }} /></div></>
+                : state.error ? <><p className="block-note">The live run did not finish, so there is no result yet.</p><button type="button" className="btn btn-secondary btn-small try-again" onClick={onRerun}>Try again</button></>
+                  : <p className="block-note">Open this ticket to run the live AI on it.</p>}
+            </section>
           </div>
           <aside className="d-side">
             <section className="block"><h3>Priority</h3>{state.running ? <div className="skeleton"><span className="tall" style={{ width: '30%' }} /><span style={{ width: '100%' }} /></div> : <p className="block-note">Scored once the ticket is triaged.</p>}</section>
@@ -160,7 +168,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
   }
 
   const copy = () => {
-    const done = () => setCopied(true)
+    const done = () => setCopiedResultId(result.id)
     try { void navigator.clipboard?.writeText(result.suggestedReply).then(done, () => undefined) } catch { /* Clipboard blocked: the text stays selectable. */ }
   }
   return (
@@ -181,7 +189,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
                 const ref = index + 1
                 const placed = placement.placed.has(ref)
                 return (
-                  <li key={index} data-ev={ref} tabIndex={0} className={active === ref ? 'on' : undefined} onMouseEnter={() => setActive(ref)} onMouseLeave={() => setActive(null)} onFocus={() => setActive(ref)} onBlur={() => setActive(null)}>
+                  <li key={index} data-ev={ref} tabIndex={0} className={active?.includes(ref) ? 'on' : undefined} onMouseEnter={() => setActive([ref])} onMouseLeave={() => setActive(null)} onFocus={() => setActive([ref])} onBlur={() => setActive(null)}>
                     <span className="ref-chip" aria-hidden="true">{ref}</span>
                     <div><p><span className="sr-only">Evidence {ref}: </span>{meaningOf(item) || quoteOf(item)}</p>
                       {!placed && <p className="reason-quote">Quote not found in the ticket text: “{quoteOf(item)}”</p>}</div>
@@ -190,10 +198,14 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
               })}
             </ol> : <p className="block-note">No evidence quotes were returned.</p>}
           </section>
-          <section className="block b-pol"><h3 className="sr-only">Policy</h3><p className="pol-line"><b>{firstPolicy ? `${firstPolicy.label} policy` : 'No policy applies'}</b><span>{categoryLabel(result)}</span></p>{firstPolicy?.guidance && <p className="pol-text">{firstPolicy.guidance}</p>}</section>
+          <section className="block b-pol"><h3 className="sr-only">Policy</h3>
+            {/* The phone shows this card instead of the side panel, so it lists every matched policy. */}
+            {policies.length ? policies.map((policy, index) => <div key={policy.id} className="pol-item"><p className="pol-line"><b>{policy.label} policy</b>{index === 0 && <span>{categoryLabel(result)}</span>}</p>{policy.guidance && <p className="pol-text">{policy.guidance}</p>}</div>)
+              : <p className="pol-line"><b>No policy applies</b><span>{categoryLabel(result)}</span></p>}
+          </section>
           <div className="pair">
             <section className="block"><h3>Next steps</h3>{result.recommendedActions.length ? <ol className="steps">{result.recommendedActions.map((action, index) => <li key={index}>{action}</li>)}</ol> : <p className="block-note">No next steps were returned.</p>}</section>
-            {result.suggestedReply && <section className="block reply"><div className="block-head"><h3>Suggested reply</h3><button type="button" className="link-button" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button></div><p>{result.suggestedReply}</p><p className="block-note">A draft for the reviewer to check. Accepting does not send it.</p></section>}
+            {result.suggestedReply && <section className="block reply"><div className="block-head"><h3>Suggested reply</h3><button type="button" className="link-button" onClick={copy}>{copiedResultId === result.id ? 'Copied' : 'Copy'}</button></div><p>{result.suggestedReply}</p><p className="block-note">A draft for the reviewer to check. Accepting does not send it.</p></section>}
           </div>
         </div>
         <aside className="d-side">
@@ -207,7 +219,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, actions
           <ChecksBlock result={result} placement={placement} total={quotes.length} industryName={industryName} />
         </aside>
       </div>
-      <Trace ticket={ticket} result={result} onRerun={onRerun} />
+      <Trace ticket={ticket} result={result} onRerun={onRerun} rerunDisabled={state.saving} />
       <ReviewBar key={ticket.backendId} ticket={ticket} saving={state.saving} actions={actions} />
     </section>
   )
