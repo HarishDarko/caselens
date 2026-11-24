@@ -1,6 +1,8 @@
 package com.harishdarko.caselens.demo;
 
 import com.harishdarko.caselens.ticket.Ticket;
+import com.harishdarko.caselens.triage.LatestTriageReader;
+import com.harishdarko.caselens.triage.TriageResultView;
 import com.harishdarko.caselens.ticket.TicketChannel;
 import com.harishdarko.caselens.ticket.TicketService;
 import com.harishdarko.caselens.ticket.TicketStatus;
@@ -40,12 +42,19 @@ class DemoDataController {
 
     record ResetResponse(int seeded) {}
 
+    /** latestResult and latestFeedback are null for a ticket without a result (a new one) or a review. */
     record ScenarioTicketResponse(UUID id, String displayId, String subject, String message, TicketChannel channel,
-            TicketStatus status, String scenarioKey, Instant createdAt, Instant updatedAt) {
+            TicketStatus status, String scenarioKey, Instant createdAt, Instant updatedAt,
+            TriageResultView latestResult, LatestTriageReader.LatestFeedback latestFeedback) {
         static ScenarioTicketResponse from(Ticket ticket) {
+            return from(ticket, null);
+        }
+
+        static ScenarioTicketResponse from(Ticket ticket, LatestTriageReader.Latest latest) {
             return new ScenarioTicketResponse(ticket.getId(), ticket.getDisplayId(), ticket.getSubject(),
                     ticket.getMessage(), ticket.getChannel(), ticket.getStatus(), ticket.getScenarioKey(),
-                    ticket.getCreatedAt(), ticket.getUpdatedAt());
+                    ticket.getCreatedAt(), ticket.getUpdatedAt(), latest == null ? null : latest.result(),
+                    latest == null ? null : latest.feedback());
         }
     }
 }

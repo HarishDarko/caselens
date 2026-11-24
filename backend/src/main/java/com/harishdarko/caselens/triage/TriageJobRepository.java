@@ -63,6 +63,8 @@ public interface TriageJobRepository extends JpaRepository<TriageJob, UUID> {
 
     List<TriageJob> findByWorkspaceId(UUID workspaceId);
 
+    List<TriageJob> findByWorkspaceIdAndEventIdIn(UUID workspaceId, java.util.Collection<UUID> eventIds);
+
     /**
      * How long a claim protects a job. The worker commits its claim before the AI call, so a worker that dies during
      * the call leaves the job in PROCESSING. The claim is made after the invocation starts and the worker Lambda

@@ -20,6 +20,11 @@ public enum FallbackReason {
     /** The answer was empty, too large, cut off at the token limit or did not follow the response schema. */
     ANSWER_UNREADABLE;
 
+    /** The reason read from the model call recorded for a job; a missing or successful call reads as PROVIDER_UNAVAILABLE. */
+    static FallbackReason fromInvocation(ModelInvocation latest) {
+        return fromErrorCode(latest != null && "FAILURE".equals(latest.getStatus()) ? latest.getSanitizedErrorCode() : null);
+    }
+
     public static FallbackReason fromErrorCode(String errorCode) {
         if (errorCode == null || errorCode.isBlank()) return PROVIDER_UNAVAILABLE;
         return switch (errorCode) {

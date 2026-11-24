@@ -4,6 +4,7 @@ import com.harishdarko.caselens.common.WorkspaceLimitExceededException;
 import com.harishdarko.caselens.demo.DemoScenario;
 import com.harishdarko.caselens.demo.DemoScenarios;
 import com.harishdarko.caselens.demo.DemoWorkspaceAccess;
+import com.harishdarko.caselens.triage.RecordedResultSeeder;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
@@ -22,14 +23,16 @@ public class TicketService {
     private final DemoScenarios scenarios;
     private final Clock clock;
     private final DemoWorkspaceAccess workspaces;
+    private final RecordedResultSeeder recordedResults;
     private final int maxTicketsPerWorkspace;
 
     TicketService(TicketRepository tickets, DemoScenarios scenarios, Clock clock, DemoWorkspaceAccess workspaces,
-            @Value("${caselens.limits.tickets-per-workspace:50}") int maxTicketsPerWorkspace) {
+            RecordedResultSeeder recordedResults, @Value("${caselens.limits.tickets-per-workspace:50}") int maxTicketsPerWorkspace) {
         this.tickets = tickets;
         this.scenarios = scenarios;
         this.clock = clock;
         this.workspaces = workspaces;
+        this.recordedResults = recordedResults;
         this.maxTicketsPerWorkspace = maxTicketsPerWorkspace;
     }
 
@@ -89,13 +92,18 @@ public class TicketService {
         }
     }
 
-    /** Holds the workspace lock, so a reset never interleaves with an add and leaves more tickets than the cap. */
+    /**
+     * Holds the workspace lock, so a reset never interleaves with an add and leaves more tickets than the cap. The
+     * seeded tickets that have a recorded result get it here, in the same transaction, with no job or model call.
+     */
     @Transactional
     public int reset(UUID workspaceId) {
         workspaces.lockForUpdate(workspaceId);
         tickets.deleteByWorkspaceId(workspaceId);
         List<DemoScenario> seeded = scenarios.seededForWorkspace(workspaceId);
-        seeded.forEach(scenario -> saveScenario(workspaceId, scenario, UUID.randomUUID()));
+        List<Ticket> saved = seeded.stream().map(scenario -> saveScenario(workspaceId, scenario, UUID.randomUUID())).toList();
+        // Inside the same lock and transaction: the tickets that have a captured answer start COMPLETED with it.
+        recordedResults.seed(workspaceId, workspaces.industryOf(workspaceId), saved);
         return seeded.size();
     }
 
