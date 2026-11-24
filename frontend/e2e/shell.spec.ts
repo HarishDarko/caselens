@@ -1,81 +1,87 @@
 import { expect, test } from '@playwright/test'
+import { installApiStubs } from './stubs'
 
-async function installApiStubs(page: import('@playwright/test').Page) {
-  const ticketId = '11111111-1111-1111-1111-111111111111'
-  const now = '2026-07-12T04:00:00Z'
-  const ticket = { id: ticketId, displayId: 'CL-E2E01', subject: 'Every charger at the demo site appears offline', message: 'All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC. Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.', channel: 'EMAIL', status: 'NEW', scenarioKey: 'charger-offline-site-wide', createdAt: now, updatedAt: now }
-  const result = { id: '22222222-2222-2222-2222-222222222222', ticketId, category: 'CONNECTIVITY', urgency: 'CRITICAL', slaRisk: 'HIGH', sentiment: 'NEGATIVE', summary: 'All chargers at the synthetic site are offline and drivers are waiting.', evidence: [{ quote: 'All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC.', meaning: 'The issue affects the full synthetic site.' }, { quote: 'three drivers are waiting.', meaning: 'The outage is affecting multiple drivers.' }], policyIds: ['CHARGER_SITE_OUTAGE'], explanation: 'The evidence indicates a site-wide connectivity outage affecting multiple waiting drivers.', recommendedActions: ['Verify the site heartbeat path', 'Escalate the synthetic site outage'], suggestedReply: 'We are reviewing the site-wide charger outage and will update you after the heartbeat path is checked.', reliabilitySignal: 'HIGH', warnings: [], priorityScore: 85, appliedRules: [], decisionSource: 'AI_VALIDATED', modelVersion: 'mock-v1', promptVersion: 'triage-v1', createdAt: now }
-  const job = { id: '33333333-3333-3333-3333-333333333333', eventId: '44444444-4444-4444-4444-444444444444', ticketId, status: 'COMPLETED', attemptCount: 1, startedAt: now, completedAt: now, lastErrorCode: null, attempts: [] }
-  const evaluation = { generatedAt: now, triageResults: 1, evaluatedResults: 1, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 184, p95LatencyMs: 184, failureRate: 0, providerUsage: [{ provider: 'mock', requests: 1, successes: 1, failures: 0, inputTokens: 0, outputTokens: 0 }], recentEvents: [{ resultId: result.id, createdAt: now, latencyMs: 184, provider: 'mock', modelVersion: 'mock-v1', decisionSource: 'AI_VALIDATED', evaluated: true, corrected: false }] }
-  const operationsOverview = { generatedAt: now, queue: { queued: 0, processing: 0, completed: 1, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [{ jobId: job.id, ticketId, status: 'COMPLETED', attemptCount: 1, createdAt: now, updatedAt: now, completedAt: now, lastErrorCode: null, provider: 'mock', modelVersion: 'mock-v1', decisionSource: 'AI_VALIDATED', latencyMs: 184 }], providers: [{ provider: 'mock', requests: 1, successes: 1, failures: 0, inputTokens: 0, outputTokens: 0, averageLatencyMs: 184 }] }
-  await page.route('**/api/**', async (route) => {
-    const request = route.request()
-    const url = new URL(request.url())
-    let body: unknown
-    if (url.pathname.endsWith('/api/demo/session') && request.method() === 'GET') body = { defaultIndustry: 'ev-charging', industries: [{ id: 'ev-charging', name: 'EV charging', featuredScenario: { key: 'charger-offline-site-wide', label: ticket.subject }, scenarios: [{ key: 'charger-offline-site-wide', label: ticket.subject }] }, { id: 'e-commerce', name: 'E-commerce', featuredScenario: { key: 'shop-checkout-down', label: 'Every card fails at checkout' }, scenarios: [{ key: 'shop-checkout-down', label: 'Every card fails at checkout' }] }, { id: 'saas-support', name: 'SaaS support', featuredScenario: { key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }, scenarios: [{ key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }] }] }
-    else if (url.pathname.endsWith('/api/demo/session')) body = { token: 'e2e-token', expiresAt: now, industry: 'ev-charging' }
-    else if (url.pathname.endsWith('/api/demo/runtime')) body = { environment: 'LOCAL_REVIEW', database: 'POSTGRESQL', queue: 'LOCALSTACK_SQS', aiProvider: 'DETERMINISTIC' }
-    else if (url.pathname.endsWith('/api/demo/reset')) body = { seeded: 9 }
-    else if (url.pathname.endsWith('/api/tickets') && request.method() === 'GET') body = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }
-    else if (url.pathname.endsWith('/api/evaluation')) body = evaluation
-    else if (url.pathname.endsWith('/api/operations/overview')) body = operationsOverview
-    else if (url.pathname.endsWith('/api/operations/failures')) body = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }
-    else if (url.pathname.endsWith('/api/demo/scenarios/charger-offline-site-wide')) body = ticket
-    else if (url.pathname.endsWith(`/api/tickets/${ticketId}/triage`)) body = job
-    else if (url.pathname.endsWith(`/api/tickets/${ticketId}/processing`)) body = { job, result }
-    else if (url.pathname.endsWith(`/api/tickets/${ticketId}/feedback`)) body = { id: '55555555-5555-5555-5555-555555555555', ticketId, originalResultId: result.id, correctedCategory: result.category, correctedUrgency: 'HIGH', correctedSlaRisk: result.slaRisk, note: 'Reviewer corrected urgency during the local demo.', submittedBy: 'demo-reviewer', createdAt: now }
-    else return route.continue()
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
-  })
-}
-
-test('completes the reviewer journey from queue to measured views', async ({ page }, testInfo) => {
+test('completes the reviewer journey from landing to reviewed tickets and the measured views', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'The primary journey is covered at desktop width.')
 
   await installApiStubs(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'CaseLens' })).toBeVisible()
-  await expect(page.getByText('Demo environment')).toBeVisible()
-  await page.getByRole('button', { name: 'Launch live demo' }).click()
+  await expect(page.getByRole('heading', { name: 'Support triage that shows its evidence' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open the SaaS support queue' })).toBeVisible()
+  await page.getByRole('radio', { name: /EV charging/ }).check()
+  await expect(page.getByText('Example: a recorded result from the EV charging queue', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Open the EV charging queue' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Ticket inbox' })).toBeVisible()
-  await page.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }).click()
-  await expect(page.getByText('Every charger at the demo site appears offline').first()).toBeVisible()
-  await page.getByRole('article').filter({ hasText: 'Every charger at the demo site appears offline' }).getByRole('button', { name: /Review CL-/ }).click()
-  await expect(page.getByRole('heading', { name: 'Why this ticket is here' })).toBeVisible()
-  await page.getByRole('button', { name: 'Mark urgency high' }).click()
-  await page.getByLabel('Review note').fill('The synthetic outage affects multiple drivers.')
-  await page.getByRole('button', { name: 'Save correction' }).click()
-  await expect(page.getByRole('status')).toContainText('Correction saved. Evaluation metrics updated.')
+  // The laptop opens the top recorded ticket at once; nothing is sent to the triage worker for it.
+  await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible()
+  const detail = page.locator('.detail')
+  await expect(detail.getByRole('heading', { name: /Every charger at the demo site appears offline/ })).toBeVisible()
+  await expect(detail.getByText('Recorded AI result')).toBeVisible()
+  await expect(detail.locator('mark.ev')).toHaveCount(3)
+  await expect(detail.getByText('3 of 3 quotes found word for word in the ticket').first()).toBeVisible()
+  await detail.getByRole('button', { name: 'Accept' }).click()
+  await expect(detail.getByText("The AI's call is logged as confirmed.")).toBeVisible()
+  await expect(detail.getByRole('button', { name: 'Override urgency' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Evaluation' }).click()
-  await expect(page.getByRole('heading', { name: 'Evaluation signal' })).toBeVisible()
-  await expect(page.getByText('Agreement', { exact: true })).toBeVisible()
-  await expect(page.getByText('Recent triage activity')).toBeVisible()
-  await expect(page.getByText('mock-v1')).toBeVisible()
-  await page.getByRole('button', { name: 'Operations' }).click()
+  // A ticket that was never triaged runs the live pipeline when it is opened. Its quote names a payment reference
+  // the AI only saw redacted, and the page still highlights it in the original text.
+  await page.locator('.queue').getByRole('button', { name: /Payment accepted but charging did not start/ }).click()
+  await expect(detail.getByText('AI verified')).toBeVisible({ timeout: 15_000 })
+  await expect(detail.locator('mark.ev').filter({ hasText: 'PAY-DEMO-7319' })).toHaveCount(1)
+  await detail.getByRole('button', { name: 'Override urgency' }).click()
+  await detail.getByRole('button', { name: /^High/ }).click()
+  await detail.getByLabel('Reason, optional').fill('The driver was charged and is still waiting.')
+  await detail.getByRole('button', { name: 'Save' }).click()
+  await expect(detail.getByText('Overridden.')).toBeVisible()
+  await expect(detail.getByText('AI priority (original)')).toBeVisible()
+  await expect(detail.getByRole('button', { name: 'Change review' })).toBeVisible()
+
+  await page.locator('.queue').getByRole('button', { name: /Connector reports a persistent fault/ }).click()
+  await expect(detail.locator('.fallback-note')).toContainText("The AI's answer failed a check")
+
+  await page.getByRole('button', { name: "How it's built" }).first().click()
+  await expect(page.getByRole('heading', { name: "How it's built" })).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
+
+  // Quality and operations: simulate a provider timeout, see it land in the same banner, retry it.
+  await page.getByRole('button', { name: 'Quality and operations' }).click()
+  await expect(page.getByRole('heading', { name: 'Quality and operations' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'No unresolved failures' })).toBeVisible()
-  await expect(page.getByText('Completed jobs')).toBeVisible()
-  await expect(page.getByText('Recent processing')).toBeVisible()
+  await page.getByRole('button', { name: 'Simulate provider timeout' }).click()
+  await expect(page.getByRole('button', { name: 'Retry case' })).toBeVisible({ timeout: 10_000 })
+  await page.getByRole('button', { name: 'Retry case' }).click()
+  await expect(page.getByRole('heading', { name: 'No unresolved failures' })).toBeVisible()
+  await page.getByRole('button', { name: 'Inbox' }).click()
+  await expect(page.locator('.queue').getByText('Synthetic provider timeout for retry review')).toHaveCount(0)
 })
 
-test('keeps the access and queue flow usable on a phone viewport', async ({ page }, testInfo) => {
+test('works one-handed on a phone: list, then detail with the review bar in reach', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'The responsive journey is covered in the phone project.')
 
   await installApiStubs(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'CaseLens' })).toBeVisible()
-  await page.getByRole('button', { name: 'Launch live demo' }).click()
-  await expect(page.getByRole('heading', { name: 'Ticket inbox' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Evaluation' })).toBeVisible()
-  const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
-  expect(hasHorizontalOverflow).toBe(false)
-  await page.getByRole('button', { name: 'Load ticket: Every charger at the demo site appears offline' }).click()
-  await expect(page.getByRole('heading', { name: 'Why this ticket is here' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Needs review' })).toBeHidden()
-  await page.getByRole('button', { name: '← Back to queue' }).click()
-  await expect(page.getByRole('heading', { name: 'Needs review' })).toBeVisible()
-  await page.getByRole('article').filter({ hasText: 'Every charger at the demo site appears offline' }).getByRole('button', { name: /Review CL-/ }).click()
-  await expect(page.getByRole('heading', { name: 'Why this ticket is here' })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false)
+  const launch = page.getByRole('button', { name: 'Open the SaaS support queue' })
+  await expect(launch).toBeInViewport()
+  await page.getByRole('radio', { name: /EV charging/ }).check()
+  await page.getByRole('button', { name: 'Open the EV charging queue' }).click()
+  await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible()
+  // The phone opens on the list; nothing is selected until the visitor picks a ticket.
+  await expect(page.locator('.detail')).toBeHidden()
+  const overflow = () => page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
+  expect(await overflow()).toBe(false)
+
+  await page.locator('.queue').getByRole('button', { name: /Every charger at the demo site appears offline/ }).click()
+  await expect(page.locator('.queue')).toBeHidden()
+  const accept = page.getByRole('button', { name: 'Accept' })
+  await expect(accept).toBeInViewport()
+  // The bar sticks to the foot of the screen while the reviewer scrolls down to the policy and the trace.
+  await page.mouse.wheel(0, 1200)
+  await expect(accept).toBeInViewport()
+  expect(await overflow()).toBe(false)
+
+  await page.getByRole('button', { name: 'Back to inbox' }).click()
+  await expect(page.locator('.queue')).toBeVisible()
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  await expect(page.getByRole('dialog', { name: 'Menu' }).getByRole('link', { name: 'Harish Darko' })).toBeVisible()
 })

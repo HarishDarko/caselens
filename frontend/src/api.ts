@@ -1,3 +1,9 @@
+export type Urgency = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+export type ReviewDecision = 'ACCEPTED' | 'CORRECTED'
+
+/** The latest reviewer entry for a ticket. Sent by an API with recorded results; an older API leaves it out. */
+export type LatestFeedback = { decision: ReviewDecision; urgency: Urgency | null; note: string | null; createdAt: string }
+
 export type ApiTicket = {
   id: string
   displayId: string
@@ -8,6 +14,9 @@ export type ApiTicket = {
   scenarioKey: string | null
   createdAt: string
   updatedAt: string
+  /** The newest triage result (recorded or live). Absent on an API from before recorded results. */
+  latestResult?: TriageResult | null
+  latestFeedback?: LatestFeedback | null
 }
 
 export type TicketPage = {
@@ -25,34 +34,34 @@ export type RuntimeSummary = {
   aiProvider: 'GROQ' | 'GEMINI' | 'DETERMINISTIC'
 }
 
-export type TriageProcessing = {
-  job: {
+export type TriageJob = {
+  id: string
+  eventId: string
+  ticketId: string
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
+  attemptCount: number
+  startedAt: string | null
+  completedAt: string | null
+  lastErrorCode: string | null
+  attempts: Array<{
     id: string
-    eventId: string
-    ticketId: string
-    status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
-    attemptCount: number
-    startedAt: string | null
+    jobId: string
+    attemptNumber: number
+    status: 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
+    startedAt: string
     completedAt: string | null
-    lastErrorCode: string | null
-    attempts: Array<{
-      id: string
-      jobId: string
-      attemptNumber: number
-      status: 'PROCESSING' | 'COMPLETED' | 'RETRYABLE_FAILURE' | 'TERMINAL_FAILURE'
-      startedAt: string
-      completedAt: string | null
-      errorCode: string | null
-    }>
-  }
-  result: TriageResult | null
+    errorCode: string | null
+  }>
 }
+
+// job is null when the ticket has only a recorded result and no live job yet.
+export type TriageProcessing = { job: TriageJob | null; result: TriageResult | null }
 
 export type TriageResult = {
   id: string
   ticketId: string
   category: string
-  urgency: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  urgency: Urgency
   slaRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   sentiment: string
   summary: string
@@ -69,33 +78,56 @@ export type TriageResult = {
   modelVersion: string
   promptVersion: string
   createdAt: string
+  // Added with recorded results and Accept. An older API leaves every one of these out, so each is optional.
+  recorded?: boolean
+  fallbackReason?: FallbackReason | null
+  categoryLabel?: string
+  categoryDescription?: string
+  policyVersion?: string
+  policies?: Array<{ id: string; label: string; guidance: string }>
 }
+
+export type FallbackReason = 'PROVIDER_UNAVAILABLE' | 'PROVIDER_RATE_LIMITED' | 'BUDGET_SPENT' | 'ANSWER_FAILED_CHECKS' | 'ANSWER_UNREADABLE'
+
+/**
+ * A review. decision is left out for an older API, which records only corrections and needs a note with each one.
+ * triageResultId is the field that API reads; originalResultId is the name in the newer contract. Both carry the same id.
+ */
+export type FeedbackPayload = { triageResultId: string; decision?: ReviewDecision; urgency?: Urgency; note?: string }
 
 export type FeedbackResponse = {
   id: string
   ticketId: string
   originalResultId: string
-  correctedCategory: string
-  correctedUrgency: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
-  correctedSlaRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  note: string
+  correctedCategory: string | null
+  correctedUrgency: Urgency | null
+  correctedSlaRisk: 'LOW' | 'MEDIUM' | 'HIGH' | null
+  note: string | null
   submittedBy: string
   createdAt: string
+  decision?: ReviewDecision
 }
 
 export type EvaluationSummary = {
   generatedAt: string
   triageResults: number
   evaluatedResults: number
-  categoryAgreementRate: number
-  urgencyAgreementRate: number
-  agreementRate: number
-  correctionRate: number
-  medianLatencyMs: number
-  p95LatencyMs: number
-  failureRate: number
+  categoryAgreementRate: number | null
+  urgencyAgreementRate: number | null
+  // null when nothing has been measured yet (an API with recorded results); an older API sends 0.
+  agreementRate: number | null
+  correctionRate: number | null
+  medianLatencyMs: number | null
+  p95LatencyMs: number | null
+  failureRate: number | null
   providerUsage: Array<{ provider: string; requests: number; successes: number; failures: number; inputTokens: number; outputTokens: number }>
   recentEvents: EvaluationEvent[]
+  // Reviewer figures, added with recorded results; an older API leaves them out. Empty rates are null.
+  reviewedResults?: number
+  acceptedResults?: number
+  acceptanceRate?: number | null
+  overrideRate?: number | null
+  recordedResults?: number
 }
 
 // latencyMs is null while a job has not finished (the API sends 0 instead before it made the field nullable).
@@ -124,7 +156,7 @@ export type OperationsOverview = {
   recent: Array<{
     jobId: string
     ticketId: string
-    status: TriageProcessing['job']['status']
+    status: TriageJob['status']
     attemptCount: number
     createdAt: string
     updatedAt: string
@@ -147,7 +179,7 @@ export type OperationsOverview = {
 }
 
 export type FailurePage = {
-  content: Array<TriageProcessing['job']>
+  content: Array<TriageJob>
   page: number
   size: number
   totalElements: number
@@ -261,15 +293,15 @@ export function createCaseLensApi(baseUrl = '', fetcher: Fetcher = fetch): CaseL
     createScenario: (scenarioKey, signal) => request<ApiTicket>(`/api/demo/scenarios/${encodeURIComponent(scenarioKey)}`, {
       method: 'POST', body: JSON.stringify({ requestId: crypto.randomUUID() }), signal,
     }, { idempotent: true }),
-    requestTriage: (ticketId, signal) => request<TriageProcessing['job']>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }, { idempotent: true }),
+    requestTriage: (ticketId, signal) => request<TriageJob>(`/api/tickets/${ticketId}/triage`, { method: 'POST', signal }, { idempotent: true }),
     getProcessing: (ticketId, signal) => request<TriageProcessing>(`/api/tickets/${ticketId}/processing`, { signal }),
     submitFeedback: (ticketId, payload, signal) => request<FeedbackResponse>(`/api/tickets/${ticketId}/feedback`, {
-      method: 'POST', body: JSON.stringify({ ...payload, requestId: crypto.randomUUID() }), signal,
+      method: 'POST', body: JSON.stringify({ ...payload, originalResultId: payload.triageResultId, requestId: crypto.randomUUID() }), signal,
     }, { idempotent: true }),
     getEvaluation: (signal) => request<EvaluationSummary>('/api/evaluation', { signal }),
     getOperationsOverview: (signal) => request<OperationsOverview>('/api/operations/overview', { signal }),
     listFailures: (signal) => request<FailurePage>('/api/operations/failures?page=0&size=50', { signal }),
-    retryFailure: (jobId, signal) => request<TriageProcessing['job']>(`/api/operations/failures/${jobId}/retry`, { method: 'POST', signal }, { idempotent: true }),
+    retryFailure: (jobId, signal) => request<TriageJob>(`/api/operations/failures/${jobId}/retry`, { method: 'POST', signal }, { idempotent: true }),
   }
 }
 
@@ -281,11 +313,11 @@ export type CaseLensApi = {
   getRuntimeSummary: () => Promise<RuntimeSummary>
   listTickets: () => Promise<TicketPage>
   createScenario: (scenarioKey: string, signal?: AbortSignal) => Promise<ApiTicket>
-  requestTriage: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing['job']>
+  requestTriage: (ticketId: string, signal?: AbortSignal) => Promise<TriageJob>
   getProcessing: (ticketId: string, signal?: AbortSignal) => Promise<TriageProcessing>
-  submitFeedback: (ticketId: string, payload: { triageResultId: string; category: string; urgency: string; slaRisk: string; note: string }, signal?: AbortSignal) => Promise<FeedbackResponse>
+  submitFeedback: (ticketId: string, payload: FeedbackPayload, signal?: AbortSignal) => Promise<FeedbackResponse>
   getEvaluation: (signal?: AbortSignal) => Promise<EvaluationSummary>
   getOperationsOverview: (signal?: AbortSignal) => Promise<OperationsOverview>
   listFailures: (signal?: AbortSignal) => Promise<FailurePage>
-  retryFailure: (jobId: string, signal?: AbortSignal) => Promise<TriageProcessing['job']>
+  retryFailure: (jobId: string, signal?: AbortSignal) => Promise<TriageJob>
 }

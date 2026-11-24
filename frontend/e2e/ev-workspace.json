@@ -1,0 +1,472 @@
+{
+ "industry": "ev-charging",
+ "tickets": [
+  {
+   "id": "00000000-0000-4000-8000-000000000001",
+   "displayId": "CL-7A1C40",
+   "subject": "Every charger at the demo site appears offline",
+   "message": "All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC. Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.",
+   "channel": "EMAIL",
+   "status": "COMPLETED",
+   "scenarioKey": "charger-offline-site-wide",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": {
+    "id": "c3b2eaf6-a7a5-4bd5-adaa-a0dbf6ea744e",
+    "ticketId": "00000000-0000-4000-8000-000000000001",
+    "category": "CONNECTIVITY",
+    "urgency": "HIGH",
+    "slaRisk": "HIGH",
+    "sentiment": "NEUTRAL",
+    "summary": "All six chargers at SITE-DEMO-TOR-07 are offline since 09:18 UTC, last heartbeat 09:16 UTC, and three drivers are waiting.",
+    "evidence": [
+     {
+      "quote": "Every charger at the demo site appears offline",
+      "meaning": "Indicates all chargers are offline."
+     },
+     {
+      "quote": "All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC",
+      "meaning": "Confirms offline status and timestamp."
+     },
+     {
+      "quote": "Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.",
+      "meaning": "Shows missing heartbeat and drivers waiting."
+     }
+    ],
+    "policyIds": [
+     "OCPP_CONNECTIVITY",
+     "CHARGER_SITE_OUTAGE"
+    ],
+    "explanation": "All chargers at the specified site are reported offline with no recent heartbeat, indicating a possible network or OCPP connectivity failure across the site. This impacts all charging sessions and drivers waiting for service.",
+    "recommendedActions": [
+     "Verify that the site’s network connection is active and that the OCPP gateway is reachable.",
+     "Check the OCPP heartbeats and last‑seen timestamps for each connector; restart any that have not reported recent activity.",
+     "Notify the site operator and schedule a maintenance visit to reset chargers if necessary."
+    ],
+    "suggestedReply": "Thank you for letting us know that all chargers at site SITE-DEMO-TOR-07 are offline. Our technical team is currently investigating the connectivity issue and will update you shortly. In the meantime, we recommend checking the site’s network connection and restarting the chargers if possible. Please let us know if you have any further questions.",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": [
+     "Drivers are currently waiting for a charging session."
+    ],
+    "priorityScore": 60,
+    "appliedRules": [
+     {
+      "code": "URGENCY_HIGH",
+      "points": 40,
+      "explanation": "High urgency baseline"
+     },
+     {
+      "code": "SLA_RISK_HIGH",
+      "points": 20,
+      "explanation": "High risk of breaching the response target"
+     }
+    ],
+    "decisionSource": "AI_VALIDATED",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "createdAt": "2026-11-23T20:42:03.512887Z",
+    "recorded": true,
+    "categoryLabel": "Connectivity",
+    "categoryDescription": "A charger that is offline or has lost its network or OCPP heartbeat.",
+    "policyVersion": "v1",
+    "policies": [
+     {
+      "id": "OCPP_CONNECTIVITY",
+      "label": "OCPP connectivity",
+      "guidance": "Verify heartbeat, last-seen timestamp, and network path."
+     },
+     {
+      "id": "CHARGER_SITE_OUTAGE",
+      "label": "Charger site outage",
+      "guidance": "Identify affected site scope and escalate operational impact."
+     }
+    ],
+    "fallbackReason": null
+   },
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000002",
+   "displayId": "CL-3E9B12",
+   "subject": "Driver sees two charges for one session",
+   "message": "Session SESSION-DEMO-55301 on CHG-CA-5150 completed normally, but the fictional card statement contains payment references PAY-DEMO-1004 and PAY-DEMO-1005 for the same CAD 18.40 amount. The driver is requesting a refund.",
+   "channel": "EMAIL",
+   "status": "COMPLETED",
+   "scenarioKey": "duplicate-charge-refund",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": {
+    "id": "c66ee31c-6e58-456a-8083-7d0d089bb5b7",
+    "ticketId": "00000000-0000-4000-8000-000000000002",
+    "category": "BILLING",
+    "urgency": "MEDIUM",
+    "slaRisk": "MEDIUM",
+    "sentiment": "NEUTRAL",
+    "summary": "Customer reported two identical CAD 18.40 charges for one completed session and requests a refund.",
+    "evidence": [
+     {
+      "quote": "Session SESSION-DEMO-55301 on CHG-CA-5150 completed normally, but the fictional card statement contains payment references [PAYMENT_ID_1] and [PAYMENT_ID_2] for the same CAD 18.40 amount.",
+      "meaning": "Duplicate payment references for a single charging session."
+     }
+    ],
+    "policyIds": [
+     "DUPLICATE_CHARGE_REVIEW"
+    ],
+    "explanation": "The ticket indicates that the driver’s card shows two separate payment references for the same amount after a single session completed. This is a classic duplicate charge scenario that requires investigation and a refund for the extra payment.",
+    "recommendedActions": [
+     "Verify the session record and payment logs to confirm the duplicate transaction.",
+     "Identify which of the two payment references is the duplicate and reverse it.",
+     "Process a refund for the duplicate charge and confirm the adjustment with the driver."
+    ],
+    "suggestedReply": "Hello,\n\nThank you for bringing this to our attention. We’ve identified that your account was charged twice for the same session on CHG-CA-5150. We are processing a refund for the duplicate CAD 18.40 charge and will confirm once it appears on your statement.\n\nIf you have any further questions, please let us know.\n\nBest regards,\nSupport Team",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": [],
+    "priorityScore": 45,
+    "appliedRules": [
+     {
+      "code": "URGENCY_MEDIUM",
+      "points": 25,
+      "explanation": "Medium urgency baseline"
+     },
+     {
+      "code": "SLA_RISK_MEDIUM",
+      "points": 10,
+      "explanation": "Medium risk of breaching the response target"
+     },
+     {
+      "code": "PAYMENT_IMPACT",
+      "points": 10,
+      "explanation": "Payment, duplicate charge, or refund impact detected"
+     }
+    ],
+    "decisionSource": "AI_VALIDATED",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "createdAt": "2026-11-23T20:42:07.863394Z",
+    "recorded": true,
+    "categoryLabel": "Billing",
+    "categoryDescription": "Payments, charges, receipts and other billing questions.",
+    "policyVersion": "v1",
+    "policies": [
+     {
+      "id": "DUPLICATE_CHARGE_REVIEW",
+      "label": "Duplicate charge review",
+      "guidance": "Collect transaction references and escalate for billing review."
+     }
+    ],
+    "fallbackReason": null
+   },
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000003",
+   "displayId": "CL-C0F5D8",
+   "subject": "Receipt requested for a completed session",
+   "message": "Please send a receipt for fictional session SESSION-DEMO-90817 completed yesterday at CHG-CA-8044. The total was CAD 12.75 and there were no charging problems.",
+   "channel": "EMAIL",
+   "status": "COMPLETED",
+   "scenarioKey": "receipt-request-general",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": {
+    "id": "e5962657-802e-435b-ab71-e903c76ffc01",
+    "ticketId": "00000000-0000-4000-8000-000000000003",
+    "category": "BILLING",
+    "urgency": "LOW",
+    "slaRisk": "LOW",
+    "sentiment": "NEUTRAL",
+    "summary": "User requests a receipt for a completed charging session (SESSION-DEMO-90817) at station CHG-CA-8044, total CAD 12.75, reporting no issues.",
+    "evidence": [
+     {
+      "quote": "Receipt requested for a completed session",
+      "meaning": "user is asking for receipt"
+     },
+     {
+      "quote": "Please send a receipt for fictional session SESSION-DEMO-90817 completed yesterday at CHG-CA-8044.",
+      "meaning": "provides session details"
+     },
+     {
+      "quote": "The total was CAD 12.75 and there were no charging problems.",
+      "meaning": "confirms amount and no issues"
+     }
+    ],
+    "policyIds": [],
+    "explanation": "The ticket is a straightforward billing inquiry requesting a receipt for a completed session. No operational or technical issues are reported, so the urgency is low and SLA risk is minimal. No policy violations apply.",
+    "recommendedActions": [
+     "Retrieve the session record SESSION-DEMO-90817 from the billing system",
+     "Generate a PDF receipt including location CHG-CA-8044 and amount CAD 12.75",
+     "Email the receipt to the customer’s registered address"
+    ],
+    "suggestedReply": "Hello,\n\nThank you for reaching out. Please find attached the receipt for your session (ID: SESSION-DEMO-90817) completed yesterday at station CHG-CA-8044. The total charge was CAD 12.75.\n\nIf you have any further questions or need additional assistance, feel free to reply to this email.\n\nBest regards,\nEV Charging Support",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": [],
+    "priorityScore": 10,
+    "appliedRules": [
+     {
+      "code": "URGENCY_LOW",
+      "points": 10,
+      "explanation": "Low urgency baseline"
+     }
+    ],
+    "decisionSource": "AI_VALIDATED",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "createdAt": "2026-11-23T20:42:12.705589Z",
+    "recorded": true,
+    "categoryLabel": "Billing",
+    "categoryDescription": "Payments, charges, receipts and other billing questions.",
+    "policyVersion": "v1",
+    "policies": [],
+    "fallbackReason": null
+   },
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000004",
+   "displayId": "CL-91AE27",
+   "subject": "Payment accepted but charging did not start",
+   "message": "At charger CHG-CA-1042, connector 2 accepted payment reference PAY-DEMO-7319 for session SESSION-DEMO-88421 at 14:06 UTC, but the vehicle never began charging. The screen returned to Available after 90 seconds.",
+   "channel": "WEB",
+   "status": "NEW",
+   "scenarioKey": "payment-captured-session-not-started",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": null,
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000005",
+   "displayId": "CL-5D0C63",
+   "subject": "Connector reports a persistent fault",
+   "message": "Connector 1 on fictional charger CHG-CA-3110 reports Faulted with demo error code EVSE-DEMO-OVER_CURRENT. Connector 2 is still available and no active session is affected.",
+   "channel": "CHAT",
+   "status": "NEW",
+   "scenarioKey": "connector-fault-single-port",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": null,
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000006",
+   "displayId": "CL-B84F19",
+   "subject": "OCPP heartbeat timeout after configuration change",
+   "message": "Synthetic charger CHG-CA-4018 stopped sending OCPP heartbeats after configuration DEMO-CFG-92 was applied. The last heartbeat was 11 minutes ago and the central system now marks it Unavailable.",
+   "channel": "IMPORT",
+   "status": "NEW",
+   "scenarioKey": "ocpp-heartbeat-timeout",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": null,
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000007",
+   "displayId": "CL-2F6EA5",
+   "subject": "Registered RFID card is rejected",
+   "message": "Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19. The token worked yesterday but authorization was rejected at CHG-CA-6009 today with status Invalid, while mobile-app authorization still works.",
+   "channel": "CHAT",
+   "status": "NEW",
+   "scenarioKey": "account-rfid-authorization",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": null,
+   "latestFeedback": null
+  },
+  {
+   "id": "00000000-0000-4000-8000-000000000008",
+   "displayId": "CL-E3172C",
+   "subject": "Charging power remains below expected rate",
+   "message": "Session SESSION-DEMO-76112 on fictional charger CHG-CA-7088 has remained near 7 kW for 28 minutes although the connector is rated for 50 kW. Meter samples are arriving normally and no fault is reported.",
+   "channel": "WEB",
+   "status": "NEW",
+   "scenarioKey": "slow-charging-performance",
+   "createdAt": "2026-11-23T20:40:00Z",
+   "updatedAt": "2026-11-23T20:40:00Z",
+   "latestResult": null,
+   "latestFeedback": null
+  }
+ ],
+ "live": {
+  "00000000-0000-4000-8000-000000000004": {
+   "job": {
+    "id": "095c3b41-56ce-42fe-92ec-1fceb2e19797",
+    "eventId": "02497a6c-0ff5-42c4-a67d-eb4f90061b84",
+    "ticketId": "00000000-0000-4000-8000-000000000004",
+    "status": "COMPLETED",
+    "attemptCount": 1,
+    "startedAt": "2026-11-23T20:42:15.941201Z",
+    "completedAt": "2026-11-23T20:42:18.720556Z",
+    "lastErrorCode": null,
+    "attempts": [
+     {
+      "id": "60768eb7-e560-4ef3-b410-101a2044c150",
+      "jobId": "095c3b41-56ce-42fe-92ec-1fceb2e19797",
+      "attemptNumber": 1,
+      "status": "COMPLETED",
+      "startedAt": "2026-11-23T20:42:15.994141Z",
+      "completedAt": "2026-11-23T20:42:18.754892Z",
+      "errorCode": null
+     }
+    ]
+   },
+   "result": {
+    "id": "3db4840e-edf5-45d2-bea5-08791570222a",
+    "ticketId": "00000000-0000-4000-8000-000000000004",
+    "category": "CHARGING_SESSION",
+    "urgency": "MEDIUM",
+    "slaRisk": "LOW",
+    "sentiment": "NEGATIVE",
+    "summary": "Charger accepted payment but charging did not start; session ended with charger returning to Available after 90 seconds.",
+    "evidence": [
+     {
+      "quote": "Payment accepted but charging did not start",
+      "meaning": "Indicates the payment was accepted but charging session did not start."
+     },
+     {
+      "quote": "connector 2 accepted payment reference [PAYMENT_ID_1]",
+      "meaning": "Shows payment was accepted on connector 2."
+     },
+     {
+      "quote": "but the vehicle never began charging",
+      "meaning": "Explicitly states charging did not commence."
+     },
+     {
+      "quote": "screen returned to Available after 90 seconds",
+      "meaning": "Charger returned to available state after timeout."
+     },
+     {
+      "quote": "at 14:06 UTC",
+      "meaning": "Timestamp of the event."
+     }
+    ],
+    "policyIds": [
+     "PAYMENT_CAPTURE_NO_SESSION"
+    ],
+    "explanation": "The user reports that the charger accepted a payment reference for session SESSION-DEMO-88421 but the vehicle never began charging. The screen returned to Available after 90 seconds, indicating the session did not progress. According to the PAYMENT_CAPTURE_NO_SESSION policy, we should verify the session state before promising a refund. The issue likely requires checking the charger logs and session data to confirm whether the session started and to identify any errors that prevented charging.",
+    "recommendedActions": [
+     "Verify the session status for SESSION-DEMO-88421 to confirm if charging ever started.",
+     "Check charger logs and connector 2 status for any errors during the session.",
+     "If no charging occurred, initiate a refund for the accepted payment reference.",
+     "Notify the user that the issue is being investigated and provide an estimated resolution time."
+    ],
+    "suggestedReply": "Thank you for reaching out. I see that you paid for session SESSION-DEMO-88421 on connector 2 but the vehicle did not start charging and the screen returned to Available after 90 seconds. We’re looking into the charger logs and session status to determine what happened. In the meantime, if no charging occurred, we will process a refund for the payment reference [PAYMENT_ID_1]. We’ll keep you updated on the status. Thank you for your patience.",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": [],
+    "priorityScore": 35,
+    "appliedRules": [
+     {
+      "code": "URGENCY_MEDIUM",
+      "points": 25,
+      "explanation": "Medium urgency baseline"
+     },
+     {
+      "code": "SERVICE_BLOCKED",
+      "points": 10,
+      "explanation": "Charging or account authorization is blocked"
+     }
+    ],
+    "decisionSource": "AI_VALIDATED",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "createdAt": "2026-11-23T20:42:18.703050Z",
+    "recorded": false,
+    "categoryLabel": "Charging session",
+    "categoryDescription": "A charging session that did not start, stopped early or charged slowly.",
+    "policyVersion": "v1",
+    "policies": [
+     {
+      "id": "PAYMENT_CAPTURE_NO_SESSION",
+      "label": "Payment capture no session",
+      "guidance": "Verify session and payment state; do not promise a refund before confirmation."
+     }
+    ],
+    "fallbackReason": null
+   }
+  },
+  "00000000-0000-4000-8000-000000000005": {
+   "job": {
+    "id": "f29dcccc-48da-4af3-9b69-826fedd7b853",
+    "eventId": "2fe7d6db-d9dd-402e-9b6c-3a33b4206953",
+    "ticketId": "00000000-0000-4000-8000-000000000005",
+    "status": "COMPLETED",
+    "attemptCount": 1,
+    "startedAt": "2026-11-23T20:42:20.972435Z",
+    "completedAt": "2026-11-23T20:42:21.484576Z",
+    "lastErrorCode": null,
+    "attempts": [
+     {
+      "id": "aab9f09b-1e98-4ce5-9be7-e406ba81be67",
+      "jobId": "f29dcccc-48da-4af3-9b69-826fedd7b853",
+      "attemptNumber": 1,
+      "status": "COMPLETED",
+      "startedAt": "2026-11-23T20:42:21.023350Z",
+      "completedAt": "2026-11-23T20:42:21.518452Z",
+      "errorCode": null
+     }
+    ]
+   },
+   "result": {
+    "id": "8e3a478d-7658-423a-a31e-3664d76b789b",
+    "ticketId": "00000000-0000-4000-8000-000000000005",
+    "category": "CHARGER_HARDWARE",
+    "urgency": "MEDIUM",
+    "slaRisk": "MEDIUM",
+    "sentiment": "NEGATIVE",
+    "summary": "Synthetic charger hardware case requires medium review.",
+    "evidence": [
+     {
+      "quote": "Connector reports a persistent fault",
+      "meaning": "The subject identifies the reported support impact."
+     },
+     {
+      "quote": "Connector 1 on fictional charger CHG-CA-3110 reports Faulted with demo error code EVSE-DEMO-OVER_CURRENT.",
+      "meaning": "The message provides direct operational evidence."
+     }
+    ],
+    "policyIds": [
+     "CONNECTOR_FAULT"
+    ],
+    "explanation": "The ticket evidence indicates charger hardware impact with medium urgency and medium SLA risk.",
+    "recommendedActions": [
+     "Isolate the connector fault",
+     "Check alternate connector availability"
+    ],
+    "suggestedReply": "Thanks for the detail. We are reviewing the affected service state and will share the next update after verification.",
+    "reliabilitySignal": "LOW",
+    "warnings": [
+     "AI provider result unavailable or invalid"
+    ],
+    "priorityScore": 35,
+    "appliedRules": [
+     {
+      "code": "URGENCY_MEDIUM",
+      "points": 25,
+      "explanation": "Medium urgency baseline"
+     },
+     {
+      "code": "SLA_RISK_MEDIUM",
+      "points": 10,
+      "explanation": "Medium risk of breaching the response target"
+     }
+    ],
+    "decisionSource": "RULES_FALLBACK",
+    "modelVersion": "rules-v1",
+    "promptVersion": "triage-v1",
+    "createdAt": "2026-11-23T20:42:21.467323Z",
+    "recorded": false,
+    "categoryLabel": "Charger hardware",
+    "categoryDescription": "A fault in a charger or connector, such as a broken plug or an error light.",
+    "policyVersion": "v1",
+    "policies": [
+     {
+      "id": "CONNECTOR_FAULT",
+      "label": "Connector fault",
+      "guidance": "Isolate connector-specific faults and check alternate connector availability."
+     }
+    ],
+    "fallbackReason": "ANSWER_FAILED_CHECKS"
+   }
+  }
+ }
+}

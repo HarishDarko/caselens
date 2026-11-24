@@ -1,0 +1,168 @@
+import { describe, expect, it } from 'vitest'
+import { locateQuote, placeEvidence, quoteSummary, segments } from './evidence'
+import examples from './landing-examples.json'
+
+const marked = (text: string, placement: ReturnType<typeof placeEvidence>['message']) =>
+  segments(text, placement).filter((segment) => segment.refs).map((segment) => ({ text: segment.text, refs: segment.refs }))
+
+describe('evidence highlighter', () => {
+  it('highlights a quote in the message where the visitor reads it', () => {
+    const message = 'Since this morning none of our 40 users can sign in. We are blocked from all work.'
+    const placement = placeEvidence('Whole team locked out', message, ['none of our 40 users can sign in', 'We are blocked from all work'])
+
+    expect(marked(message, placement.message)).toEqual([
+      { text: 'none of our 40 users can sign in', refs: [1] },
+      { text: 'We are blocked from all work', refs: [2] },
+    ])
+    expect(placement.subject).toEqual([])
+    expect([...placement.placed]).toEqual([1, 2])
+  })
+
+  it('highlights a quote taken from the subject, as the rules fallback always does', () => {
+    // A real capture: the model quoted the subject as evidence 1 (ev-charging, charger-offline-site-wide, 2026-11-23).
+    const subject = 'Every charger at the demo site appears offline'
+    const message = 'All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC.'
+    const placement = placeEvidence(subject, message, [subject, 'show Offline since 09:18 UTC'])
+
+    expect(marked(subject, placement.subject)).toEqual([{ text: subject, refs: [1] }])
+    expect(marked(message, placement.message)).toEqual([{ text: 'show Offline since 09:18 UTC', refs: [2] }])
+  })
+
+  it('prefers the message when the same words are in both', () => {
+    const placement = placeEvidence('Refund missing', 'My refund missing since May.', ['efund missing'])
+    expect(placement.message).toHaveLength(1)
+    expect(placement.subject).toEqual([])
+  })
+
+  it('joins overlapping quotes into one highlight that carries both numbers', () => {
+    const message = 'Every call to your REST API has returned 503 for the past 20 minutes.'
+    const placement = placeEvidence('', message, ['Every call to your REST API has returned 503', 'returned 503 for the past 20 minutes'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'Every call to your REST API has returned 503 for the past 20 minutes', refs: [1, 2] }])
+    expect([...placement.placed]).toEqual([1, 2])
+  })
+
+  it('keeps a quote that sits inside another one, and the same quote twice, without dropping either number', () => {
+    const message = 'All webhook deliveries to our endpoint have failed with a 401 response since yesterday.'
+    const placement = placeEvidence('', message, ['failed with a 401 response', 'All webhook deliveries to our endpoint have failed with a 401 response', 'failed with a 401 response'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'All webhook deliveries to our endpoint have failed with a 401 response', refs: [1, 2, 3] }])
+  })
+
+  it('matches a quote with a redacted payment reference back to the original identifier', () => {
+    // Real captures: the model saw [PAYMENT_ID_1] where the ticket says PAY-DEMO-7319.
+    const message = 'At charger CHG-CA-1042, connector 2 accepted payment reference PAY-DEMO-7319 for session SESSION-DEMO-88421 at 14:06 UTC.'
+    const placement = placeEvidence('Payment accepted but charging did not start', message, ['connector 2 accepted payment reference [PAYMENT_ID_1]'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'connector 2 accepted payment reference PAY-DEMO-7319', refs: [1] }])
+    expect([...placement.redacted]).toEqual([1])
+  })
+
+  it('matches two redacted identifiers in one quote', () => {
+    const message = 'the fictional card statement contains payment references PAY-DEMO-1004 and PAY-DEMO-1005 for the same CAD 18.40 amount. The driver is requesting a refund.'
+    const quote = 'the fictional card statement contains payment references [PAYMENT_ID_1] and [PAYMENT_ID_2] for the same CAD 18.40 amount.'
+
+    expect(marked(message, placeEvidence('', message, [quote]).message)[0]?.text).toBe('the fictional card statement contains payment references PAY-DEMO-1004 and PAY-DEMO-1005 for the same CAD 18.40 amount.')
+  })
+
+  it('allows for the separator the redactor drops, and for emails, cards and phone numbers', () => {
+    expect(locateQuote('Transaction id: TX-55AA failed twice', 'Transaction id [TRANSACTION_ID_1] failed')).toEqual({ start: 0, end: 30 })
+    const text = 'Write to ana@example.com or call (416) 555-0100 about card 4111 1111 1111 1111 today.'
+    // The card pattern takes the space after the last digit, so the redacted text reads "[CARD_1]today", as on the server.
+    const at = locateQuote(text, 'Write to [EMAIL_1] or call [PHONE_1] about card [CARD_1]today')
+    expect(at && text.slice(at.start, at.end)).toBe('Write to ana@example.com or call (416) 555-0100 about card 4111 1111 1111 1111 today')
+  })
+
+  it('maps a bare placeholder to the identifier the redactor replaced, not to the first word that looks like one', () => {
+    const message = 'Contact support about payment reference PAY-DEMO-7319 today.'
+    const placement = placeEvidence('Refund', message, ['[PAYMENT_ID_1]'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'PAY-DEMO-7319', refs: [1] }])
+  })
+
+  it('maps the Nth placeholder of a type to the Nth distinct value, counting the subject first', () => {
+    const subject = 'Copy to ana@example.com'
+    const message = 'Write to ana@example.com and bob@example.org, then call 416 555 0100.'
+    const placement = placeEvidence(subject, message, ['[EMAIL_2]', '[EMAIL_1] and [EMAIL_2]', '[PHONE_1]'])
+
+    expect(marked(message, placement.message)).toEqual([
+      { text: 'ana@example.com and bob@example.org', refs: [1, 2] },
+      { text: '416 555 0100', refs: [3] },
+    ])
+  })
+
+  it('counts a quote found through redaction apart from the word-for-word ones', () => {
+    const message = 'At charger CHG-CA-1042, connector 2 accepted payment reference PAY-DEMO-7319. The vehicle never began charging.'
+    const quotes = ['connector 2 accepted payment reference [PAYMENT_ID_1]', 'The vehicle never began charging', 'At charger CHG-CA-1042']
+    const placement = placeEvidence('Payment accepted', message, quotes)
+
+    expect(quoteSummary(3, placement)).toBe('2 of 3 quotes found word for word, 1 matched after redaction')
+    expect(quoteSummary(1, placeEvidence('', message, ['At charger CHG-CA-1042']))).toBe('1 of 1 quotes found word for word in the ticket')
+  })
+
+  it('never maps an identifier placeholder to a plain word', () => {
+    // Real seeded ticket: "[RFID_1]" is RFID-DEMO-A19, not "Demo".
+    const seeded = 'Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19. The token worked yesterday.'
+    expect(marked(seeded, placeEvidence('Registered RFID card is rejected', seeded, ['[RFID_1]']).message)).toEqual([{ text: 'RFID-DEMO-A19', refs: [1] }])
+    const twice = 'payment reference failed; payment reference PAY-1001 is pending'
+    expect(marked(twice, placeEvidence('', twice, ['payment reference [PAYMENT_ID_1]']).message)).toEqual([{ text: 'payment reference PAY-1001', refs: [1] }])
+    // Nothing was redacted here, so a placeholder quote matches nothing.
+    expect(locateQuote('RFID: declined at every charger', 'RFID [RFID_1] at every charger')).toBeNull()
+  })
+
+  it('follows the separators the redactor drops before descriptor words', () => {
+    const text = 'Our payment id: ref PAY-99821 failed and RFID, card 04A1B2C3D4 was declined.'
+    const placement = placeEvidence('', text, ['payment id ref [PAYMENT_ID_1] failed', 'RFID card [RFID_1] was declined'])
+    expect(marked(text, placement.message)).toEqual([
+      { text: 'payment id: ref PAY-99821 failed', refs: [1] },
+      { text: 'RFID, card 04A1B2C3D4 was declined', refs: [2] },
+    ])
+  })
+
+  it('starts a highlight at the quoted descriptor word, never at the label or separator before it', () => {
+    const code = 'Transaction ID reference code TXN-5512 is missing'
+    expect(marked(code, placeEvidence('', code, ['code [TRANSACTION_ID_1] is missing']).message)).toEqual([{ text: 'code TXN-5512 is missing', refs: [1] }])
+    const ref = 'Our payment id: ref PAY-99821 failed'
+    expect(marked(ref, placeEvidence('', ref, ['ref [PAYMENT_ID_1] failed']).message)).toEqual([{ text: 'ref PAY-99821 failed', refs: [1] }])
+    const token = 'Demo account ACCT-DEMO-882 uses RFID token RFID-DEMO-A19.'
+    expect(marked(token, placeEvidence('', token, ['token [RFID_1]']).message)).toEqual([{ text: 'token RFID-DEMO-A19', refs: [1] }])
+  })
+
+  it('counts a quote found only in the redacted text as matched after redaction, even without a placeholder', () => {
+    const text = 'Our payment id: ref PAY-99821 failed'
+    const placement = placeEvidence('', text, ['payment id ref'])
+    expect(marked(text, placement.message)).toEqual([{ text: 'payment id: ref', refs: [1] }])
+    expect(quoteSummary(1, placement)).toBe('0 of 1 quotes found word for word, 1 matched after redaction')
+  })
+
+  it('reports a quote it cannot find instead of dropping it silently', () => {
+    const placement = placeEvidence('Subject', 'The charger is fine today.', ['The charger is fine', 'words that are not in the ticket'])
+
+    expect([...placement.placed]).toEqual([1])
+    expect(placement.placed.has(2)).toBe(false)
+    expect(marked('The charger is fine today.', placement.message)).toEqual([{ text: 'The charger is fine', refs: [1] }])
+  })
+
+  it('does not match a redacted quote to unrelated text', () => {
+    expect(locateQuote('payment reference was declined', 'payment reference [PAYMENT_ID_1] for session')).toBeNull()
+  })
+
+  it('treats Windows line endings like the server does, and tolerates spacing differences', () => {
+    const message = 'First line.\r\nSecond  line with the quote.'
+    const placement = placeEvidence('', message, ['First line.\nSecond line'])
+
+    expect(marked(message, placement.message)).toEqual([{ text: 'First line.\nSecond  line', refs: [1] }])
+  })
+
+  it('leaves a text without quotes as one plain run, and never highlights an empty quote', () => {
+    expect(segments('Nothing to mark.', [])).toEqual([{ text: 'Nothing to mark.' }])
+    expect(placeEvidence('Subject', 'Message', ['', '   ']).placed.size).toBe(0)
+  })
+
+  it('places every quote of every landing example (real captured results)', () => {
+    for (const example of examples) {
+      const quotes = example.result.evidence.map((item) => item.quote)
+      expect(placeEvidence(example.subject, example.message, quotes).placed.size, example.scenarioKey).toBe(quotes.length)
+    }
+  })
+})

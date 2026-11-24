@@ -37,7 +37,7 @@ They are measured and reviewed like any result, but they are not live runs:
 - A figure with nothing to measure is `null`, never 0: no latency before a live
   run, no rate before a case or a review.
 
-The Operations view uses a separate workspace-scoped overview endpoint:
+The Quality and operations screen reads this summary together with a workspace-scoped operations overview and the failure list, once per refresh:
 
 - queue counts are derived from persisted triage jobs;
 - fallback results are counted from `RULES_FALLBACK` results;

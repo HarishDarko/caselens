@@ -1,0 +1,106 @@
+[
+  {
+    "industry": "ev-charging",
+    "scenarioKey": "charger-offline-site-wide",
+    "capturedAt": "2026-11-23",
+    "channel": "EMAIL",
+    "subject": "Every charger at the demo site appears offline",
+    "message": "All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC. Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.",
+    "result": {
+      "category": "CONNECTIVITY",
+      "categoryLabel": "Connectivity",
+      "urgency": "HIGH",
+      "priorityScore": 60,
+      "reliabilitySignal": "MEDIUM",
+      "modelVersion": "openai/gpt-oss-20b",
+      "evidence": [
+        {
+          "quote": "Every charger at the demo site appears offline",
+          "meaning": "Indicates all chargers are offline."
+        },
+        {
+          "quote": "All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC",
+          "meaning": "Confirms offline status and timestamp."
+        },
+        {
+          "quote": "Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.",
+          "meaning": "Shows missing heartbeat and drivers waiting."
+        }
+      ],
+      "policies": [
+        {
+          "id": "OCPP_CONNECTIVITY",
+          "label": "OCPP connectivity",
+          "guidance": "Verify heartbeat, last-seen timestamp, and network path."
+        },
+        {
+          "id": "CHARGER_SITE_OUTAGE",
+          "label": "Charger site outage",
+          "guidance": "Identify affected site scope and escalate operational impact."
+        }
+      ]
+    }
+  },
+  {
+    "industry": "e-commerce",
+    "scenarioKey": "shop-two-payments",
+    "capturedAt": "2026-11-23",
+    "channel": "WEB",
+    "subject": "Two payments taken for one order",
+    "message": "The checkout page froze, I pressed pay again, and now my bank app shows two payments for the same order 59902.",
+    "result": {
+      "category": "PAYMENT",
+      "categoryLabel": "Payment",
+      "urgency": "HIGH",
+      "priorityScore": 70,
+      "reliabilitySignal": "HIGH",
+      "modelVersion": "openai/gpt-oss-20b",
+      "evidence": [
+        {
+          "quote": "Two payments taken for one order",
+          "meaning": "duplicate payment due to checkout freeze"
+        },
+        {
+          "quote": "The checkout page froze, I pressed pay again, and now my bank app shows two payments for the same order 59902.",
+          "meaning": "user experienced freeze and double payment"
+        }
+      ],
+      "policies": [
+        {
+          "id": "DOUBLE_CHARGE",
+          "label": "Double charge",
+          "guidance": "Check the payment processor first: refund a second capture at once; if it is only a pending authorization, explain that it drops off within 5 days."
+        }
+      ]
+    }
+  },
+  {
+    "industry": "saas-support",
+    "scenarioKey": "saas-export-and-delete",
+    "capturedAt": "2026-11-23",
+    "channel": "EMAIL",
+    "subject": "Please export and then delete our data",
+    "message": "We are closing our account at the end of the month. Please export all project data for us, and then delete our workspace and the personal data of our users.",
+    "result": {
+      "category": "DATA_REQUEST",
+      "categoryLabel": "Data request",
+      "urgency": "MEDIUM",
+      "priorityScore": 25,
+      "reliabilitySignal": "MEDIUM",
+      "modelVersion": "openai/gpt-oss-20b",
+      "evidence": [
+        {
+          "quote": "Please export all project data for us, and then delete our workspace and the personal data of our users.",
+          "meaning": "Customer requests export of all project data followed by workspace and personal data deletion."
+        }
+      ],
+      "policies": [
+        {
+          "id": "DATA_DELETION",
+          "label": "Data deletion",
+          "guidance": "Confirm the requester owns the account, deliver any requested export first, check for active subscriptions or legal holds, then schedule deletion for the requested date."
+        }
+      ]
+    }
+  }
+]

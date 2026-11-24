@@ -117,7 +117,7 @@ describe('CaseLens API client', () => {
   it.each([
     ['resetDemo', (api: ReturnType<typeof createCaseLensApi>) => api.resetDemo()],
     ['createScenario', (api: ReturnType<typeof createCaseLensApi>) => api.createScenario('provider-retry-demo')],
-    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' })],
+    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', decision: 'CORRECTED' as const, urgency: 'HIGH' as const, note: 'n' })],
     ['retryFailure', (api: ReturnType<typeof createCaseLensApi>) => api.retryFailure('job-1')],
   ])('%s is sent once more after a TypeError or a 503', async (_name, call) => {
     vi.useFakeTimers()
@@ -166,7 +166,7 @@ describe('CaseLens API client', () => {
   it('gives each new scenario and feedback request its own requestId', async () => {
     const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({}), { status: 200 }))
     const api = createCaseLensApi('', fetcher)
-    const feedback = { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' }
+    const feedback = { triageResultId: 'result-1', decision: 'CORRECTED' as const, urgency: 'HIGH' as const, note: 'n' }
 
     await api.createScenario('provider-retry-demo')
     await api.createScenario('provider-retry-demo')
@@ -177,6 +177,18 @@ describe('CaseLens API client', () => {
     expect(ids.every((id) => /^[0-9a-f-]{36}$/.test(id))).toBe(true)
     expect(new Set(ids).size).toBe(4)
     expect(JSON.parse(String(fetcher.mock.calls[2]?.[1]?.body))).toMatchObject(feedback)
+  })
+
+  it('sends a review under both result id names, so an API from before Accept and the newer one both read it', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response(JSON.stringify({}), { status: 201 }))
+    const api = createCaseLensApi('', fetcher)
+
+    await api.submitFeedback('ticket-1', { triageResultId: 'result-1', decision: 'ACCEPTED' })
+
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(body).toMatchObject({ triageResultId: 'result-1', originalResultId: 'result-1', decision: 'ACCEPTED' })
+    expect(body).not.toHaveProperty('urgency')
+    expect(body).not.toHaveProperty('note')
   })
 
   // CL-05: the API returns the ticket's existing job when the triage POST arrives twice, so a throttled triage
@@ -213,7 +225,7 @@ describe('CaseLens API client', () => {
     ['getEvaluation', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.getEvaluation(signal)],
     ['getOperationsOverview', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.getOperationsOverview(signal)],
     ['listFailures', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.listFailures(signal)],
-    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', category: 'Billing', urgency: 'HIGH', slaRisk: 'LOW', note: 'n' }, signal)],
+    ['submitFeedback', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.submitFeedback('ticket-1', { triageResultId: 'result-1', decision: 'CORRECTED' as const, urgency: 'HIGH' as const, note: 'n' }, signal)],
     ['retryFailure', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.retryFailure('job-1', signal)],
     ['createScenario', (api: ReturnType<typeof createCaseLensApi>, signal: AbortSignal) => api.createScenario('provider-retry-demo', signal)],
   ])('%s passes its signal to fetch and does not send the retry once it aborts', async (_name, call) => {
