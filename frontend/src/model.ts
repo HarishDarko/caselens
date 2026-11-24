@@ -44,6 +44,7 @@ export const TRIAGE_STAGE_TEXT = {
 } as const
 export type TriageStage = keyof typeof TRIAGE_STAGE_TEXT
 export const WAKING_TEXT = 'Waking the triage worker. The first live run after a quiet spell can take up to a minute.'
+export const NOT_TRIAGED_TEXT = 'This ticket has not been triaged yet.'
 export const TRIAGE_FAILED_TEXT = 'This ticket could not be triaged. Open Quality and operations to retry it.'
 export const RETRY_DEMO_STOPPED_TEXT = 'The retry demo stopped this triage on purpose. Open Quality and operations to retry it.'
 export const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the ticket again in a minute to see the result.'

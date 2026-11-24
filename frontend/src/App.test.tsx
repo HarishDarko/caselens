@@ -1729,3 +1729,138 @@ test('drops an open review draft when a newer result replaces the one it was mad
   expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
   expect(triagePosts(fetchMock, 'ticket-a104')).toBe(1)
 })
+
+// requestedRef means "a request is pending": it is set when the POST is sent and cleared when the request settles.
+const triageRequests = (fetchMock: ReturnType<typeof vi.fn>, ticketId: string) => ({
+  posts: triagePosts(fetchMock, ticketId),
+  reads: calls(fetchMock, `/${ticketId}/processing`),
+})
+
+test('a POST that fails before a job exists shows the failure with Try again, and reopening sends no request at all', async () => {
+  const inner = mockSeededBackend([apiTicket, recordedReceipt], { 'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH') })
+  let failing = true
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (failing && String(input).endsWith('/ticket-a102/triage') && init?.method === 'POST') return response({ detail: 'boom' }, 500)
+    return inner(input, init)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('The CaseLens service had a problem.'))
+  expect(detail().getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  expect(triageRequests(fetchMock, 'ticket-a102')).toEqual({ posts: 1, reads: 0 })
+
+  fireEvent.click(row('Receipt requested'))
+  fireEvent.click(row(PAYMENT))
+  expect(detail().getByRole('alert')).toHaveTextContent('The CaseLens service had a problem.')
+  expect(detail().getByRole('alert')).not.toHaveTextContent('no longer in this demo workspace')
+  expect(detail().getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  expect(triageRequests(fetchMock, 'ticket-a102')).toEqual({ posts: 1, reads: 0 })
+
+  failing = false
+  fireEvent.click(detail().getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(2)
+})
+
+test('a status read that returns 404 for a ticket with no job says it has not been triaged, with Try again', async () => {
+  const fetchMock = mockSeededBackend([apiTicket], { 'ticket-a102': () => response({ detail: 'Not found' }, 404) })
+  render(<App />)
+  await openInbox()
+
+  fireEvent.click(row(PAYMENT))
+
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket has not been triaged yet.'))
+  expect(detail().getByRole('alert')).not.toHaveTextContent('no longer in this demo workspace')
+  expect(detail().getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+})
+
+test('reopening a settled ticket sends no request at all, for a first open and for a re-run', async () => {
+  const fetchMock = mockSeededBackend([apiTicket, recordedOffline], { 'ticket-a102': () => completedProcessing('ticket-a102', 82, 'HIGH'), 'ticket-a104': () => liveDone() })
+  render(<App />)
+  await openInbox()
+
+  // First open of an untriaged ticket, then settled.
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
+  // A recorded ticket re-run, then settled.
+  fireEvent.click(row('Every charger'))
+  fireEvent.click(detail().getAllByRole('button', { name: 'Re-run live' })[0])
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+
+  const before = fetchMock.mock.calls.length
+  fireEvent.click(row(PAYMENT))
+  fireEvent.click(row('Every charger'))
+  fireEvent.click(row(PAYMENT))
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)) })
+  expect(fetchMock.mock.calls.length).toBe(before)
+})
+
+test('a quiet status read does not block Accept, and a failed quiet read keeps the result with no error banner', async () => {
+  let mode: 'running' | 'gate' | 'error' = 'running'
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const fetchMock = mockSeededBackend([recordedOffline, recordedReceipt], {
+    'ticket-a104': () => { if (mode === 'error') throw new TypeError('Failed to fetch'); return pendingJob('PROCESSING', null, 'ticket-a104') },
+  })
+  const inner = fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (mode === 'gate' && String(input).endsWith('/ticket-a104/processing')) { await gate; return response({ job: null, result: recordedOffline.latestResult }) }
+    return inner(input, init)
+  }))
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const reopen = () => { fireEvent.click(row('Receipt requested')); fireEvent.click(row('Every charger')) }
+
+  // A re-run whose wait ran out leaves the request pending.
+  fireEvent.click(detail().getAllByRole('button', { name: 'Re-run live' })[0])
+  await act(async () => { await vi.advanceTimersByTimeAsync(185_000) })
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running.'))
+
+  // A quiet read is in flight: the review buttons are enabled and a click goes through.
+  mode = 'gate'
+  reopen()
+  expect(detail().getByRole('button', { name: 'Accept' })).toBeEnabled()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
+  fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/ticket-a104/feedback'))).toBe(true))
+  release()
+
+  // A failed read on a ticket that shows a result keeps it and shows no triage banner.
+  mode = 'error'
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+  reopen()
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+  expect(detail().getByText('Recorded AI result')).toBeInTheDocument()
+  expect(detail().queryByText('Could not reach the CaseLens service.')).not.toBeInTheDocument()
+})
+
+test('a deferred busy state announces only while its ticket is still selected', async () => {
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let mode: 'running' | 'gate' = 'running'
+  const inner = mockSeededBackend([recordedOffline, recordedReceipt], { 'ticket-a104': () => pendingJob('PROCESSING', null, 'ticket-a104') })
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (mode === 'gate' && String(input).endsWith('/ticket-a104/processing')) { await gate; return pendingJob('PROCESSING', null, 'ticket-a104') }
+    return inner(input, init)
+  }))
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  fireEvent.click(detail().getAllByRole('button', { name: 'Re-run live' })[0])
+  await act(async () => { await vi.advanceTimersByTimeAsync(185_000) })
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running.'))
+
+  mode = 'gate'
+  fireEvent.click(row('Receipt requested'))
+  fireEvent.click(row('Every charger'))
+  fireEvent.click(row('Receipt requested'))
+  release()
+  await act(async () => { await vi.advanceTimersByTimeAsync(100) })
+
+  expect(screen.getByRole('status')).not.toHaveTextContent('Checking for the result.')
+})

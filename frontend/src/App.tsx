@@ -5,7 +5,7 @@ import { HowItsBuilt, PhoneMenu, type NavView } from './Dialogs'
 import { Landing } from './Landing'
 import {
   applyReview, CONFLICT_NEWEST_SHOWN_TEXT, CONFLICT_REOPEN_TEXT, CORRECTION_CONFLICT_TEXT, isPhone, mapApiTicket, pause, plainError, PlainError, RETRY_DEMO_SCENARIO, RETRY_DEMO_STOPPED_TEXT,
-  reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
+  reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, NOT_TRIAGED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
   TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
 import { LiveStatus, QualityOps, type LiveState } from './QualityOps'
@@ -85,9 +85,13 @@ function App() {
   const busyTicketsRef = useRef(new Set<string>())
   // One rule keeps the shared AI quota safe: POST /triage happens only on an explicit click (Run live AI, Re-run live,
   // Try again) or the first time a ticket with no result and no request is opened. This records "a triage was requested
-  // for this ticket in this session", set when the POST is sent (or a retry or a refused review shows a job may exist)
-  // and cleared only when the workspace resets. Any later open only reads the status (GET /processing).
+  // for this ticket and it has not settled yet": set when the POST is sent (or a retry or a refused review shows a job
+  // may exist), cleared when the POST fails before a job exists, when a result arrives, or when the job ends in a
+  // failure. While it is set, an open only reads the status (GET /processing); once settled, an open sends nothing.
   const requestedRef = useRef(new Set<string>())
+  // A read of a ticket that already shows a result stays quiet and does not block the review buttons. This holds the one
+  // quiet read per ticket that is in flight; an explicit click supersedes it.
+  const quietReadsRef = useRef(new Map<string, object>())
   // The ticket an Operations retry touched while it stayed selected: going back to the Inbox reads it once.
   const retriedSelectedRef = useRef<string | null>(null)
   // Bumped after a refused review so its open draft is dropped.
@@ -234,6 +238,7 @@ function App() {
     sessionAbortRef.current = new AbortController()
     busyTicketsRef.current = new Set()
     requestedRef.current = new Set()
+    quietReadsRef.current = new Map()
     retriedSelectedRef.current = null
     savingTicketsRef.current = new Set()
     return sessionAbortRef.current.signal
@@ -252,11 +257,11 @@ function App() {
     if (cause instanceof ApiError && cause.status === 401) { setSessionEnded(true); return }
     setError(plainError(cause, fallback, conflict))
   }
-  function showTicketError(ticketId: string, cause: unknown, fallback: string, conflict?: string) {
+  function showTicketError(ticketId: string, cause: unknown, fallback: string, conflict?: string, forceHold = false) {
     if (cause instanceof ApiError && cause.status === 401) { setSessionEnded(true); return }
     const text = plainError(cause, fallback, conflict)
     const plain = cause instanceof PlainError ? cause.message : null
-    const error: TicketError = { text, hold: plain === TRIAGE_FAILED_TEXT || plain === RETRY_DEMO_STOPPED_TEXT }
+    const error: TicketError = { text, hold: forceHold || plain === TRIAGE_FAILED_TEXT || plain === RETRY_DEMO_STOPPED_TEXT || plain === NOT_TRIAGED_TEXT }
     setTicketErrors((current) => ({ ...current, [ticketId]: error }))
   }
   function clearTicketError(ticketId: string) {
@@ -308,28 +313,38 @@ function App() {
     const previousResultId = ticket.result?.id ?? null
     const signal = sessionAbortRef.current.signal
     const busyTickets = busyTicketsRef.current
+    const quietReads = quietReadsRef.current
     const isSelected = () => selectedRef.current === ticketId
-    // Reading a ticket that already shows a result stays quiet (its result stays on screen) unless a job is still running.
+    // Reading a ticket that already shows a result stays quiet (its result stays on screen, its buttons stay usable)
+    // unless a job is still running. An explicit click supersedes a quiet read still in flight.
     const quiet = !post && previousResultId !== null
+    const token = {}
+    if (quiet) { if (quietReads.has(ticketId)) return; quietReads.set(ticketId, token) } else quietReads.delete(ticketId)
+    const superseded = () => quiet && quietReads.get(ticketId) !== token
     const firstText = post ? TRIAGE_STAGE_TEXT.SENDING : TRIAGE_STAGE_TEXT.CHECKING
     let visible = false
+    let ownsBusy = !quiet
     const showBusy = () => {
-      if (visible) return
+      if (visible || superseded()) return
       visible = true
-      setBusyTicketIds(new Set(busyTickets)); setStage(ticketId, post ? 'SENDING' : 'CHECKING'); announce(firstText)
+      if (!ownsBusy) { ownsBusy = true; busyTickets.add(ticketId) }
+      setBusyTicketIds(new Set(busyTickets)); setStage(ticketId, post ? 'SENDING' : 'CHECKING')
+      if (isSelected()) announce(firstText)
     }
-    busyTickets.add(ticketId); clearTicketError(ticketId)
-    if (!quiet) showBusy()
+    if (!quiet) { busyTickets.add(ticketId); clearTicketError(ticketId); showBusy() }
     let lastAnnounced: string = firstText
     const say = (text: string) => { if (text !== lastAnnounced && isSelected()) { lastAnnounced = text; announce(text) } }
+    let posting = false
     try {
-      if (post) { requestedRef.current.add(ticketId); await api.requestTriage(ticketId, signal) }
+      if (post) { requestedRef.current.add(ticketId); posting = true; await api.requestTriage(ticketId, signal); posting = false }
       const startedAt = Date.now()
       while (!signal.aborted && Date.now() - startedAt < TRIAGE_WAIT_MS) {
+        if (superseded()) return
         const processing = await api.getProcessing(ticketId, signal)
-        if (signal.aborted) return
+        if (signal.aborted || superseded()) return
         const result = processing.result
         if (result && result.id !== previousResultId) {
+          requestedRef.current.delete(ticketId)
           setTickets((current) => current.map((item) => item.backendId === ticketId ? { ...item, result: result as TriageResult, job: processing.job, review: null, reviewsLogged: 0 } : item))
           announce(isSelected() ? 'Triage done. Evidence and priority are ready.' : `Triage done: ${ticket.subject}.`)
           return
@@ -337,9 +352,9 @@ function App() {
         const job = processing.job
         const status = job?.status ?? 'QUEUED'
         // Reading a ticket that already has a result: nothing newer is queued, so the shown result is the newest one.
-        if (!post && previousResultId && (!job || status === 'COMPLETED')) return
-        if (status === 'TERMINAL_FAILURE') throw new PlainError(TRIAGE_FAILED_TEXT)
-        if (status === 'RETRYABLE_FAILURE' && job?.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT') throw new PlainError(RETRY_DEMO_STOPPED_TEXT)
+        if (!post && previousResultId && (!job || status === 'COMPLETED')) { requestedRef.current.delete(ticketId); return }
+        if (status === 'TERMINAL_FAILURE') { requestedRef.current.delete(ticketId); throw new PlainError(TRIAGE_FAILED_TEXT) }
+        if (status === 'RETRYABLE_FAILURE' && job?.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT') { requestedRef.current.delete(ticketId); throw new PlainError(RETRY_DEMO_STOPPED_TEXT) }
         showBusy()
         // A real provider failure is retried by the queue on its own, so keep waiting and say so.
         const stage: TriageStage = status === 'COMPLETED' ? 'PROCESSING' : status
@@ -351,17 +366,33 @@ function App() {
       }
       if (!signal.aborted) throw new PlainError(TRIAGE_STILL_RUNNING_TEXT)
     }
-    catch (cause: unknown) { if (!signal.aborted) showTicketError(ticketId, cause, 'Could not triage this ticket. Try again in a few seconds.') }
+    catch (cause: unknown) {
+      if (signal.aborted || superseded()) return
+      // The POST failed before any job id came back: nothing is pending, and the failure holds until Try again.
+      if (posting) { requestedRef.current.delete(ticketId); showTicketError(ticketId, cause, 'Could not triage this ticket. Try again in a few seconds.', undefined, true); return }
+      // A status read that finds no job for a ticket with no result: it was never triaged.
+      if (cause instanceof ApiError && cause.status === 404 && previousResultId === null) {
+        requestedRef.current.delete(ticketId); showTicketError(ticketId, new PlainError(NOT_TRIAGED_TEXT), NOT_TRIAGED_TEXT); return
+      }
+      // A failed quiet read on a ticket that already shows its result changes nothing on screen.
+      if (quiet && !visible && !(cause instanceof ApiError && cause.status === 401)) return
+      showTicketError(ticketId, cause, 'Could not triage this ticket. Try again in a few seconds.')
+    }
     finally {
       // A closed workspace was already reset; touching state here would reach into the next one.
       if (!signal.aborted) {
-        busyTickets.delete(ticketId); setBusyTicketIds(new Set(busyTickets))
-        setTriageStages((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== ticketId)))
+        if (quietReads.get(ticketId) === token) quietReads.delete(ticketId)
+        if (ownsBusy) {
+          busyTickets.delete(ticketId); setBusyTicketIds(new Set(busyTickets))
+          setTriageStages((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== ticketId)))
+        }
       }
     }
   }
   function selectTicket(ticketId: string) {
     const ticket = inboxTickets.find((item) => item.id === ticketId)
+    // The click is the selection: the ticket's own status reads that start below already see it as selected.
+    if (ticket) selectedRef.current = ticket.backendId
     setSelectedTicketId(ticketId)
     const phone = isPhone()
     if (phone) {
@@ -421,6 +452,7 @@ function App() {
           requestedRef.current.add(ticketId)
           setReviewEpochs((current) => ({ ...current, [ticketId]: (current[ticketId] ?? 0) + 1 }))
           const shown = await refreshNewest(ticketId, result.id)
+          if (shown) requestedRef.current.delete(ticketId)
           if (!signal.aborted) {
             const text = shown ? CONFLICT_NEWEST_SHOWN_TEXT : CONFLICT_REOPEN_TEXT
             setTicketErrors((current) => current[ticketId]?.text === CORRECTION_CONFLICT_TEXT ? { ...current, [ticketId]: { ...current[ticketId], text } } : current)
