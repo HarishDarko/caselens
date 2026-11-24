@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanProps, EVENTS, initAnalytics, resetAnalytics, track } from './analytics'
+import { cleanProps, EVENTS, initAnalytics, NO_CAPTURE, rerunSource, resetAnalytics, track } from './analytics'
 
 const page = (search = '', dnt: string | null = null) => ({ location: { search }, navigator: { doNotTrack: dnt }, doNotTrack: null })
 const fakeClient = () => ({ init: vi.fn(), capture: vi.fn(), register: vi.fn() })
@@ -78,5 +78,41 @@ describe('events carry only allowed properties', () => {
     for (const props of Object.values(EVENTS)) {
       for (const shape of Object.values(props as Record<string, unknown>)) expect(shape === 'boolean' || shape === 'slug' || Array.isArray(shape)).toBe(true)
     }
+  })
+})
+
+describe('recording config and the internal flag', () => {
+  it('never records canvas, masks inputs, and respects Do Not Track', async () => {
+    const client = fakeClient()
+    await initAnalytics({ env: prod, page: page(), load: async () => client })
+    expect(client.init.mock.calls[0]![1]).toMatchObject({ session_recording: { maskAllInputs: true, recordCanvas: false }, respect_dnt: true, persistence: 'memory' })
+    expect(NO_CAPTURE).toBe('ph-no-capture')
+  })
+
+  it('tags every event, including the first pageview, when the page was opened with ?internal=1', async () => {
+    const client = fakeClient()
+    const arrival = page('?internal=1')
+    // The address is read before PostHog loads, so a change while it loads does not matter.
+    await initAnalytics({ env: prod, page: arrival, load: async () => { arrival.location.search = ''; return client } })
+    const beforeSend = (client.init.mock.calls[0]![1] as { before_send: (e: { properties?: Record<string, unknown> } | null) => { properties?: Record<string, unknown> } | null }).before_send
+    expect(beforeSend({ properties: { $current_url: 'x' } })?.properties).toEqual({ $current_url: 'x', internal: true })
+    expect(beforeSend(null)).toBeNull()
+    expect(client.register).toHaveBeenCalledWith({ internal: true })
+  })
+
+  it('leaves events untagged without the flag', async () => {
+    const client = fakeClient()
+    await initAnalytics({ env: prod, page: page('?other=1'), load: async () => client })
+    const beforeSend = (client.init.mock.calls[0]![1] as { before_send: (e: { properties?: Record<string, unknown> }) => { properties?: Record<string, unknown> } }).before_send
+    expect(beforeSend({ properties: { a: 1 } }).properties).toEqual({ a: 1 })
+  })
+})
+
+describe('which button asked for a live run', () => {
+  it('Try again has no result, Re-run live on a recorded result is run_live, on a live result rerun', () => {
+    expect(rerunSource({ result: null })).toBe('try_again')
+    expect(rerunSource({ result: { recorded: true } })).toBe('run_live')
+    expect(rerunSource({ result: { recorded: false } })).toBe('rerun')
+    expect(rerunSource({ result: {} })).toBe('rerun')
   })
 })

@@ -8,7 +8,7 @@ import {
   reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, NOT_TRIAGED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
   TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
-import { track } from './analytics'
+import { rerunSource, track } from './analytics'
 import { LiveStatus, QualityOps, type LiveState } from './QualityOps'
 import { Queue, type TicketActivity } from './Queue'
 import { TicketDetail } from './TicketDetail'
@@ -605,7 +605,7 @@ function App() {
           {selectedTicket && detailState
             ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded} headingLevel={pane === 'detail' && phoneLayout ? 'h1' : 'h2'}
               actions={{ onAccept: (ticket) => submitReview(ticket, 'ACCEPTED', null, ''), onOverride: (ticket, urgency, note) => submitReview(ticket, 'CORRECTED', urgency, note) }}
-              onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { post: true, source: selectedTicket.result ? 'rerun' : 'try_again' })} />
+              onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { post: true, source: rerunSource(selectedTicket) })} />
             : <section className="detail" aria-label="Ticket detail"><div className="detail-empty"><p>{inboxTickets.some((ticket) => ticket.result) ? 'Pick a ticket from the inbox.' : 'Pick a ticket to run the live AI on it. Triage takes a few seconds.'}</p></div></section>}
           <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
         </>}

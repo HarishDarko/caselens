@@ -24,6 +24,12 @@ type Live = Record<string, { job: Record<string, unknown>; result: Record<string
 
 /** Routes every /api call. queuedFor keeps the named tickets queued, to show the live progress and cold-start states. */
 export async function installApiStubs(page: Page, { queuedPolls = 1, stuckTickets = [] as string[] } = {}) {
+  // The production build carries the Cloudflare beacon (and PostHog, when a key is built in). Neither may run or leave
+  // the machine from a test: report Do Not Track (Chromium has no switch, so set it before the page loads), and answer
+  // any request to Cloudflare Web Analytics or PostHog (us and eu, ingestion and assets) with an empty 200.
+  await page.addInitScript(() => { Object.defineProperty(Navigator.prototype, 'doNotTrack', { get: () => '1' }) })
+  await page.route(/^https:\/\/(static\.)?cloudflareinsights\.com\//, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }))
+  await page.route(/^https:\/\/(us|eu)(-assets)?\.i\.posthog\.com\//, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }))
   const polls = new Map<string, number>()
   // The retry demo: its ticket fails on its first triage and shows in the failures list until it is retried.
   let retryFailed = false

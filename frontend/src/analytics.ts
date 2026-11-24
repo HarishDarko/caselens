@@ -8,6 +8,9 @@
 // track() carries only the properties listed in EVENTS, and only values of the listed shape. Ticket text, quotes,
 // emails, tokens and addresses have no slot, and anything else a caller passes is dropped before it leaves the page.
 
+/** Put this class on any element that renders text a visitor typed: PostHog leaves it out of session recordings. */
+export const NO_CAPTURE = 'ph-no-capture'
+
 type Slug = 'slug'
 type Flag = 'boolean'
 type Choice = readonly string[]
@@ -31,6 +34,10 @@ export type EventProps<E extends EventName> = { [K in keyof (typeof EVENTS)[E]]?
 export const POSTHOG_HOSTS = ['https://us.i.posthog.com', 'https://eu.i.posthog.com'] as const
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/
+
+/** Which button asked for a live run: Try again (no result), Re-run live on a recorded result, or Re-run live on a live one. */
+export const rerunSource = (ticket: { result?: { recorded?: boolean } | null }): 'try_again' | 'run_live' | 'rerun' =>
+  !ticket.result ? 'try_again' : ticket.result.recorded ? 'run_live' : 'rerun'
 
 /** Keeps only the properties an event allows, with values of the allowed shape. Everything else is dropped. */
 export function cleanProps(event: string, props: Record<string, unknown> | undefined): Record<string, string | boolean> {
@@ -74,10 +81,11 @@ export async function initAnalytics(options: InitOptions = {}): Promise<boolean>
   if (doNotTrack(page)) return false
   const host = (env.VITE_POSTHOG_HOST?.trim() || POSTHOG_HOSTS[0]).replace(/\/+$/, '')
   if (!(POSTHOG_HOSTS as readonly string[]).includes(host)) return false
+  // Read before the dynamic import, so the flag is the address the visitor arrived on.
+  const internal = new URLSearchParams(page.location.search).get('internal') === '1'
   starting = true
   try {
     const posthog = await (options.load ?? loadPostHog)()
-    const internal = new URLSearchParams(page.location.search).get('internal') === '1'
     posthog.init(key, {
       api_host: host,
       persistence: 'memory',
@@ -89,7 +97,14 @@ export async function initAnalytics(options: InitOptions = {}): Promise<boolean>
       mask_all_text: true,
       mask_all_element_attributes: true,
       disable_session_recording: false,
-      session_recording: { maskAllInputs: true },
+      // Inputs are masked, and visitor-typed text rendered back on the page carries the ph-no-capture class (see
+      // NO_CAPTURE), which keeps it out of recordings. Canvas is never recorded.
+      session_recording: { maskAllInputs: true, recordCanvas: false },
+      // The first pageview goes out before register() has run, so the flag is also added to every event here.
+      before_send: (event: { properties?: Record<string, unknown> } | null) => {
+        if (internal && event) event.properties = { ...event.properties, internal: true }
+        return event
+      },
       disable_surveys: true,
     })
     if (internal) posthog.register({ internal: true })
