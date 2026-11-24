@@ -3,6 +3,15 @@
   "name": "SaaS support",
   "categories": ["LOGIN_ACCESS", "BILLING", "BUG", "PERFORMANCE", "INTEGRATION", "DATA_REQUEST", "GENERAL"],
   "generalCategory": "GENERAL",
+  "categoryLabels": {
+    "LOGIN_ACCESS": "Login and access",
+    "BILLING": "Billing",
+    "BUG": "Bug",
+    "PERFORMANCE": "Performance",
+    "INTEGRATION": "Integration",
+    "DATA_REQUEST": "Data request",
+    "GENERAL": "General"
+  },
   "categoryDescriptions": {
     "LOGIN_ACCESS": "Sign-in, password, single sign-on (SSO), two-factor, role and permission problems.",
     "BILLING": "Invoices, charges, plan changes and refunds.",
@@ -14,12 +23,12 @@
   },
   "policyVersion": "saas-v1",
   "policies": [
-    { "id": "SSO_LOCKOUT", "guidance": "Confirm the requester is a workspace admin, read the SAML or OIDC error, and offer a temporary bypass while the identity provider settings are fixed." },
-    { "id": "MFA_RESET", "guidance": "Verify identity out of band, through another workspace admin or the billing contact, before removing two-factor authentication." },
-    { "id": "DUPLICATE_INVOICE", "guidance": "Check the payment processor for two captures on the same invoice; refund the duplicate and send a receipt." },
-    { "id": "OUTAGE_INCIDENT", "guidance": "Check the status page and link the ticket to the open incident." },
-    { "id": "WEBHOOK_FAILURE", "guidance": "Ask for the endpoint response code and recent delivery IDs; never ask for secrets or API keys." },
-    { "id": "DATA_DELETION", "guidance": "Confirm the requester owns the account, deliver any requested export first, check for active subscriptions or legal holds, then schedule deletion for the requested date." }
+    { "id": "SSO_LOCKOUT", "label": "SSO lockout", "guidance": "Confirm the requester is a workspace admin, read the SAML or OIDC error, and offer a temporary bypass while the identity provider settings are fixed." },
+    { "id": "MFA_RESET", "label": "Two-factor reset", "guidance": "Verify identity out of band, through another workspace admin or the billing contact, before removing two-factor authentication." },
+    { "id": "DUPLICATE_INVOICE", "label": "Duplicate invoice", "guidance": "Check the payment processor for two captures on the same invoice; refund the duplicate and send a receipt." },
+    { "id": "OUTAGE_INCIDENT", "label": "Outage incident", "guidance": "Check the status page and link the ticket to the open incident." },
+    { "id": "WEBHOOK_FAILURE", "label": "Webhook failure", "guidance": "Ask for the endpoint response code and recent delivery IDs; never ask for secrets or API keys." },
+    { "id": "DATA_DELETION", "label": "Data deletion", "guidance": "Confirm the requester owns the account, deliver any requested export first, check for active subscriptions or legal holds, then schedule deletion for the requested date." }
   ],
   "rules": {
     "category": [

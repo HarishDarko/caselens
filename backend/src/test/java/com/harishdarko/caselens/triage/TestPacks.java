@@ -8,6 +8,11 @@ final class TestPacks {
               "name": "SaaS support (test)",
               "categories": ["LOGIN", "INVOICE", "GENERAL"],
               "generalCategory": "GENERAL",
+              "categoryLabels": {
+                "LOGIN": "Login",
+                "INVOICE": "Invoice",
+                "GENERAL": "General"
+              },
               "categoryDescriptions": {
                 "LOGIN": "Sign-in and password problems.",
                 "INVOICE": "Questions about an invoice.",
@@ -15,8 +20,8 @@ final class TestPacks {
               },
               "policyVersion": "t1",
               "policies": [
-                { "id": "ACCOUNT_LOCKOUT", "guidance": "Verify the user's identity before unlocking the account." },
-                { "id": "INVOICE_DISPUTE", "guidance": "Collect the invoice number and escalate to billing." }
+                { "id": "ACCOUNT_LOCKOUT", "label": "Account lockout", "guidance": "Verify the user's identity before unlocking the account." },
+                { "id": "INVOICE_DISPUTE", "label": "Invoice dispute", "guidance": "Collect the invoice number and escalate to billing." }
               ],
               "rules": {
                 "category": [

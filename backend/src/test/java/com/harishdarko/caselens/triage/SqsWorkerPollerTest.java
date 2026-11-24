@@ -2,6 +2,7 @@ package com.harishdarko.caselens.triage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.MessageSystemAttributeName;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 import tools.jackson.databind.ObjectMapper;
@@ -33,7 +35,7 @@ class SqsWorkerPollerTest {
         Message message = Message.builder().body(body).receiptHandle("receipt-1").build();
         when(client.receiveMessage(any(ReceiveMessageRequest.class)))
                 .thenReturn(ReceiveMessageResponse.builder().messages(message).build());
-        when(worker.process(any(QueueMessage.class))).thenReturn(WorkerResult.ack());
+        when(worker.process(any(QueueMessage.class), anyInt())).thenReturn(WorkerResult.ack());
 
         new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
 
@@ -41,7 +43,7 @@ class SqsWorkerPollerTest {
         verify(client).deleteMessage(deleted.capture());
         assertThat(deleted.getValue().receiptHandle()).isEqualTo("receipt-1");
 
-        when(worker.process(any(QueueMessage.class))).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
+        when(worker.process(any(QueueMessage.class), anyInt())).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
         new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
         verify(client, org.mockito.Mockito.times(1)).deleteMessage(any(DeleteMessageRequest.class));
     }
@@ -54,11 +56,32 @@ class SqsWorkerPollerTest {
         Message message = Message.builder().body(body).receiptHandle("receipt-error").build();
         when(client.receiveMessage(any(ReceiveMessageRequest.class)))
                 .thenReturn(ReceiveMessageResponse.builder().messages(message).build());
-        when(worker.process(any(QueueMessage.class))).thenThrow(new IllegalArgumentException("thrown while processing"));
+        when(worker.process(any(QueueMessage.class), anyInt())).thenThrow(new IllegalArgumentException("thrown while processing"));
 
         new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
 
         verify(client, never()).deleteMessage(any(DeleteMessageRequest.class));
+    }
+
+    @Test
+    void asksSqsForTheReceiveCountAndPassesItToTheWorker() {
+        String body = """
+                {"schemaVersion":1,"eventId":"%s","workspaceId":"%s","ticketId":"%s","correlationId":"corr"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        Message message = Message.builder().body(body).receiptHandle("receipt-4")
+                .attributes(java.util.Map.of(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT, "4")).build();
+        when(client.receiveMessage(any(ReceiveMessageRequest.class)))
+                .thenReturn(ReceiveMessageResponse.builder().messages(message).build());
+        when(worker.process(any(QueueMessage.class), anyInt())).thenReturn(WorkerResult.ack());
+
+        new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
+
+        ArgumentCaptor<ReceiveMessageRequest> request = ArgumentCaptor.forClass(ReceiveMessageRequest.class);
+        verify(client).receiveMessage(request.capture());
+        assertThat(request.getValue().messageSystemAttributeNames())
+                .contains(MessageSystemAttributeName.APPROXIMATE_RECEIVE_COUNT);
+        assertThat(request.getValue().maxNumberOfMessages()).as("one at a time, like the Lambda event source").isEqualTo(1);
+        verify(worker).process(any(QueueMessage.class), org.mockito.ArgumentMatchers.eq(4));
     }
 
     @Test
@@ -69,7 +92,7 @@ class SqsWorkerPollerTest {
 
         new SqsWorkerPoller(client, "queue-url", worker, new ObjectMapper()).poll();
 
-        verify(worker, never()).process(any(QueueMessage.class));
+        verify(worker, never()).process(any(QueueMessage.class), anyInt());
         verify(client).deleteMessage(any(DeleteMessageRequest.class));
     }
 }

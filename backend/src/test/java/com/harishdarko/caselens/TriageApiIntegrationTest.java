@@ -7,9 +7,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.harishdarko.caselens.triage.Category;
+import com.harishdarko.caselens.triage.DecisionSource;
+import com.harishdarko.caselens.triage.ModelInvocation;
+import com.harishdarko.caselens.triage.ModelInvocationRecord;
+import com.harishdarko.caselens.triage.ModelInvocationRepository;
 import com.harishdarko.caselens.triage.OutboxEvent;
 import com.harishdarko.caselens.triage.OutboxEventRepository;
+import com.harishdarko.caselens.triage.ReliabilitySignal;
+import com.harishdarko.caselens.triage.Sentiment;
+import com.harishdarko.caselens.triage.SlaRisk;
+import com.harishdarko.caselens.triage.TriageDecision;
 import com.harishdarko.caselens.triage.TriageJobRepository;
+import com.harishdarko.caselens.triage.TriageResult;
+import com.harishdarko.caselens.triage.TriageResultRepository;
+import com.harishdarko.caselens.triage.Urgency;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -44,6 +57,8 @@ class TriageApiIntegrationTest {
     @Autowired OutboxEventRepository events;
     @Autowired JdbcTemplate jdbc;
     @Autowired TransactionTemplate transactions;
+    @Autowired TriageResultRepository results;
+    @Autowired ModelInvocationRepository invocations;
 
     @Test
     void createsOneProcessingJobAndReturnsItsStatusWithoutDuplicatingTheRequest() throws Exception {
@@ -78,6 +93,51 @@ class TriageApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray())
                 .andExpect(jsonPath("$.totalElements").value(0));
+    }
+
+    @Test
+    void aRulesFallbackResultSaysWhyInPlainWordsAndKeepsTheOldWarningForOldClients() throws Exception {
+        String token = session();
+        String ticket = createTicket(token);
+        UUID eventId = requestTriage(token, ticket);
+        Instant started = Instant.now().minusSeconds(2);
+        invocations.save(ModelInvocation.from(new ModelInvocationRecord(UUID.fromString(ticket), eventId, "groq",
+                "openai/gpt-oss-20b", "triage-v2", started, started.plusMillis(400), 400, "FAILURE", "HTTP_429", null, null)));
+        saveResult(ticket, eventId, DecisionSource.RULES_FALLBACK, List.of("AI provider result unavailable or invalid"));
+
+        mvc.perform(get("/api/tickets/{id}/processing", ticket).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.decisionSource").value("RULES_FALLBACK"))
+                .andExpect(jsonPath("$.result.fallbackReason").value("PROVIDER_RATE_LIMITED"))
+                .andExpect(jsonPath("$.result.warnings[0]").value("AI provider result unavailable or invalid"));
+    }
+
+    @Test
+    void aRulesFallbackWithNoRecordedProviderCallSaysTheProviderWasUnavailable() throws Exception {
+        String token = session();
+        String ticket = createTicket(token);
+        UUID eventId = requestTriage(token, ticket);
+        saveResult(ticket, eventId, DecisionSource.RULES_FALLBACK, List.of("AI provider result unavailable or invalid"));
+
+        mvc.perform(get("/api/tickets/{id}/processing", ticket).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.fallbackReason").value("PROVIDER_UNAVAILABLE"));
+    }
+
+    @Test
+    void anAiValidatedResultHasANullFallbackReason() throws Exception {
+        String token = session();
+        String ticket = createTicket(token);
+        UUID eventId = requestTriage(token, ticket);
+        saveResult(ticket, eventId, DecisionSource.AI_VALIDATED, List.of());
+
+        String body = mvc.perform(get("/api/tickets/{id}/processing", ticket).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.decisionSource").value("AI_VALIDATED"))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode result = objectMapper.readTree(body).get("result");
+        assertThat(result.has("fallbackReason")).as("the field is always present").isTrue();
+        assertThat(result.get("fallbackReason").isNull()).isTrue();
     }
 
     @Test
@@ -160,6 +220,23 @@ class TriageApiIntegrationTest {
 
     private java.util.Optional<OutboxEvent> lockInTransaction(UUID eventId) {
         return transactions.execute(status -> events.lockUnpublished(eventId));
+    }
+
+    private UUID requestTriage(String token, String ticket) throws Exception {
+        mvc.perform(post("/api/tickets/{id}/triage", ticket).header("Authorization", "Bearer " + token))
+                .andExpect(status().isAccepted());
+        String processing = mvc.perform(get("/api/tickets/{id}/processing", ticket).header("Authorization", "Bearer " + token))
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(objectMapper.readTree(processing).get("job").get("eventId").asText());
+    }
+
+    private void saveResult(String ticket, UUID eventId, DecisionSource source, List<String> warnings) {
+        UUID workspaceId = jobs.findByEventId(eventId).orElseThrow().getWorkspaceId();
+        results.save(TriageResult.from(eventId, workspaceId, new TriageDecision(UUID.fromString(ticket),
+                Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
+                "Charging did not start", List.of(), List.of(), "The session did not start.",
+                List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.LOW,
+                warnings, 55, List.of(), source, "rules-v1", "triage-v1"), Instant.now(), objectMapper));
     }
 
     private int jobCount(String ticket) {

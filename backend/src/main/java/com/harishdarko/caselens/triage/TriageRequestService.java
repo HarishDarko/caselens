@@ -30,21 +30,23 @@ public class TriageRequestService {
     private final OutboxPublicationService publicationService;
     private final TriageAttemptRepository attempts;
     private final TriageMetrics metrics;
+    private final ModelInvocationRepository invocations;
 
     public TriageRequestService(TicketRepository tickets, OutboxEventRepository events, TriageJobRepository jobs,
             OutboxPublisher publisher, Clock clock) {
-        this(tickets, events, jobs, null, publisher, clock, null, null, TriageMetrics.noop());
+        this(tickets, events, jobs, null, publisher, clock, null, null, TriageMetrics.noop(), null);
     }
 
     public TriageRequestService(TicketRepository tickets, OutboxEventRepository events, TriageJobRepository jobs,
             TriageResultRepository results, OutboxPublisher publisher, Clock clock) {
-        this(tickets, events, jobs, results, publisher, clock, null, null, TriageMetrics.noop());
+        this(tickets, events, jobs, results, publisher, clock, null, null, TriageMetrics.noop(), null);
     }
 
     @Autowired
     public TriageRequestService(TicketRepository tickets, OutboxEventRepository events, TriageJobRepository jobs,
             TriageResultRepository results, OutboxPublisher publisher, Clock clock,
-            OutboxPublicationService publicationService, TriageAttemptRepository attempts, TriageMetrics metrics) {
+            OutboxPublicationService publicationService, TriageAttemptRepository attempts, TriageMetrics metrics,
+            ModelInvocationRepository invocations) {
         this.tickets = tickets;
         this.events = events;
         this.jobs = jobs;
@@ -54,6 +56,7 @@ public class TriageRequestService {
         this.publicationService = publicationService;
         this.attempts = attempts;
         this.metrics = metrics;
+        this.invocations = invocations;
     }
 
     /**
@@ -202,15 +205,39 @@ public class TriageRequestService {
         publicationService.persist(event);
     }
 
+    /**
+     * The ticket's latest job with its attempts and result. A ticket that has never been queued but has a recorded
+     * result answers with no job and that result; a ticket with neither is not found, as before.
+     */
     @Transactional(readOnly = true)
     public TriageProcessingSnapshot processing(UUID workspaceId, UUID ticketId) {
         tickets.findByIdAndWorkspaceId(ticketId, workspaceId).orElseThrow(TicketNotFoundException::new);
         TriageJob job = jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(
-                ticketId, workspaceId, 1)
-                .orElseThrow(TicketNotFoundException::new);
+                ticketId, workspaceId, 1).orElse(null);
+        if (job == null) {
+            TriageResult recorded = results == null ? null
+                    : results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDescIdDesc(ticketId, workspaceId)
+                            .filter(TriageResult::isRecorded).orElseThrow(TicketNotFoundException::new);
+            if (recorded == null) throw new TicketNotFoundException();
+            return new TriageProcessingSnapshot(null, recorded, List.of(), fallbackReason(null, recorded));
+        }
         List<TriageAttemptSnapshot> timeline = attempts == null ? List.of()
                 : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId()).stream()
                         .map(TriageAttempt::snapshot).toList();
-        return new TriageProcessingSnapshot(job.snapshot(), results.findByEventId(job.getEventId()).orElse(null), timeline);
+        TriageResult result = results.findByEventId(job.getEventId()).orElse(null);
+        return new TriageProcessingSnapshot(job.snapshot(), result, timeline, fallbackReason(job, result));
+    }
+
+    /**
+     * Why the rules decided this job's result, read back from the failed provider call the engine recorded for it (its
+     * sanitized error code), so no column is needed and results saved before this field existed get a reason too. A
+     * fallback whose call was not recorded (the recorder is best effort) reads as PROVIDER_UNAVAILABLE.
+     */
+    private FallbackReason fallbackReason(TriageJob job, TriageResult result) {
+        if (result == null || result.getDecisionSource() != DecisionSource.RULES_FALLBACK) return null;
+        if (invocations == null || job == null) return FallbackReason.PROVIDER_UNAVAILABLE;
+        ModelInvocation latest = new JobInvocations(invocations.findByTicketIds(List.of(job.getTicketId()))).latestFor(job);
+        String errorCode = latest != null && "FAILURE".equals(latest.getStatus()) ? latest.getSanitizedErrorCode() : null;
+        return FallbackReason.fromErrorCode(errorCode);
     }
 }

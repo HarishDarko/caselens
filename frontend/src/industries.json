@@ -31,9 +31,6 @@
     }, {
       "key" : "receipt-request-general",
       "label" : "Receipt requested for a completed session"
-    }, {
-      "key" : "provider-retry-demo",
-      "label" : "Synthetic provider timeout for retry review"
     } ]
   }, {
     "id" : "e-commerce",
@@ -66,9 +63,6 @@
     }, {
       "key" : "shop-cannot-sign-in",
       "label" : "Cannot sign in to see my orders"
-    }, {
-      "key" : "provider-retry-demo",
-      "label" : "Synthetic provider timeout for retry review"
     } ]
   }, {
     "id" : "saas-support",
@@ -101,9 +95,6 @@
     }, {
       "key" : "saas-custom-field-question",
       "label" : "How do I add a custom field?"
-    }, {
-      "key" : "provider-retry-demo",
-      "label" : "Synthetic provider timeout for retry review"
     } ]
   } ]
 }

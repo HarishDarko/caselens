@@ -43,7 +43,9 @@ final class TriageResponseSchema {
         properties.putObject("recommendedActions").put("type", "array").put("minItems", 1).put("maxItems", 5)
                 .putObject("items").put("type", "string").put("minLength", 3).put("maxLength", 240);
         properties.putObject("suggestedReply").put("type", "string").put("minLength", 20).put("maxLength", 1000);
-        properties.putObject("warnings").put("type", "array").put("maxItems", 5).putObject("items").put("type", "string");
+        // Bounded like the other free-text items, so a runaway warning cannot eat the answer's token cap.
+        properties.putObject("warnings").put("type", "array").put("maxItems", 5).putObject("items").put("type", "string")
+                .put("maxLength", 240);
         required(schema, "category", "urgency", "slaRisk", "sentiment", "summary", "evidence", "policyIds",
                 "explanation", "recommendedActions", "suggestedReply", "warnings");
         return schema;

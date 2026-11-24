@@ -15,6 +15,11 @@ import java.time.ZoneOffset;
  * <p>The share stops one client from spending the whole day's budget for everyone: past it, that client's triage uses
  * the rules provider while other visitors still get AI answers. A client is the network that opened the workspace
  * (see {@link ClientAddresses#clientKey}).
+ *
+ * <p>One unit is charged for each delivery of a queued job that makes a provider call; there is no per-job marker. A
+ * rate-limited job gets at most 2 deliveries (TriageWorker.RATE_LIMIT_DELIVERIES), so it costs at most 2 units: its
+ * in-call retry shares the delivery's unit, and a redelivery pays for its own. A denied or failed check never leads
+ * to a provider call: the caller sees the denial or the exception and falls back to the rules.
  */
 public final class AiCallBudget {
     static final String KEY_PREFIX = "ai-calls:";
