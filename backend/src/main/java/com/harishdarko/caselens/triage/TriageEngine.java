@@ -11,7 +11,7 @@ import java.util.UUID;
 public final class TriageEngine {
     private static final String FALLBACK_WARNING = "AI provider result unavailable or invalid";
     static final String SEMANTIC_VALIDATION = "SEMANTIC_VALIDATION";
-    /** The one failure worth retrying on a later delivery: the limit resets within about a minute. */
+    /** The failure worth retrying on a later delivery: the limit resets within about a minute. */
     private static final String RATE_LIMITED = "HTTP_429";
     private final TicketRedactor redactor;
     private final TriageProvider primaryProvider;
@@ -52,18 +52,20 @@ public final class TriageEngine {
     }
 
     /**
-     * Triage for one delivery of a queued job. Before the final delivery a rate-limited provider call is recorded and
-     * its exception thrown, so the worker can leave the job for SQS to deliver again once the limit has reset; the
-     * final delivery falls back to the rules for every failure, the rate limit included.
+     * Triage for one delivery of a queued job. Before the final delivery a rate-limited provider call, or a delivery
+     * with too little time left for any call, is recorded and its exception thrown, so the worker can leave the job
+     * for SQS to deliver again; the final delivery falls back to the rules for every failure, those included. When the
+     * time is too short no provider call is made and no AI budget is spent.
      */
     public TriageDecision triage(TriageRequest request, UUID eventId, boolean finalDelivery) {
         Objects.requireNonNull(request);
         RedactedTicket redacted = redactor.redact(request.subject(), request.message());
-        TriageRequest call = eventId != null && request.eventId() == null
-                ? request.withCallContext(eventId, request.timeBudget()) : request;
         Instant started = clock.instant();
         try {
-            ProviderCall providerCall = primaryProvider.analyze(call, redacted);
+            if (request.outOfTime()) {
+                throw new ProviderCallException("Too little time left for a provider call", TriageRequest.TIME_BUDGET_EXHAUSTED);
+            }
+            ProviderCall providerCall = primaryProvider.analyze(request, redacted);
             ProviderTriageResult providerResult = providerCall.result();
             ValidatedProviderResult validated = validator.validate(providerResult, redacted, request.pack());
             Instant ended = clock.instant();
@@ -75,7 +77,9 @@ public final class TriageEngine {
             String errorCode = FallbackCause.code(safeErrorCode(failure));
             recordSafely(request, eventId, primaryProvider.providerName(), primaryProvider.modelVersion(), primaryProvider.promptVersion(),
                     started, ended, "FAILURE", errorCode, null, null);
-            if (!finalDelivery && RATE_LIMITED.equals(errorCode)) throw failure;
+            if (!finalDelivery && (RATE_LIMITED.equals(errorCode) || TriageRequest.TIME_BUDGET_EXHAUSTED.equals(errorCode))) {
+                throw failure;
+            }
             FallbackCause cause = FallbackCause.of(errorCode,
                     failure instanceof SemanticValidationException semantic ? semantic.check().name() : null,
                     request.pack().id(), primaryProvider.providerName());

@@ -1,0 +1,199 @@
+[render-lock] pr33-r3-negative waiting for pr35-t (0 s)
+[render-lock] pr33-r3-negative running: "C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/mvnw.cmd" -B "-Dtest=BudgetedTriageProviderTest,GroqTriageProviderTest,RateLimitWaitTest,TriageEngineTest,TriageWorkerTest" test
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ----------------------< com.harishdarko:caselens >----------------------
+[INFO] Building CaseLens 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ caselens ---
+[INFO] Copying 2 resources from src\main\resources to target\classes
+[INFO] Copying 18 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ caselens ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 141 source files with javac [debug parameters release 21] to target\classes
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/main/java/com/harishdarko/caselens/triage/PackCatalog.java: Some input files use or override a deprecated API.
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/main/java/com/harishdarko/caselens/triage/PackCatalog.java: Recompile with -Xlint:deprecation for details.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ caselens ---
+[INFO] Copying 1 resource from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ caselens ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 82 source files with javac [debug parameters release 21] to target\test-classes
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/test/java/com/harishdarko/caselens/DemoApiIntegrationTest.java: Some input files use or override a deprecated API.
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/test/java/com/harishdarko/caselens/DemoApiIntegrationTest.java: Recompile with -Xlint:deprecation for details.
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/test/java/com/harishdarko/caselens/security/RateLimitServiceTest.java: C:\Users\haris\AppData\Local\Temp\claude\709ccf4a7683d012\e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab\scratchpad\neon-build-pr33\backend\src\test\java\com\harishdarko\caselens\security\RateLimitServiceTest.java uses unchecked or unsafe operations.
+[INFO] /C:/Users/haris/AppData/Local/Temp/claude/709ccf4a7683d012/e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab/scratchpad/neon-build-pr33/backend/src/test/java/com/harishdarko/caselens/security/RateLimitServiceTest.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- surefire:3.5.6:test (default-test) @ caselens ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.harishdarko.caselens.triage.BudgetedTriageProviderTest
+Mockito is currently self-attaching to enable the inline-mock-maker. This will no longer work in future releases of the JDK. Please add Mockito as an agent to your build as described in Mockito's documentation: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#0.3
+WARNING: A Java agent has been loaded dynamically (C:\Users\haris\.m2\repository\net\bytebuddy\byte-buddy-agent\1.18.15\byte-buddy-agent-1.18.15.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+19:23:52.451 [main] WARN com.harishdarko.caselens.triage.BudgetedTriageProvider -- triage.ai_share_lookup_failed ticketId=2cf67d7a-cf35-4a08-9d69-f8c4a6531bd9 errorType=IllegalStateException effect=global_budget_only
+[ERROR] Tests run: 11, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 3.303 s <<< FAILURE! -- in com.harishdarko.caselens.triage.BudgetedTriageProviderTest
+[ERROR] com.harishdarko.caselens.triage.BudgetedTriageProviderTest.aTinyTimeBudgetSpendsNoDailyBudgetAndMakesNoProviderCall -- Time elapsed: 0.220 s <<< FAILURE!
+java.lang.AssertionError: 
+
+Expecting code to raise a throwable.
+	at com.harishdarko.caselens.triage.BudgetedTriageProviderTest.aTinyTimeBudgetSpendsNoDailyBudgetAndMakesNoProviderCall(BudgetedTriageProviderTest.java:267)
+
+[INFO] Running com.harishdarko.caselens.triage.GroqTriageProviderTest
+[ERROR] Tests run: 22, Failures: 3, Errors: 0, Skipped: 0, Time elapsed: 0.659 s <<< FAILURE! -- in com.harishdarko.caselens.triage.GroqTriageProviderTest
+[ERROR] com.harishdarko.caselens.triage.GroqTriageProviderTest.aLongWaitRateLimitOnTheSecondAttemptAlsoGivesUpImmediately -- Time elapsed: 0.048 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+[firstStatus=503] 
+expected: "RATE_LIMIT_LONG_WAIT"
+ but was: "HTTP_429"
+	at com.harishdarko.caselens.triage.GroqTriageProviderTest.aLongWaitRateLimitOnTheSecondAttemptAlsoGivesUpImmediately(GroqTriageProviderTest.java:496)
+
+[ERROR] com.harishdarko.caselens.triage.GroqTriageProviderTest.neverClampsANegativeZeroOrTinyTimeBudgetUpToAnHttpCall -- Time elapsed: 0.029 s <<< FAILURE!
+java.lang.AssertionError: 
+[budget=PT-4S] 
+Expecting actual throwable to be an instance of:
+  com.harishdarko.caselens.triage.ProviderCallException
+but was:
+  java.lang.IllegalArgumentException: Invalid duration: PT-6S
+	at java.net.http/jdk.internal.net.http.HttpRequestBuilderImpl.timeout(HttpRequestBuilderImpl.java:238)
+	at com.harishdarko.caselens.triage.GroqTriageProvider.httpRequest(GroqTriageProvider.java:117)
+	at com.harishdarko.caselens.triage.GroqTriageProvider.send(GroqTriageProvider.java:175)
+	...(89 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)
+	at com.harishdarko.caselens.triage.GroqTriageProviderTest.neverClampsANegativeZeroOrTinyTimeBudgetUpToAnHttpCall(GroqTriageProviderTest.java:462)
+
+[ERROR] com.harishdarko.caselens.triage.GroqTriageProviderTest.fastRateLimitWithinRedeliveryWindowRetriesLaterInsteadOfGivingUp -- Time elapsed: 0.018 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+
+expected: "HTTP_429"
+ but was: "RATE_LIMIT_LONG_WAIT"
+	at com.harishdarko.caselens.triage.GroqTriageProviderTest.fastRateLimitWithinRedeliveryWindowRetriesLaterInsteadOfGivingUp(GroqTriageProviderTest.java:518)
+
+[INFO] Running com.harishdarko.caselens.triage.RateLimitWaitTest
+[ERROR] Tests run: 7, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 0.030 s <<< FAILURE! -- in com.harishdarko.caselens.triage.RateLimitWaitTest
+[ERROR] com.harishdarko.caselens.triage.RateLimitWaitTest.givesUpOnlyWhenTheLimitClearsAfterTheLatestMomentTheRedeliveryCouldWaitFor -- Time elapsed: 0.003 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+
+expected: RETRY_LATER
+ but was: GIVE_UP
+	at com.harishdarko.caselens.triage.RateLimitWaitTest.givesUpOnlyWhenTheLimitClearsAfterTheLatestMomentTheRedeliveryCouldWaitFor(RateLimitWaitTest.java:68)
+
+[ERROR] com.harishdarko.caselens.triage.RateLimitWaitTest.roundsSubMillisecondPositiveHttpDateWaitUpToOneMillisecond -- Time elapsed: 0.007 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+[sub-millisecond positive wait must not truncate to sleep(0)] 
+Expecting actual:
+  Optional[PT0S]
+to contain:
+  0.001S
+but did not.
+	at com.harishdarko.caselens.triage.RateLimitWaitTest.roundsSubMillisecondPositiveHttpDateWaitUpToOneMillisecond(RateLimitWaitTest.java:56)
+
+[INFO] Running com.harishdarko.caselens.triage.TriageEngineTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.678 s -- in com.harishdarko.caselens.triage.TriageEngineTest
+[INFO] Running com.harishdarko.caselens.triage.TriageWorkerTest
+19:23:55.358 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=7888bf49-fc11-49cf-b024-3c6f141fc87a ticketId=b1b7ec87-bcfb-4ae3-9090-a77e87691a6b jobId=9299c123-3365-4e4e-9df0-618651ad6449 eventId=dcf1b5ba-273f-432f-aa71-4bf10cfecbdb source=AI_VALIDATED
+19:23:55.409 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.retryable_failure correlationId=corr workspaceId=53af876f-b492-4563-ac48-b6664fafccac ticketId=9076fe2b-d468-473a-b644-5224b8a4181f jobId=cf0d181b-7875-43f1-9922-cccdc3350f77 errorCode=PROVIDER_RATE_LIMIT
+19:23:55.476 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=9f15bb44-65f3-4c5b-bb72-0ccf7d3161e9 ticketId=80e9611e-edcb-489d-8c7d-afdefc750287 jobId=a68e0724-4e8a-4bed-bc81-51f5a4bb9909 eventId=19e02c40-af57-4ded-810a-6747b7fd8ad8 source=RULES_FALLBACK
+19:23:55.476 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=9f15bb44-65f3-4c5b-bb72-0ccf7d3161e9 ticketId=80e9611e-edcb-489d-8c7d-afdefc750287 jobId=a68e0724-4e8a-4bed-bc81-51f5a4bb9909 eventId=19e02c40-af57-4ded-810a-6747b7fd8ad8 pack=ev-charging provider=unknown errorCode=SEMANTIC_VALIDATION check=QUOTE_NOT_FOUND reason=ANSWER_FAILED_CHECKS
+19:23:55.491 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.invalid_event eventId=aeaddb2a-41e7-4f4f-9dd8-262766f7e1d0 jobId=4b829254-05e5-42d3-a131-0e7f1c904f55 workspaceId=7d0ec62d-87c4-4a13-a386-c7129d108b6a ticketId=5d34bc22-c830-46f7-90d4-a44a307bd09c
+19:23:55.507 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.claim_lost correlationId=corr workspaceId=5f96477d-da85-4816-ad8a-6ec68b3a0a32 ticketId=62fc4233-9aa8-4f1e-b72d-8960ae5de237 jobId=c8c93459-efd2-4cce-b5bf-3269ee0a6e11 eventId=ffe83a5c-c5a4-48b0-8cf5-36cd1fa2f96b attempt=1
+19:23:55.546 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=e50def23-ffd3-4ec3-b7b1-610a37da3fc0 ticketId=d0f52f84-ab65-4a14-8269-44bb0e8ba658 jobId=36700fde-6332-430e-963d-bd7cea9ba78b eventId=2d90a6d7-900f-4729-8f6c-29e38e3903a0 source=RULES_FALLBACK
+19:23:55.546 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=e50def23-ffd3-4ec3-b7b1-610a37da3fc0 ticketId=d0f52f84-ab65-4a14-8269-44bb0e8ba658 jobId=36700fde-6332-430e-963d-bd7cea9ba78b eventId=2d90a6d7-900f-4729-8f6c-29e38e3903a0 pack=ev-charging provider=groq errorCode=HTTP_429 check=none reason=PROVIDER_RATE_LIMITED
+19:23:55.596 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=f3a4cd1e-7587-472e-b63c-60a96e356916 ticketId=e8ffcc71-1cc9-41ea-9e48-22934c41185e jobId=d390fe97-810e-4018-a515-812026fbc132 eventId=8b7f03b4-4945-48e2-b356-0d1ea8a3b5b5 source=RULES_FALLBACK
+19:23:55.596 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=f3a4cd1e-7587-472e-b63c-60a96e356916 ticketId=e8ffcc71-1cc9-41ea-9e48-22934c41185e jobId=d390fe97-810e-4018-a515-812026fbc132 eventId=8b7f03b4-4945-48e2-b356-0d1ea8a3b5b5 pack=ev-charging provider=groq errorCode=HTTP_429 check=none reason=PROVIDER_RATE_LIMITED
+19:23:55.626 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=4d7100ff-f571-4bd4-b31b-a58ec32ccf31 ticketId=b43df259-f4d1-4dbc-ad64-8f78f864cf6f jobId=51a2a35c-f92f-4965-a768-dc7e65b04ba3 eventId=ad3e60dc-88e3-4045-a782-b8f6452d6080 source=AI_VALIDATED
+19:23:55.639 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.retryable_failure correlationId=corr workspaceId=2e6972de-3f90-49e9-811c-040db30d416d ticketId=4d8ad93f-6ba1-4ef8-bdc2-5861c175ca97 jobId=14dadb15-ea5c-4636-9230-28f7f6834539 errorCode=PROVIDER_RATE_LIMIT
+19:23:55.670 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.retryable_failure correlationId=corr workspaceId=5f091c45-fdc2-4b22-99af-540e34b1200e ticketId=3003a676-f83a-48c3-ab5a-210861baf91e jobId=87c27d9e-f0ff-49f5-8b8a-58ddae9d3c54 errorCode=PROVIDER_RATE_LIMIT
+19:23:55.730 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.claim_held correlationId=corr workspaceId=05154cc8-4e79-40ae-84c9-4b9bf05ef592 ticketId=fa06793d-2621-40a8-9ba3-c5154a641ef5 eventId=cfbacfb5-31c5-4ba3-98cc-7c7f257d4a7a status=PROCESSING
+19:23:55.757 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.invalid_event eventId=0f847f01-9e11-4ef9-968a-8f5e205148ba jobId=f02e33af-00a8-4cf5-8fe8-1b76b89629df workspaceId=33c684c0-ee0e-4ae7-9cad-5df776477ecd ticketId=bfa34b12-fc90-4ccf-a4c3-c9fdde2ba21b
+19:23:55.786 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=84f9e822-fa37-41a9-bfd8-595910531af6 ticketId=3d6f2f32-b1a8-4989-9bf0-a9f08ff52db6 jobId=bf2c9754-4e34-4f29-811c-030626f2f8f8 eventId=cf01af57-49a1-40a0-a2ef-ff1faddcfdb0 source=RULES_FALLBACK
+19:23:55.787 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=84f9e822-fa37-41a9-bfd8-595910531af6 ticketId=3d6f2f32-b1a8-4989-9bf0-a9f08ff52db6 jobId=bf2c9754-4e34-4f29-811c-030626f2f8f8 eventId=cf01af57-49a1-40a0-a2ef-ff1faddcfdb0 pack=ev-charging provider=groq errorCode=RATE_LIMIT_LONG_WAIT check=none reason=PROVIDER_RATE_LIMITED
+19:23:55.810 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=02358f8e-333e-4a2c-96f3-ee4d89409663 ticketId=509f4190-ab05-4d19-b7f8-73e92c8ee2a4 jobId=26025981-f53b-4bfa-861f-eabbc39824f6 eventId=8263d183-b8af-4bea-b8fb-fbe843f6dc21 source=AI_VALIDATED
+19:23:55.822 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.retryable_failure correlationId=corr workspaceId=9f47371d-c24d-4a9b-906a-126348478127 ticketId=4a8097c1-c81a-4645-a038-ce26338df03d jobId=a1bd6f0e-25fd-48a3-88fd-7db1ab4210d8 errorCode=PROVIDER_TIMEOUT
+19:23:55.840 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=c36ac40a-0f0c-486c-9e12-942d94d40b4b ticketId=a740b4cc-e619-4bbd-a2ce-846265356dc5 jobId=b607ebec-b8fb-461f-bb81-1d06a185f79f eventId=8baf7e50-ead8-4982-aed6-7dfa5e963cd7 source=AI_VALIDATED
+19:23:55.861 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=7790eb94-3a5c-4ae1-9786-cd2bba562706 ticketId=f5e20b3d-1f51-4b91-8a80-3bc09fc96073 jobId=4ac9cc5b-79d3-40ca-a93c-8aa1010d32c9 eventId=85b836f8-9c33-47f9-856f-55254e216cb3 source=RULES_FALLBACK
+19:23:55.861 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=7790eb94-3a5c-4ae1-9786-cd2bba562706 ticketId=f5e20b3d-1f51-4b91-8a80-3bc09fc96073 jobId=4ac9cc5b-79d3-40ca-a93c-8aa1010d32c9 eventId=85b836f8-9c33-47f9-856f-55254e216cb3 pack=ev-charging provider=groq errorCode=HTTP_429 check=none reason=PROVIDER_RATE_LIMITED
+19:23:55.883 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=c304b0ec-8906-41ca-bbe6-227969c24c52 ticketId=00eeec45-feb2-4c86-8b88-af5a3a06754d jobId=357fd55d-c36a-48e4-8b8b-1cc8cf04ac3c eventId=a1307a46-77e1-4f5e-9ec8-27c024ec91cb source=RULES_FALLBACK
+19:23:55.883 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.fallback correlationId=corr workspaceId=c304b0ec-8906-41ca-bbe6-227969c24c52 ticketId=00eeec45-feb2-4c86-8b88-af5a3a06754d jobId=357fd55d-c36a-48e4-8b8b-1cc8cf04ac3c eventId=a1307a46-77e1-4f5e-9ec8-27c024ec91cb pack=ev-charging provider=groq errorCode=HTTP_429 check=none reason=PROVIDER_RATE_LIMITED
+19:23:55.904 [main] INFO com.harishdarko.caselens.triage.TriageWorker -- triage.completed correlationId=corr workspaceId=6ade735a-29ca-408b-855d-13db5e93ff75 ticketId=8fa625c9-e4f2-45eb-90a1-e865639e9c46 jobId=4ce3a3c1-1970-42e8-8bd7-e7a0edc318b6 eventId=ff0846bb-9bd8-46e6-9fae-8cd426dc52ac source=AI_VALIDATED
+19:23:55.916 [main] WARN com.harishdarko.caselens.triage.TriageWorker -- triage.synthetic_demo_failure correlationId=corr workspaceId=faceef54-cb4a-4bef-b6f8-a452ea039d2d ticketId=19e268a6-2301-429f-85c7-7eefbc8564c2 jobId=54d28237-44bd-4c5e-a484-97d401df7bfe errorCode=SYNTHETIC_PROVIDER_TIMEOUT
+[ERROR] Tests run: 25, Failures: 2, Errors: 0, Skipped: 0, Time elapsed: 1.311 s <<< FAILURE! -- in com.harishdarko.caselens.triage.TriageWorkerTest
+[ERROR] com.harishdarko.caselens.triage.TriageWorkerTest.skipsProviderAndBudgetWhenRemainingLambdaTimeIsBelowOneUsefulAttempt -- Time elapsed: 0.018 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+
+expected: RETRY
+ but was: ACK
+	at com.harishdarko.caselens.triage.TriageWorkerTest.skipsProviderAndBudgetWhenRemainingLambdaTimeIsBelowOneUsefulAttempt(TriageWorkerTest.java:380)
+
+[ERROR] com.harishdarko.caselens.triage.TriageWorkerTest.aRateLimitIsJudgedAgainstWhenThisDeliveryWasReceivedNotAFixedWait -- Time elapsed: 0.031 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: 
+
+expected: RETRY
+ but was: ACK
+	at com.harishdarko.caselens.triage.TriageWorkerTest.aRateLimitIsJudgedAgainstWhenThisDeliveryWasReceivedNotAFixedWait(TriageWorkerTest.java:595)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   BudgetedTriageProviderTest.aTinyTimeBudgetSpendsNoDailyBudgetAndMakesNoProviderCall:267 
+Expecting code to raise a throwable.
+[ERROR]   GroqTriageProviderTest.aLongWaitRateLimitOnTheSecondAttemptAlsoGivesUpImmediately:496 [firstStatus=503] 
+expected: "RATE_LIMIT_LONG_WAIT"
+ but was: "HTTP_429"
+[ERROR]   GroqTriageProviderTest.fastRateLimitWithinRedeliveryWindowRetriesLaterInsteadOfGivingUp:518 
+expected: "HTTP_429"
+ but was: "RATE_LIMIT_LONG_WAIT"
+[ERROR]   GroqTriageProviderTest.neverClampsANegativeZeroOrTinyTimeBudgetUpToAnHttpCall:462 [budget=PT-4S] 
+Expecting actual throwable to be an instance of:
+  com.harishdarko.caselens.triage.ProviderCallException
+but was:
+  java.lang.IllegalArgumentException: Invalid duration: PT-6S
+	at java.net.http/jdk.internal.net.http.HttpRequestBuilderImpl.timeout(HttpRequestBuilderImpl.java:238)
+	at com.harishdarko.caselens.triage.GroqTriageProvider.httpRequest(GroqTriageProvider.java:117)
+	at com.harishdarko.caselens.triage.GroqTriageProvider.send(GroqTriageProvider.java:175)
+	...(89 remaining lines not displayed - this can be changed with Assertions.setMaxStackTraceElementsDisplayed)
+[ERROR]   RateLimitWaitTest.givesUpOnlyWhenTheLimitClearsAfterTheLatestMomentTheRedeliveryCouldWaitFor:68 
+expected: RETRY_LATER
+ but was: GIVE_UP
+[ERROR]   RateLimitWaitTest.roundsSubMillisecondPositiveHttpDateWaitUpToOneMillisecond:56 [sub-millisecond positive wait must not truncate to sleep(0)] 
+Expecting actual:
+  Optional[PT0S]
+to contain:
+  0.001S
+but did not.
+[ERROR]   TriageWorkerTest.aRateLimitIsJudgedAgainstWhenThisDeliveryWasReceivedNotAFixedWait:595 
+expected: RETRY
+ but was: ACK
+[ERROR]   TriageWorkerTest.skipsProviderAndBudgetWhenRemainingLambdaTimeIsBelowOneUsefulAttempt:380 
+expected: RETRY
+ but was: ACK
+[INFO] 
+[ERROR] Tests run: 76, Failures: 8, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  26.274 s
+[INFO] Finished at: 2026-11-23T19:23:56-05:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.6:test (default-test) on project caselens: There are test failures.
+[ERROR] 
+[ERROR] See C:\Users\haris\AppData\Local\Temp\claude\709ccf4a7683d012\e1e7da2e-1c1f-4399-81ef-fb0aa4d2e0ab\scratchpad\neon-build-pr33\backend\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

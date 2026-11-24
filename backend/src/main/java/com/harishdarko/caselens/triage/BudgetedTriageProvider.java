@@ -10,8 +10,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Spends one unit of the global daily AI budget, and of the calling client's daily share of it, before the first
- * provider call of each queued job (a redelivery of the same job spends nothing more; see AiCallBudget). When either is spent it throws a provider failure, and TriageEngine answers with the rules fallback as it does
- * for any other provider failure. The error code on the model-invocation record says which one ran out.
+ * provider call of each delivery of a queued job (a rate-limited job has at most 2 deliveries, so it spends at most 2
+ * units; the in-call retry shares its delivery's unit; see AiCallBudget). When either is spent, or the check itself
+ * fails, it throws and the provider is never called: TriageEngine answers with the rules fallback as it does for any
+ * other provider failure. The error code on the model-invocation record says which one ran out.
  */
 public final class BudgetedTriageProvider implements TriageProvider {
     private static final Logger log = LoggerFactory.getLogger(BudgetedTriageProvider.class);
@@ -36,7 +38,11 @@ public final class BudgetedTriageProvider implements TriageProvider {
 
     @Override
     public ProviderCall analyze(TriageRequest request, RedactedTicket redactedTicket) {
-        switch (budget.tryAcquire(clientKeyOf(request.ticketId()), request.eventId())) {
+        // Nothing is spent when there is no time for a call; the provider checks again after the lookups below.
+        if (request.outOfTime()) {
+            throw new ProviderCallException("Too little time left for a provider call", TriageRequest.TIME_BUDGET_EXHAUSTED);
+        }
+        switch (budget.tryAcquire(clientKeyOf(request.ticketId()))) {
             case CLIENT_SHARE_SPENT -> throw new ProviderCallException(
                     "This client's daily share of AI calls is spent", SHARE_EXHAUSTED);
             case BUDGET_SPENT -> throw new ProviderCallException("The daily AI call budget is spent", BUDGET_EXHAUSTED);

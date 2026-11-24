@@ -5,8 +5,12 @@ import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionOperations;
@@ -98,12 +102,15 @@ public class TriageWorker {
      * {@code receiveCount} is SQS's ApproximateReceiveCount for this delivery (1 for the first), or 0 when unknown.
      * Before RATE_LIMIT_DELIVERIES a rate-limited provider call ends the attempt as a retryable failure and SQS
      * delivers the message again after its visibility timeout. {@code remainingMillis} is the Lambda's remaining time
-     * (null outside Lambda); the provider call gets it less POST_CALL_RESERVE.
+     * (null outside Lambda); the provider call gets it less POST_CALL_RESERVE, read when the provider needs it. A
+     * delivery with too little time left for a useful provider call makes none, spends no AI budget and ends as a
+     * retryable failure, or falls back to the rules on the final delivery.
      */
     public WorkerResult process(QueueMessage message, int receiveCount, LongSupplier remainingMillis) {
         Timer.Sample latency = metrics.startLatency();
+        Instant received = clock.instant();
         try {
-            return processInternal(message, receiveCount <= 0 || receiveCount >= RATE_LIMIT_DELIVERIES, remainingMillis);
+            return processInternal(message, receiveCount <= 0 || receiveCount >= RATE_LIMIT_DELIVERIES, remainingMillis, received);
         } finally {
             metrics.stopLatency(latency);
         }
@@ -118,8 +125,15 @@ public class TriageWorker {
      * final writes only land while this worker still owns the claim (see stillOwned). Each step takes the ticket row
      * lock before it touches the job (see lockTicket).
      */
-    private WorkerResult processInternal(QueueMessage message, boolean finalDelivery, LongSupplier remainingMillis) {
-        Claim claim = transactions.execute(status -> claim(message));
+    private WorkerResult processInternal(QueueMessage message, boolean finalDelivery, LongSupplier remainingMillis,
+            Instant received) {
+        List<Runnable> afterClaim = new ArrayList<>();
+        Claim claim = transactions.execute(status -> {
+            afterClaim.clear();
+            return claim(message, afterClaim);
+        });
+        // After the commit, like complete(): counts and lines only describe what was saved.
+        afterClaim.forEach(Runnable::run);
         if (claim.outcome() != null) return claim.outcome();
         TriageJob job = claim.job();
         Ticket ticket = claim.ticket();
@@ -130,12 +144,20 @@ public class TriageWorker {
             }
             TriageRequest request = new TriageRequest(ticket.getId(), ticket.getSubject(), ticket.getMessage(),
                     ticket.getChannel(), 0, packs.forWorkspace(job.getWorkspaceId()));
-            // Measured here, after the claim and the pack lookup, so slow database work before the call is counted.
-            Duration timeBudget = remainingMillis == null ? null
-                    : Duration.ofMillis(remainingMillis.getAsLong()).minus(POST_CALL_RESERVE);
-            decision = engine.triage(request.withCallContext(job.getEventId(), timeBudget), job.getEventId(), finalDelivery);
+            // Both are read when a provider needs them, not here: database work between now and the call (the AI
+            // budget check) must count against the time left, and SQS's visibility clock runs from the receipt.
+            Supplier<Duration> timeBudget = remainingMillis == null ? null
+                    : () -> Duration.ofMillis(remainingMillis.getAsLong()).minus(POST_CALL_RESERVE);
+            Supplier<Duration> sinceReceived = () -> Duration.between(received, clock.instant());
+            decision = engine.triage(request.withCallContext(timeBudget, sinceReceived), job.getEventId(), finalDelivery);
         } catch (RuntimeException failure) {
-            return transactions.execute(status -> recordFailure(message, claim, failure));
+            List<Runnable> afterFailure = new ArrayList<>();
+            WorkerResult failed = transactions.execute(status -> {
+                afterFailure.clear();
+                return recordFailure(message, claim, failure, afterFailure);
+            });
+            afterFailure.forEach(Runnable::run);
+            return failed;
         }
         WorkerResult outcome = transactions.execute(status -> complete(message, claim, decision));
         // After the commit, so the counts and lines only ever describe a result that was saved.
@@ -150,42 +172,44 @@ public class TriageWorker {
         return outcome;
     }
 
-    private Claim claim(QueueMessage message) {
+    private Claim claim(QueueMessage message, List<Runnable> after) {
         lockTicket(message.ticketId(), message.workspaceId());
-        TriageJob job = jobs.findByEventId(message.eventId()).orElse(null);
-        if (job == null) {
-            metrics.terminalFailure();
+        TriageJob existing = jobs.findByEventId(message.eventId()).orElse(null);
+        if (existing == null) {
+            after.add(metrics::terminalFailure);
             return Claim.done(WorkerResult.terminal("INVALID_EVENT"));
         }
-        if (job.getStatus() == TriageJobStatus.COMPLETED) {
-            metrics.duplicateDelivery();
+        if (existing.getStatus() == TriageJobStatus.COMPLETED) {
+            after.add(metrics::duplicateDelivery);
             return Claim.done(WorkerResult.duplicate());
         }
-        if (job.getStatus() == TriageJobStatus.RETRYABLE_FAILURE && jobs.existsByReplayedFromJobId(job.getId())) {
+        if (existing.getStatus() == TriageJobStatus.RETRYABLE_FAILURE && jobs.existsByReplayedFromJobId(existing.getId())) {
             // A reviewer replayed this job after SQS gave up on it (a DLQ redrive can still bring the old message
             // back). The replacement owns the ticket now, so this delivery must not call the provider again.
-            metrics.duplicateDelivery();
-            log.info("triage.superseded_delivery correlationId={} workspaceId={} ticketId={} jobId={} eventId={}",
-                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId());
+            UUID supersededId = existing.getId();
+            after.add(metrics::duplicateDelivery);
+            after.add(() -> log.info("triage.superseded_delivery correlationId={} workspaceId={} ticketId={} jobId={} eventId={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), supersededId, message.eventId()));
             return Claim.done(WorkerResult.duplicate());
         }
-        if (!job.getWorkspaceId().equals(message.workspaceId()) || !job.getTicketId().equals(message.ticketId())) {
-            job.terminalFailure("INVALID_EVENT", clock.instant());
-            jobs.save(job);
-            metrics.terminalFailure();
-            log.warn("triage.invalid_event eventId={} jobId={} workspaceId={} ticketId={}",
-                    message.eventId(), job.getId(), message.workspaceId(), message.ticketId());
+        if (!existing.getWorkspaceId().equals(message.workspaceId()) || !existing.getTicketId().equals(message.ticketId())) {
+            UUID invalidId = existing.getId();
+            existing.terminalFailure("INVALID_EVENT", clock.instant());
+            jobs.save(existing);
+            after.add(metrics::terminalFailure);
+            after.add(() -> log.warn("triage.invalid_event eventId={} jobId={} workspaceId={} ticketId={}",
+                    message.eventId(), invalidId, message.workspaceId(), message.ticketId()));
             return Claim.done(WorkerResult.terminal("INVALID_EVENT"));
         }
         if (jobs.claimForProcessing(message.eventId(), clock.instant()) != 1) {
-            return Claim.done(claimNotTaken(message));
+            return Claim.done(claimNotTaken(message, after));
         }
-        job = jobs.findByEventId(message.eventId()).orElse(null);
+        TriageJob job = jobs.findByEventId(message.eventId()).orElse(null);
         if (job == null) {
-            metrics.terminalFailure();
+            after.add(metrics::terminalFailure);
             return Claim.done(WorkerResult.terminal("INVALID_EVENT"));
         }
-        closeAbandonedAttempts(message, job);
+        closeAbandonedAttempts(message, job, after);
         TriageAttempt attempt = attempts == null ? null
                 : attempts.save(TriageAttempt.processing(job.getId(), job.getAttemptCount(), clock.instant()));
 
@@ -197,7 +221,7 @@ public class TriageWorker {
                 attempt.fail(TriageAttemptStatus.TERMINAL_FAILURE, "TICKET_NOT_FOUND", clock.instant());
                 attempts.save(attempt);
             }
-            metrics.terminalFailure();
+            after.add(metrics::terminalFailure);
             return Claim.done(WorkerResult.terminal("TICKET_NOT_FOUND"));
         }
         ticket.processing(clock.instant());
@@ -220,7 +244,7 @@ public class TriageWorker {
      * timed out or died before it could record an outcome (and stillOwned stops it from writing one later). Close
      * those attempts as retryable failures so the timeline shows what happened instead of two live attempts.
      */
-    private void closeAbandonedAttempts(QueueMessage message, TriageJob job) {
+    private void closeAbandonedAttempts(QueueMessage message, TriageJob job, List<Runnable> after) {
         if (attempts == null) return;
         Instant now = clock.instant();
         for (TriageAttempt earlier : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId())) {
@@ -229,9 +253,10 @@ public class TriageWorker {
             }
             earlier.fail(TriageAttemptStatus.RETRYABLE_FAILURE, CLAIM_LEASE_EXPIRED, now);
             attempts.save(earlier);
-            log.warn("triage.claim_lease_expired correlationId={} workspaceId={} ticketId={} jobId={} eventId={} attempt={}",
-                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), message.eventId(),
-                    earlier.getAttemptNumber());
+            UUID jobId = job.getId();
+            int attemptNumber = earlier.getAttemptNumber();
+            after.add(() -> log.warn("triage.claim_lease_expired correlationId={} workspaceId={} ticketId={} jobId={} eventId={} attempt={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), jobId, message.eventId(), attemptNumber));
         }
     }
 
@@ -241,18 +266,18 @@ public class TriageWorker {
      * would leave the job stuck in PROCESSING if that worker dies, so ask SQS to deliver it again: the next delivery
      * sees the finished job or a lapsed lease. maxReceiveCount bounds the retries.
      */
-    private WorkerResult claimNotTaken(QueueMessage message) {
+    private WorkerResult claimNotTaken(QueueMessage message, List<Runnable> after) {
         TriageJobStatus status = jobs.findByEventId(message.eventId()).map(TriageJob::getStatus).orElse(null);
         if (status == null) {
-            metrics.terminalFailure();
+            after.add(metrics::terminalFailure);
             return WorkerResult.terminal("INVALID_EVENT");
         }
         if (status == TriageJobStatus.COMPLETED || status == TriageJobStatus.TERMINAL_FAILURE) {
-            metrics.duplicateDelivery();
+            after.add(metrics::duplicateDelivery);
             return WorkerResult.duplicate();
         }
-        log.info("triage.claim_held correlationId={} workspaceId={} ticketId={} eventId={} status={}",
-                message.correlationId(), message.workspaceId(), message.ticketId(), message.eventId(), status);
+        after.add(() -> log.info("triage.claim_held correlationId={} workspaceId={} ticketId={} eventId={} status={}",
+                message.correlationId(), message.workspaceId(), message.ticketId(), message.eventId(), status));
         return WorkerResult.retry("CLAIM_HELD");
     }
 
@@ -303,7 +328,8 @@ public class TriageWorker {
                 known.failedCheck() == null ? "none" : known.failedCheck(), known.reason());
     }
 
-    private WorkerResult recordFailure(QueueMessage message, Claim claim, RuntimeException failure) {
+    /** The metrics and log lines go in {@code after}, which the caller runs once the transaction has committed. */
+    private WorkerResult recordFailure(QueueMessage message, Claim claim, RuntimeException failure, List<Runnable> after) {
         lockTicket(claim.job().getTicketId(), claim.job().getWorkspaceId());
         if (!stillOwned(message, claim)) return WorkerResult.retry("CLAIM_LOST");
         TriageJob job = claim.job();
@@ -319,9 +345,9 @@ public class TriageWorker {
                 attempt.fail(TriageAttemptStatus.RETRYABLE_FAILURE, errorCode, clock.instant());
                 attempts.save(attempt);
             }
-            metrics.retryableFailure();
-            log.warn("triage.synthetic_demo_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
-                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), errorCode);
+            after.add(metrics::retryableFailure);
+            after.add(() -> log.warn("triage.synthetic_demo_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), errorCode));
             return WorkerResult.ack();
         }
         FailureClassification classification = classifier.classify(failure);
@@ -334,9 +360,9 @@ public class TriageWorker {
                 attempt.fail(TriageAttemptStatus.RETRYABLE_FAILURE, classification.errorCode(), clock.instant());
                 attempts.save(attempt);
             }
-            metrics.retryableFailure();
-            log.warn("triage.retryable_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
-                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), classification.errorCode());
+            after.add(metrics::retryableFailure);
+            after.add(() -> log.warn("triage.retryable_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
+                    message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), classification.errorCode()));
             return WorkerResult.retry(classification.errorCode());
         }
         job.terminalFailure(classification.errorCode(), clock.instant());
@@ -347,9 +373,9 @@ public class TriageWorker {
             attempt.fail(TriageAttemptStatus.TERMINAL_FAILURE, classification.errorCode(), clock.instant());
             attempts.save(attempt);
         }
-        metrics.terminalFailure();
-        log.warn("triage.terminal_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
-                message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), classification.errorCode());
+        after.add(metrics::terminalFailure);
+        after.add(() -> log.warn("triage.terminal_failure correlationId={} workspaceId={} ticketId={} jobId={} errorCode={}",
+                message.correlationId(), message.workspaceId(), message.ticketId(), job.getId(), classification.errorCode()));
         return WorkerResult.terminal(classification.errorCode());
     }
 

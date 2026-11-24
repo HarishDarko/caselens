@@ -96,6 +96,27 @@ class TriageEngineTest {
     }
 
     @Test
+    void insufficientTimeBudgetRetriesBeforeTheFinalDeliveryAndFallsBackOnTheFinalOne() {
+        AtomicReference<ModelInvocationRecord> invocation = new AtomicReference<>();
+        TriageEngine engine = new TriageEngine(new TicketRedactor(),
+                failing(new ProviderCallException("no time", "TIME_BUDGET_EXHAUSTED")),
+                new RulesFallbackProvider(), new SemanticValidator(PolicyCatalog.defaultCatalog()), new PriorityScorer(),
+                invocation::set, Clock.systemUTC());
+        UUID eventId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> engine.triage(request, eventId, false))
+                .isInstanceOf(ProviderCallException.class)
+                .extracting(failure -> ((ProviderCallException) failure).errorCode())
+                .isEqualTo("TIME_BUDGET_EXHAUSTED");
+        assertThat(invocation.get().sanitizedErrorCode()).isEqualTo("TIME_BUDGET_EXHAUSTED");
+
+        TriageDecision last = engine.triage(request, eventId, true);
+        assertThat(last.decisionSource()).isEqualTo(DecisionSource.RULES_FALLBACK);
+        assertThat(last.fallbackReason()).isEqualTo(FallbackReason.PROVIDER_UNAVAILABLE);
+        assertThat(last.fallback().errorCode()).isEqualTo("TIME_BUDGET_EXHAUSTED");
+    }
+
+    @Test
     void otherFailuresFallBackOnEveryDelivery() {
         for (RuntimeException failure : java.util.List.of(new ProviderCallException("down", "HTTP_503"),
                 new ProviderCallException("too large", "HTTP_413"),

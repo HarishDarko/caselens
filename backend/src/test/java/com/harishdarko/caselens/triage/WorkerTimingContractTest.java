@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
  * <li>The claim lease outlives the Lambda, and the visibility timeout outlives the lease, so a redelivery never meets
  * the live claim of a worker that is still running.</li>
  * <li>A rate-limited job is retried by at most one SQS redelivery, so a visitor waits at most one visibility timeout
- * plus one worker run, inside the page's 150 s wait; and the wait that falls back at once is one that a single
- * redelivery could not cure.</li>
+ * plus one worker run, inside the page's 150 s wait; and a limit falls back at once when it would still stand after
+ * the latest moment the redelivery's own call could wait for it, measured from the first delivery's receipt.</li>
  * <li>The worker's last delivery is SQS's maxReceiveCount, so no failure the worker handles reaches the DLQ.</li>
  * </ul>
  */
@@ -59,7 +59,29 @@ class WorkerTimingContractTest {
         assertThat(TriageWorker.RATE_LIMIT_DELIVERIES).isEqualTo(2);
         assertThat(visibility.multipliedBy(TriageWorker.RATE_LIMIT_DELIVERIES - 1).plus(workerTimeout))
                 .isLessThanOrEqualTo(PAGE_WAIT);
-        assertThat(RateLimitWait.LONG_WAIT).isLessThan(visibility);
+        assertThat(RateLimitWait.REDELIVERY_DELAY).isEqualTo(visibility);
+    }
+
+    @Test
+    void theWorstCaseFromFirstDeliveryToFinalAnswerStaysInsideThePagesWait() {
+        Duration workerTimeout = Duration.ofSeconds(number(block("resource \"aws_lambda_function\" \"worker\""), "timeout"));
+        Duration visibility = Duration.ofSeconds(number(block("resource \"aws_sqs_queue\" \"triage\""), "visibility_timeout_seconds"));
+
+        // The redelivery starts a visibility timeout after the first receipt, waits in its call for at most the call
+        // budget, then needs the post-call reserve for the saves: 90 + 45 + 14 = 149 s.
+        for (Duration callBudget : java.util.List.of(GroqTriageProvider.CALL_BUDGET, GeminiTriageProvider.CALL_BUDGET)) {
+            assertThat(visibility.plus(callBudget).plus(TriageWorker.POST_CALL_RESERVE)).isLessThanOrEqualTo(PAGE_WAIT);
+        }
+        assertThat(visibility.plus(workerTimeout)).isLessThanOrEqualTo(PAGE_WAIT);
+        // Both providers use the same margins, which RETRY_HORIZON is built from.
+        assertThat(GeminiTriageProvider.CALL_BUDGET).isEqualTo(GroqTriageProvider.CALL_BUDGET);
+        assertThat(GeminiTriageProvider.CONNECT_ALLOWANCE).isEqualTo(GroqTriageProvider.CONNECT_ALLOWANCE);
+        assertThat(GeminiTriageProvider.MIN_RETRY_TIMEOUT).isEqualTo(GroqTriageProvider.MIN_RETRY_TIMEOUT);
+        // A limit that clears at the horizon is waited out by the redelivery with its retry still inside the budget.
+        assertThat(RateLimitWait.RETRY_HORIZON.plus(RateLimitWait.SLEEP_OVERSHOOT).plus(GroqTriageProvider.CONNECT_ALLOWANCE)
+                .plus(GroqTriageProvider.MIN_RETRY_TIMEOUT)).isEqualTo(visibility.plus(GroqTriageProvider.CALL_BUDGET));
+        assertThat(RateLimitWait.RETRY_HORIZON).isEqualTo(Duration.ofSeconds(127));
+        assertThat(TriageRequest.MIN_ATTEMPT_BUDGET).isEqualTo(GroqTriageProvider.CONNECT_ALLOWANCE.plusSeconds(1));
     }
 
     @Test

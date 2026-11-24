@@ -48,6 +48,34 @@ class RateLimitWaitTest {
     }
 
     @Test
+    void roundsSubMillisecondPositiveHttpDateWaitUpToOneMillisecond() {
+        Clock halfMillisBefore = Clock.fixed(Instant.parse("2026-11-23T12:00:00.999500Z"), ZoneOffset.UTC);
+
+        assertThat(RateLimitWait.choose(headers(Map.of("retry-after", "Mon, 23 Nov 2026 12:00:01 GMT")), halfMillisBefore))
+                .as("sub-millisecond positive wait must not truncate to sleep(0)")
+                .contains(Duration.ofMillis(1));
+    }
+
+    @Test
+    void givesUpOnlyWhenTheLimitClearsAfterTheLatestMomentTheRedeliveryCouldWaitFor() {
+        java.net.http.HttpHeaders eightyFive = headers(Map.of("retry-after", "85"));
+        Duration budget = GroqTriageProvider.CALL_BUDGET;
+        Duration connect = GroqTriageProvider.CONNECT_ALLOWANCE;
+        Duration minRetry = GroqTriageProvider.MIN_RETRY_TIMEOUT;
+
+        // 127 s is the horizon, measured from receipt: 85 s asked after 42 s clears exactly at it, after 43 s it does not.
+        assertThat(RateLimitWait.decide(eightyFive, CLOCK, Duration.ofSeconds(1), budget, connect, minRetry, Duration.ofSeconds(1)).kind())
+                .isEqualTo(RateLimitWait.Decision.Kind.RETRY_LATER);
+        assertThat(RateLimitWait.decide(eightyFive, CLOCK, Duration.ofSeconds(1), budget, connect, minRetry, Duration.ofSeconds(42)).kind())
+                .isEqualTo(RateLimitWait.Decision.Kind.RETRY_LATER);
+        assertThat(RateLimitWait.decide(eightyFive, CLOCK, Duration.ofSeconds(1), budget, connect, minRetry, Duration.ofSeconds(43)).kind())
+                .isEqualTo(RateLimitWait.Decision.Kind.GIVE_UP);
+        // A wait that fits the call budget is always waited out, whatever the clock since receipt says.
+        assertThat(RateLimitWait.decide(headers(Map.of("retry-after", "8")), CLOCK, Duration.ZERO, budget, connect, minRetry,
+                Duration.ofSeconds(200)).kind()).isEqualTo(RateLimitWait.Decision.Kind.WAIT);
+    }
+
+    @Test
     void retryAfterWinsOverTheResetHeaders() {
         assertThat(RateLimitWait.choose(headers(Map.of("retry-after", "3", "x-ratelimit-reset-tokens", "9.5s")), CLOCK))
                 .contains(Duration.ofSeconds(3));

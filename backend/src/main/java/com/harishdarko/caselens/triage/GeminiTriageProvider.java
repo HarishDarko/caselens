@@ -27,7 +27,6 @@ public final class GeminiTriageProvider implements TriageProvider {
     static final Duration CALL_BUDGET = Duration.ofSeconds(45);
     static final Duration CONNECT_ALLOWANCE = Duration.ofSeconds(2);
     static final Duration MIN_RETRY_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration MIN_FIRST_TIMEOUT = Duration.ofSeconds(1);
     private final URI endpoint;
     private final String apiKey;
     private final String model;
@@ -73,9 +72,14 @@ public final class GeminiTriageProvider implements TriageProvider {
     public ProviderCall analyze(TriageRequest request, RedactedTicket redactedTicket) {
         Objects.requireNonNull(request);
         Objects.requireNonNull(redactedTicket);
-        long started = nanoTime.getAsLong();
         String body = requestBody(request, redactedTicket);
-        HttpResponse<String> response = sendWithOneTransientRetry(body, started, request.callBudget(callBudget));
+        long started = nanoTime.getAsLong();
+        // Read now, after anything the caller did first (the AI budget check), so that time is already counted.
+        Duration budget = request.callBudget(callBudget);
+        if (budget.compareTo(TriageRequest.MIN_ATTEMPT_BUDGET) < 0) {
+            throw new ProviderCallException("Too little time left for a Gemini call", TriageRequest.TIME_BUDGET_EXHAUSTED);
+        }
+        HttpResponse<String> response = sendWithOneTransientRetry(body, started, budget, request);
         if (response.body().length() > MAX_RESPONSE_CHARS) {
             throw new ProviderCallException("Gemini provider response was too large", "RESPONSE_TOO_LARGE");
         }
@@ -119,28 +123,29 @@ public final class GeminiTriageProvider implements TriageProvider {
      * asked wait fits, end as HTTP_429 for one SQS redelivery when it does not, and as RATE_LIMIT_LONG_WAIT when no
      * redelivery could cure it. A 429 without a wait, and a 5xx, are retried after a short jitter.
      */
-    private HttpResponse<String> sendWithOneTransientRetry(String body, long started, Duration budget) {
+    private HttpResponse<String> sendWithOneTransientRetry(String body, long started, Duration budget, TriageRequest request) {
+        // The caller checked budget >= MIN_ATTEMPT_BUDGET (connect allowance + 1 s), so this is at least 1 s.
         Duration timeout = attemptTimeout(started, budget);
-        if (timeout.compareTo(MIN_FIRST_TIMEOUT) < 0) timeout = MIN_FIRST_TIMEOUT;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
                 HttpResponse<String> response = client.send(httpRequest(body, timeout), HttpResponse.BodyHandlers.ofString());
                 int status = response.statusCode();
                 if (status >= 200 && status < 300) return response;
-                if (attempt == 0 && (status == 429 || status >= 500)) {
-                    Duration wait = Duration.ZERO;
-                    if (status == 429) {
-                        Duration elapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - started));
-                        RateLimitWait.Decision decision = RateLimitWait.decide(response.headers(), clock, elapsed, budget,
-                                CONNECT_ALLOWANCE, MIN_RETRY_TIMEOUT);
-                        switch (decision.kind()) {
-                            case GIVE_UP -> throw new ProviderCallException(
-                                    "Gemini provider rate limit lasts longer than a redelivery", RateLimitWait.LONG_WAIT_CODE);
-                            case RETRY_LATER -> throw new ProviderCallException(
-                                    "Gemini provider rate limit outlasts the call budget", "HTTP_429");
-                            case WAIT, RETRY_NOW -> wait = decision.delay();
-                        }
+                Duration wait = Duration.ZERO;
+                if (status == 429) {
+                    // On any attempt: a wait no redelivery could cure ends the call at once, a 2nd-attempt 429 included.
+                    Duration elapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - started));
+                    RateLimitWait.Decision decision = RateLimitWait.decide(response.headers(), clock, elapsed, budget,
+                            CONNECT_ALLOWANCE, MIN_RETRY_TIMEOUT, request.sinceReceived(elapsed));
+                    switch (decision.kind()) {
+                        case GIVE_UP -> throw new ProviderCallException(
+                                "Gemini provider rate limit lasts longer than a redelivery", RateLimitWait.LONG_WAIT_CODE);
+                        case RETRY_LATER -> throw new ProviderCallException(
+                                "Gemini provider rate limit outlasts the call budget", "HTTP_429");
+                        case WAIT, RETRY_NOW -> wait = decision.delay();
                     }
+                }
+                if (attempt == 0 && (status == 429 || status >= 500)) {
                     pause(wait.isZero() ? jitter() : wait);
                     timeout = attemptTimeout(started, budget);
                     // Too little budget left for a useful retry: fail now so the rules fallback still has time.

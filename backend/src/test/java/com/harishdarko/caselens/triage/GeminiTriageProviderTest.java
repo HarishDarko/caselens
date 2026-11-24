@@ -147,7 +147,7 @@ class GeminiTriageProviderTest {
         GeminiTriageProvider provider = new GeminiTriageProvider(
                 URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
                 "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
-                new ObjectMapper(), Duration.ofSeconds(2), () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> 0L,
+                new ObjectMapper(), Duration.ofSeconds(30), () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> 0L,
                 sleeps::add, Clock.systemUTC());
         RedactedTicket ticket = new RedactedTicket("Payment accepted", "Payment accepted but session never started.");
 
@@ -157,7 +157,7 @@ class GeminiTriageProviderTest {
 
         calls.set(0);
         sleeps.clear();
-        retryAfter.set("120");
+        retryAfter.set("128");
         assertThatThrownBy(() -> provider.analyze(request(), ticket))
                 .extracting(exception -> ((ProviderCallException) exception).errorCode())
                 .isEqualTo("RATE_LIMIT_LONG_WAIT");
@@ -171,6 +171,56 @@ class GeminiTriageProviderTest {
                 .extracting(exception -> ((ProviderCallException) exception).errorCode())
                 .isEqualTo("HTTP_429");
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void neverClampsAZeroOrTinyTimeBudgetUpToAnHttpCall() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/interactions", exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 200, validResponse());
+        });
+        server.start();
+        GeminiTriageProvider provider = new GeminiTriageProvider(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
+                "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(30), () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> 0L,
+                millis -> { }, Clock.systemUTC());
+        RedactedTicket ticket = new RedactedTicket("Payment accepted", "Payment accepted but session never started.");
+
+        for (Duration insufficient : List.of(Duration.ofSeconds(-4), Duration.ZERO, Duration.ofMillis(2_999))) {
+            assertThatThrownBy(() -> provider.analyze(request().withTimeBudget(insufficient), ticket))
+                    .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                    .isEqualTo("TIME_BUDGET_EXHAUSTED");
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void aLongWaitRateLimitOnTheSecondAttemptAlsoGivesUpImmediately() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/interactions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                respond(exchange, 503, "transient");
+            } else {
+                exchange.getResponseHeaders().add("retry-after", "25920");
+                respond(exchange, 429, "daily limit");
+            }
+        });
+        server.start();
+        GeminiTriageProvider provider = new GeminiTriageProvider(
+                URI.create("http://localhost:" + server.getAddress().getPort() + "/v1/interactions"),
+                "secret-key", "gemini-3.5-flash", HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                new ObjectMapper(), Duration.ofSeconds(30), () -> 0, GeminiTriageProvider.CALL_BUDGET, () -> 0L,
+                millis -> { }, Clock.systemUTC());
+
+        assertThatThrownBy(() -> provider.analyze(request(),
+                new RedactedTicket("Payment accepted", "Payment accepted but session never started.")))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("RATE_LIMIT_LONG_WAIT");
+        assertThat(calls).hasValue(2);
     }
 
     private GeminiTriageProvider provider() {

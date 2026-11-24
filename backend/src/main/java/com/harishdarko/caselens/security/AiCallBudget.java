@@ -15,13 +15,15 @@ import java.time.ZoneOffset;
  * <p>The share stops one client from spending the whole day's budget for everyone: past it, that client's triage uses
  * the rules provider while other visitors still get AI answers. A client is the network that opened the workspace
  * (see {@link ClientAddresses#clientKey}).
+ *
+ * <p>One unit is charged for each delivery of a queued job that makes a provider call; there is no per-job marker. A
+ * rate-limited job gets at most 2 deliveries (TriageWorker.RATE_LIMIT_DELIVERIES), so it costs at most 2 units: its
+ * in-call retry shares the delivery's unit, and a redelivery pays for its own. A denied or failed check never leads
+ * to a provider call: the caller sees the denial or the exception and falls back to the rules.
  */
 public final class AiCallBudget {
     static final String KEY_PREFIX = "ai-calls:";
     static final String CLIENT_SHARE_KEY_PREFIX = "ai-share:";
-    static final String EVENT_KEY_PREFIX = "ai-event:";
-    /** Longer than every delivery of one job: SQS gives up on a message within about 10 minutes. */
-    static final Duration EVENT_WINDOW = Duration.ofMinutes(30);
     private final RateLimitService limits;
     private final Clock clock;
     private final int dailyLimit;
@@ -73,24 +75,6 @@ public final class AiCallBudget {
         } catch (RateLimitExceededException spent) {
             return Grant.BUDGET_SPENT;
         }
-    }
-
-    /**
-     * Like {@link #tryAcquire(String)}, but once per queued job: the first delivery of an event counts the call, and
-     * every later delivery of the same event (an SQS redelivery after a rate limit or a crash) is granted without
-     * counting again, so a redelivery never costs a visitor a second unit of their share. The marker is one more
-     * rate-limit bucket with a limit of 1, so it is shared by every worker instance. A null event counts every call.
-     */
-    public Grant tryAcquire(String clientKey, java.util.UUID eventId) {
-        if (eventId != null) {
-            if (dailyLimit == 0) return Grant.BUDGET_SPENT;
-            try {
-                limits.acquire(EVENT_KEY_PREFIX + eventId, 1, EVENT_WINDOW);
-            } catch (RateLimitExceededException alreadyCounted) {
-                return Grant.GRANTED;
-            }
-        }
-        return tryAcquire(clientKey);
     }
 
     public int dailyLimit() { return dailyLimit; }

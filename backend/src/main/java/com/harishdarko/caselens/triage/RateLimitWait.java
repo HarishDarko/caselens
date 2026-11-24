@@ -20,19 +20,26 @@ import java.util.regex.Pattern;
  * <li>{@link Decision.Kind#RETRY_NOW}: no wait was given; retry after a short jitter.</li>
  * <li>{@link Decision.Kind#WAIT}: the wait, a sleep-overshoot margin, the connect allowance and a useful retry all fit
  * in what is left of the call budget; sleep, then retry once.</li>
- * <li>{@link Decision.Kind#RETRY_LATER}: it does not fit; end the call as HTTP_429 so the worker can leave the job for
- * one SQS redelivery.</li>
- * <li>{@link Decision.Kind#GIVE_UP}: the wait is longer than one redelivery could cure (a daily limit, say); end the
- * call as RATE_LIMIT_LONG_WAIT, which falls back to the rules at once.</li>
+ * <li>{@link Decision.Kind#RETRY_LATER}: it does not fit, but the limit clears before the redelivery's own call could
+ * get past it; end the call as HTTP_429 so the worker can leave the job for one SQS redelivery.</li>
+ * <li>{@link Decision.Kind#GIVE_UP}: the limit would still stand when the redelivery's call could no longer wait for
+ * it (a daily limit, say); end the call as RATE_LIMIT_LONG_WAIT, which falls back to the rules at once.</li>
  * </ul>
  */
 final class RateLimitWait {
-    /** Longer than this, one SQS redelivery (90 s visibility) would most likely meet the same limit. */
-    static final Duration LONG_WAIT = Duration.ofSeconds(75);
+    /** The triage queue's visibility timeout: SQS hands an unacknowledged message out again this long after receipt. */
+    static final Duration REDELIVERY_DELAY = Duration.ofSeconds(90);
     /** A parsed wait is clamped to this, so no header value can overflow. */
     static final Duration MAX_WAIT = Duration.ofDays(1);
     /** Thread.sleep wakes late; an approved wait keeps this much extra, so the retry still has its minimum time. */
     static final Duration SLEEP_OVERSHOOT = Duration.ofSeconds(1);
+    /**
+     * Measured from when a delivery was received, the latest moment a rate limit can clear and still be cured by the
+     * redelivery: it starts REDELIVERY_DELAY after the receipt and can then wait in its own call for all but the
+     * overshoot margin, the connect allowance and the minimum retry. A limit that clears later gives up at once.
+     */
+    static final Duration RETRY_HORIZON = REDELIVERY_DELAY.plus(GroqTriageProvider.CALL_BUDGET)
+            .minus(SLEEP_OVERSHOOT).minus(GroqTriageProvider.CONNECT_ALLOWANCE).minus(GroqTriageProvider.MIN_RETRY_TIMEOUT);
     static final String LONG_WAIT_CODE = "RATE_LIMIT_LONG_WAIT";
     private static final String NUMBER = "\\d+(?:\\.\\d+)?";
     private static final Pattern SECONDS = Pattern.compile(NUMBER);
@@ -57,16 +64,18 @@ final class RateLimitWait {
     /**
      * What to do about a 429, given how long the call has run and its budget. {@code minRetry} and
      * {@code connectAllowance} are the provider's own: a retry gets at least {@code minRetry} after the connect
-     * allowance.
+     * allowance. {@code sinceReceived} is the time since the queue handed over this delivery: the limit clears at
+     * {@code sinceReceived + wait} on that clock, which is judged against RETRY_HORIZON, not a fixed wait.
      */
     static Decision decide(HttpHeaders headers, Clock clock, Duration elapsed, Duration budget, Duration connectAllowance,
-            Duration minRetry) {
+            Duration minRetry, Duration sinceReceived) {
         Optional<Duration> asked = choose(headers, clock);
         if (asked.isEmpty()) return new Decision(Decision.Kind.RETRY_NOW, Duration.ZERO);
         Duration wait = asked.get();
-        if (wait.compareTo(LONG_WAIT) > 0) return new Decision(Decision.Kind.GIVE_UP, wait);
         Duration needed = elapsed.plus(wait).plus(SLEEP_OVERSHOOT).plus(connectAllowance).plus(minRetry);
-        return needed.compareTo(budget) <= 0 ? new Decision(Decision.Kind.WAIT, wait) : new Decision(Decision.Kind.RETRY_LATER, wait);
+        if (needed.compareTo(budget) <= 0) return new Decision(Decision.Kind.WAIT, wait);
+        return sinceReceived.plus(wait).compareTo(RETRY_HORIZON) > 0 ? new Decision(Decision.Kind.GIVE_UP, wait)
+                : new Decision(Decision.Kind.RETRY_LATER, wait);
     }
 
     /**
@@ -116,7 +125,9 @@ final class RateLimitWait {
             ZonedDateTime when = ZonedDateTime.parse(value.strip(), DateTimeFormatter.RFC_1123_DATE_TIME);
             Duration wait = Duration.between(clock.instant(), when.toInstant());
             if (wait.isNegative()) return Optional.of(Duration.ZERO);
-            return Optional.of(wait.compareTo(MAX_WAIT) > 0 ? MAX_WAIT : wait);
+            if (wait.compareTo(MAX_WAIT) > 0) return Optional.of(MAX_WAIT);
+            // Whole milliseconds, rounded up: a positive wait shorter than 1 ms must not become sleep(0).
+            return Optional.of(Duration.ofMillis(wait.toMillis() + (wait.toNanosPart() % 1_000_000 == 0 ? 0 : 1)));
         } catch (DateTimeParseException notADate) {
             return Optional.empty();
         }

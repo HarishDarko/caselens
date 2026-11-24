@@ -342,7 +342,7 @@ class GroqTriageProviderTest {
 
     @Test
     void aWaitLongerThanOneRedeliveryCouldCureFallsBackAtOnce() throws Exception {
-        for (Map<String, String> headers : List.of(Map.of("retry-after", "120"),
+        for (Map<String, String> headers : List.of(Map.of("retry-after", "128"),
                 Map.of("x-ratelimit-remaining-requests", "0", "x-ratelimit-reset-requests", "7h12m3s"))) {
             if (server != null) server.stop(0);
             AtomicInteger calls = new AtomicInteger();
@@ -422,7 +422,7 @@ class GroqTriageProviderTest {
         });
         server.start();
         List<Long> sleeps = new ArrayList<>();
-        TriageRequest withTenSeconds = request().withCallContext(UUID.randomUUID(), Duration.ofSeconds(10));
+        TriageRequest withTenSeconds = request().withTimeBudget(Duration.ofSeconds(10));
 
         // 5 s fits the 45 s budget, but the Lambda has only 10 s to give: 5 + 1 + 2 + 5 > 10.
         assertThatThrownBy(() -> timedProvider(() -> 0L, sleeps::add).analyze(withTenSeconds, ticket()))
@@ -444,11 +444,113 @@ class GroqTriageProviderTest {
                 .isEqualTo("RESPONSE_TRUNCATED");
     }
 
+    @Test
+    void neverClampsANegativeZeroOrTinyTimeBudgetUpToAnHttpCall() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            respond(exchange, 200, validResponse());
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+
+        for (Duration insufficient : List.of(Duration.ofSeconds(-4), Duration.ZERO, Duration.ofMillis(2_999))) {
+            assertThatThrownBy(() -> timedProvider(() -> 0L, sleeps::add)
+                    .analyze(request().withTimeBudget(insufficient), ticket()))
+                    .as("budget=" + insufficient)
+                    .isInstanceOf(ProviderCallException.class)
+                    .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                    .isEqualTo("TIME_BUDGET_EXHAUSTED");
+        }
+        assertThat(calls).as("must never send an HTTP request below connect + min first timeout").hasValue(0);
+        assertThat(sleeps).isEmpty();
+
+        // Exactly connect allowance (2 s) + minimum first timeout (1 s) = 3 s is allowed to run.
+        ProviderCall exact = timedProvider(() -> 0L, sleeps::add)
+                .analyze(request().withTimeBudget(Duration.ofSeconds(3)), ticket());
+        assertThat(exact.result().category()).isEqualTo(Category.of("BILLING"));
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void aLongWaitRateLimitOnTheSecondAttemptAlsoGivesUpImmediately() throws Exception {
+        for (int firstStatus : List.of(503, 429)) {
+            if (server != null) server.stop(0);
+            AtomicInteger calls = new AtomicInteger();
+            server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+            server.createContext("/openai/v1/chat/completions", exchange -> {
+                if (calls.incrementAndGet() == 1) {
+                    if (firstStatus == 429) exchange.getResponseHeaders().add("retry-after", "1");
+                    respond(exchange, firstStatus, "transient");
+                } else {
+                    exchange.getResponseHeaders().add("retry-after", "25920");
+                    respond(exchange, 429, "daily quota spent");
+                }
+            });
+            server.start();
+
+            assertThatThrownBy(() -> timedProvider(() -> 0L, millis -> { }).analyze(request(), ticket()))
+                    .as("firstStatus=" + firstStatus)
+                    .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                    .isEqualTo("RATE_LIMIT_LONG_WAIT");
+            assertThat(calls).hasValue(2);
+        }
+    }
+
+    @Test
+    void fastRateLimitWithinRedeliveryWindowRetriesLaterInsteadOfGivingUp() throws Exception {
+        SteppedClock clock = new SteppedClock();
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            clock.advance(Duration.ofSeconds(1));
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().add("retry-after", "80");
+            respond(exchange, 429, "rate limited");
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+
+        // At t = 1 s, an 80 s wait clears at t = 81 s, before the 90 s SQS redelivery even begins.
+        assertThatThrownBy(() -> timedProvider(clock.nanoTime(), clock.sleeper(sleeps)).analyze(request(), ticket()))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_429");
+        assertThat(calls).hasValue(1);
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test
+    void aSleepOvershootPastTheReserveMarginSkipsTheRetryWithoutSendingASecondCall() throws Exception {
+        SteppedClock clock = new SteppedClock();
+        AtomicInteger calls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/openai/v1/chat/completions", exchange -> {
+            clock.advance(Duration.ofSeconds(3));
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().add("retry-after", "34");
+            respond(exchange, 429, "rate limited");
+        });
+        server.start();
+        List<Long> sleeps = new ArrayList<>();
+        // Extreme OS pause: sleeper wakes 1.1 s late, leaving 45 - 3 - 35.1 - 2 = 4.9 s (< MIN_RETRY_TIMEOUT = 5 s).
+        RateLimitWait.Sleeper lateSleeper = millis -> {
+            sleeps.add(millis);
+            clock.advance(Duration.ofMillis(millis + 1_100));
+        };
+
+        assertThatThrownBy(() -> timedProvider(clock.nanoTime(), lateSleeper).analyze(request(), ticket()))
+                .extracting(exception -> ((ProviderCallException) exception).errorCode())
+                .isEqualTo("HTTP_429");
+        assertThat(sleeps).containsExactly(34_000L);
+        assertThat(calls).as("must abort post-sleep when remaining timeout is below MIN_RETRY_TIMEOUT").hasValue(1);
+    }
+
     private GroqTriageProvider timedProvider(LongSupplier nanoTime, RateLimitWait.Sleeper sleeper) {
         return new GroqTriageProvider(URI.create("http://localhost:" + server.getAddress().getPort()
                         + "/openai/v1/chat/completions"), "secret-key", "llama-3.1-8b-instant",
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(), new ObjectMapper(),
-                Duration.ofSeconds(2), () -> 0, GroqTriageProvider.CALL_BUDGET, nanoTime, sleeper);
+                Duration.ofSeconds(20), () -> 0, GroqTriageProvider.CALL_BUDGET, nanoTime, sleeper);
     }
 
     private GroqTriageProvider provider(String model) {
