@@ -6,8 +6,10 @@ events. It does not use fabricated dashboard values.
 - `categoryAgreementRate` and `urgencyAgreementRate` compare the original AI
   result with the seeded category and urgency for the synthetic scenario.
 - `agreementRate` requires both fields to match the seeded ground truth.
-- `correctionRate` is the share of stored triage results whose latest feedback
-  changes at least one supplied field. Same-value submissions are rejected.
+- `correctionRate` is the share of live triage results (the same population as
+  `triageResults`) whose latest feedback changes at least one supplied field.
+  Recorded results are left out of both the numerator and the denominator.
+  Same-value submissions are rejected.
 - `medianLatencyMs` and `p95LatencyMs` measure end-to-end persisted processing
   time from triage-job creation to result creation. Provider-call latency is
   separately persisted in `model_invocations` for operational analysis.
@@ -27,13 +29,15 @@ workspace (three per industry, `recorded = true`, no event, job or model call).
 They are measured and reviewed like any result, but they are not live runs:
 
 - `recordedResults` counts them. `triageResults`, `medianLatencyMs`,
-  `p95LatencyMs`, `failureRate`, `providerUsage` and `recentEvents` are live
-  only, and the Operations queue, fallback and provider figures leave them out.
+  `p95LatencyMs`, `correctionRate`, `failureRate`, `providerUsage` and
+  `recentEvents` are live only, and the Operations queue, fallback and provider figures leave them out.
 - `agreementRate` and its two parts include them (they are scored against the
   same ground truth), so a new workspace already has a benchmark figure.
 - `reviewedResults` counts results with a review, `acceptedResults` those whose
   latest review is `ACCEPTED`, `acceptanceRate` is accepted divided by reviewed
   and `overrideRate` is corrected divided by reviewed.
+- An event in `recentEvents` has `latencyMs` of `null` when it has no job to
+  measure from.
 - A figure with nothing to measure is `null`, never 0: no latency before a live
   run, no rate before a case or a review.
 

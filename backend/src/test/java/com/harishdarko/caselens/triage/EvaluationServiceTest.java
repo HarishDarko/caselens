@@ -239,6 +239,7 @@ class EvaluationServiceTest {
         assertThat(summary.medianLatencyMs()).isNull();
         assertThat(summary.p95LatencyMs()).isNull();
         assertThat(summary.failureRate()).isNull();
+        assertThat(summary.correctionRate()).isNull();
         assertThat(summary.agreementRate()).isNull();
         assertThat(summary.categoryAgreementRate()).isNull();
         assertThat(summary.urgencyAgreementRate()).isNull();
@@ -281,6 +282,49 @@ class EvaluationServiceTest {
         assertThat(summary.acceptanceRate()).isEqualTo(0.5);
         assertThat(summary.overrideRate()).isEqualTo(0.5);
         assertThat(summary.recordedResults()).isEqualTo(3);
+    }
+
+    @Test
+    void correctionRateCountsLiveResultsOnlyToMatchTriageResults() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID liveTicketA = UUID.randomUUID();
+        UUID liveTicketB = UUID.randomUUID();
+        UUID recordedTicket = UUID.randomUUID();
+        TriageResult liveCorrected = resultAt(workspaceId, liveTicketA, CREATED);
+        TriageResult liveUntouched = resultAt(workspaceId, liveTicketB, CREATED.plusSeconds(1));
+        TriageResult recorded = recordedAt(workspaceId, recordedTicket, CREATED.minusSeconds(60));
+        TriageFeedback liveCorrection = TriageFeedback.submit(UUID.randomUUID(), workspaceId, liveTicketA,
+                liveCorrected.getId(), null, Urgency.CRITICAL, null, "Escalate", "demo-reviewer", CREATED.plusSeconds(5));
+        TriageFeedback recordedCorrection = TriageFeedback.submit(UUID.randomUUID(), workspaceId, recordedTicket,
+                recorded.getId(), null, Urgency.CRITICAL, null, "Escalate", "demo-reviewer", CREATED.plusSeconds(6));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(recorded, liveCorrected, liveUntouched));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId))
+                .thenReturn(List.of(liveCorrection, recordedCorrection));
+        when(groundTruth.findAll()).thenReturn(List.of());
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.triageResults()).isEqualTo(2);
+        assertThat(summary.recordedResults()).isEqualTo(1);
+        // One of two live results corrected; the corrected recorded result is neither numerator nor denominator.
+        assertThat(summary.correctionRate()).isEqualTo(0.5);
+    }
+
+    @Test
+    void aLiveResultWithoutAJobHasNullEventLatencyNotZero() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        TriageResult live = result(workspaceId, ticketId);
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(live));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(invocations.findByTicketIds(List.of(ticketId))).thenReturn(List.of());
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.recentEvents()).singleElement().satisfies(event -> assertThat(event.latencyMs()).isNull());
     }
 
     private TriageResult recordedAt(UUID workspaceId, UUID ticketId, Instant capturedAt) {

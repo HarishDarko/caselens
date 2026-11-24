@@ -54,7 +54,7 @@ public class EvaluationService {
         int categoryMatches = 0;
         int urgencyMatches = 0;
         int fullMatches = 0;
-        int corrections = 0;
+        int liveCorrections = 0;
         int reviewed = 0;
         int accepted = 0;
         int overridden = 0;
@@ -67,7 +67,9 @@ public class EvaluationService {
                         .collect(java.util.stream.Collectors.toMap(TicketScenarioKey::id, ticket -> ticket));
         for (ResultFacts result : storedResults) {
             TriageFeedback correction = latestFeedback.get(result.id());
-            if (correction != null && correction.differsFrom(result)) corrections++;
+            if (correction != null && correction.differsFrom(result)) {
+                if (!result.recorded()) liveCorrections++;
+            }
             if (correction != null) {
                 reviewed++;
                 if (correction.getDecision() == FeedbackDecision.ACCEPTED) accepted++; else overridden++;
@@ -97,7 +99,7 @@ public class EvaluationService {
                 new JobInvocations(storedInvocations));
         return new EvaluationSummary(clock.instant(), liveResults.size(), evaluated,
                 ratio(categoryMatches, evaluated), ratio(urgencyMatches, evaluated), ratio(fullMatches, evaluated),
-                ratio(corrections, storedResults.size()), percentile(latencies, 0.50), percentile(latencies, 0.95),
+                ratio(liveCorrections, liveResults.size()), percentile(latencies, 0.50), percentile(latencies, 0.95),
                 ratio((int) latestJobs.values().stream().filter(this::isFailure).count(),
                         (int) latestJobs.values().stream().filter(this::isFinal).count()), usage(storedInvocations), recentEvents,
                 reviewed, accepted, ratio(accepted, reviewed), ratio(overridden, reviewed), recorded);
@@ -117,7 +119,7 @@ public class EvaluationService {
                     ModelInvocation invocation = job == null ? jobInvocations.latestForEvent(result.eventId())
                             : jobInvocations.latestFor(job);
                     return new EvaluationEvent(result.id(), result.createdAt(),
-                            job == null ? 0 : Math.max(0, Duration.between(job.getCreatedAt(), result.createdAt()).toMillis()),
+                            job == null ? null : Math.max(0, Duration.between(job.getCreatedAt(), result.createdAt()).toMillis()),
                             invocation == null ? null : invocation.getProvider(),
                             invocation == null ? result.modelVersion() : invocation.getModelVersion(),
                             result.decisionSource().name(),
