@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TriageFeedbackRepository extends JpaRepository<TriageFeedback, UUID> {
     List<TriageFeedback> findByWorkspaceIdOrderByCreatedAtAscIdAsc(UUID workspaceId);
     List<TriageFeedback> findByTicketIdAndWorkspaceIdOrderByCreatedAtAscIdAsc(UUID ticketId, UUID workspaceId);
+    List<TriageFeedback> findByWorkspaceIdAndOriginalResultIdInOrderByCreatedAtAscIdAsc(UUID workspaceId,
+            java.util.Collection<UUID> originalResultIds);
     long countByWorkspaceId(UUID workspaceId);
     java.util.Optional<TriageFeedback> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
 }

@@ -55,6 +55,10 @@ public class EvaluationService {
         int urgencyMatches = 0;
         int fullMatches = 0;
         int corrections = 0;
+        int reviewed = 0;
+        int accepted = 0;
+        int overridden = 0;
+        int recorded = 0;
         List<Long> latencies = new ArrayList<>();
         // A ticket triaged more than once has several results; look each ticket up once.
         List<UUID> ticketIds = storedResults.stream().map(ResultFacts::ticketId).distinct().toList();
@@ -64,7 +68,13 @@ public class EvaluationService {
         for (ResultFacts result : storedResults) {
             TriageFeedback correction = latestFeedback.get(result.id());
             if (correction != null && correction.differsFrom(result)) corrections++;
-            TriageJob job = jobsByEvent.get(result.eventId());
+            if (correction != null) {
+                reviewed++;
+                if (correction.getDecision() == FeedbackDecision.ACCEPTED) accepted++; else overridden++;
+            }
+            // A recorded result has no job: its latency is not a measurement, so it never reaches the percentiles.
+            TriageJob job = result.recorded() ? null : jobsByEvent.get(result.eventId());
+            if (result.recorded()) recorded++;
             if (job != null) {
                 latencies.add(Math.max(0, Duration.between(job.getCreatedAt(), result.createdAt()).toMillis()));
             }
@@ -79,15 +89,18 @@ public class EvaluationService {
             if (categoryMatch && urgencyMatch) fullMatches++;
         }
 
-        List<ModelInvocation> storedInvocations = ticketIds.isEmpty() ? List.of() : invocations.findByTicketIds(ticketIds);
+        List<ResultFacts> liveResults = storedResults.stream().filter(result -> !result.recorded()).toList();
+        List<UUID> liveTicketIds = liveResults.stream().map(ResultFacts::ticketId).distinct().toList();
+        List<ModelInvocation> storedInvocations = liveTicketIds.isEmpty() ? List.of() : invocations.findByTicketIds(liveTicketIds);
         Map<JobKey, TriageJob> latestJobs = latestJobs(storedJobs);
-        List<EvaluationEvent> recentEvents = recentEvents(storedResults, jobsByEvent, latestFeedback, expected, scopedTickets,
+        List<EvaluationEvent> recentEvents = recentEvents(liveResults, jobsByEvent, latestFeedback, expected, scopedTickets,
                 new JobInvocations(storedInvocations));
-        return new EvaluationSummary(clock.instant(), storedResults.size(), evaluated,
+        return new EvaluationSummary(clock.instant(), liveResults.size(), evaluated,
                 ratio(categoryMatches, evaluated), ratio(urgencyMatches, evaluated), ratio(fullMatches, evaluated),
                 ratio(corrections, storedResults.size()), percentile(latencies, 0.50), percentile(latencies, 0.95),
                 ratio((int) latestJobs.values().stream().filter(this::isFailure).count(),
-                        (int) latestJobs.values().stream().filter(this::isFinal).count()), usage(storedInvocations), recentEvents);
+                        (int) latestJobs.values().stream().filter(this::isFinal).count()), usage(storedInvocations), recentEvents,
+                reviewed, accepted, ratio(accepted, reviewed), ratio(overridden, reviewed), recorded);
     }
 
     private List<EvaluationEvent> recentEvents(List<ResultFacts> storedResults, Map<UUID, TriageJob> jobsByEvent,
@@ -161,15 +174,17 @@ public class EvaluationService {
                         entry.getValue().failures, entry.getValue().inputTokens, entry.getValue().outputTokens)).toList();
     }
 
-    private long percentile(List<Long> values, double percentile) {
-        if (values.isEmpty()) return 0;
+    /** Null when there is nothing to measure: a zero would read as an instant answer. */
+    private Long percentile(List<Long> values, double percentile) {
+        if (values.isEmpty()) return null;
         List<Long> sorted = values.stream().sorted(Comparator.naturalOrder()).toList();
         int index = Math.min(sorted.size() - 1, Math.max(0, (int) Math.ceil(percentile * sorted.size()) - 1));
         return sorted.get(index);
     }
 
-    private double ratio(int numerator, int denominator) {
-        return denominator == 0 ? 0.0 : (double) numerator / denominator;
+    /** Null when the denominator is zero: no cases means no rate, not a rate of 0%. */
+    private Double ratio(int numerator, int denominator) {
+        return denominator == 0 ? null : (double) numerator / denominator;
     }
 
     private static final class UsageAccumulator {

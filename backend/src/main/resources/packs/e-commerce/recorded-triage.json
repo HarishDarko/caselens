@@ -1,0 +1,98 @@
+{
+  "shop-change-address": {
+    "scenarioSha256": "3625b9342bd54b36e42ccd3f9e29c4a71727178f3cc0cef85641db5782166b9a",
+    "capturedAt": "2026-11-24T01:02:37.925935Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "DELIVERY",
+    "urgency": "LOW",
+    "slaRisk": "LOW",
+    "sentiment": "NEUTRAL",
+    "summary": "Customer wants to change delivery address for a newly placed order before shipment.",
+    "evidence": [
+      {
+        "quote": "Wrong delivery address on a new order",
+        "meaning": "customer is requesting address change"
+      },
+      {
+        "quote": "I just placed order 60142 and noticed it still has my old address. Can you change it before it ships?",
+        "meaning": "customer wants the change before shipping"
+      }
+    ],
+    "policyIds": [
+      "ADDRESS_CHANGE"
+    ],
+    "explanation": "The order is newly placed and has not shipped yet. According to ADDRESS_CHANGE policy, address can be changed before shipment by updating the order details in the system.",
+    "recommendedActions": [
+      "Verify the order number and current shipping address.",
+      "Update the order with the new address provided by the customer.",
+      "Confirm the change with the customer and send a confirmation email."
+    ],
+    "suggestedReply": "Hi,\n\nThanks for reaching out. I’ve updated your shipping address for order 60142 to the new address you provided. You should receive a confirmation email shortly.\n\nIf you have any other questions, feel free to let me know!\n\nBest regards,\nCustomer Support",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": []
+  },
+  "shop-refund-missing": {
+    "scenarioSha256": "31a2121f215fc767d77edd895671773ae7e3fd4cc72d50aec8d0248751f62c8f",
+    "capturedAt": "2026-11-24T01:02:20.761677Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "RETURN_REFUND",
+    "urgency": "MEDIUM",
+    "slaRisk": "HIGH",
+    "sentiment": "NEGATIVE",
+    "summary": "Customer reports that a return was received but the refund has not appeared on their card after two weeks.",
+    "evidence": [
+      {
+        "quote": "I returned the jacket two weeks ago",
+        "meaning": "Return was shipped and two weeks have passed"
+      },
+      {
+        "quote": "refund has still not reached my card",
+        "meaning": "Refund has not been credited yet"
+      }
+    ],
+    "policyIds": [
+      "REFUND_TRACE"
+    ],
+    "explanation": "The customer states that the return has been acknowledged by the system but the refund has not appeared on the card after a significant delay, indicating a need to trace the refund with the payment provider and provide the customer with a status update.",
+    "recommendedActions": [
+      "Confirm the return was processed and the refund was issued in the system",
+      "Trace the refund transaction with the payment processor and obtain a reference number",
+      "Communicate the status and estimated time frame to the customer",
+      "Escalate to the finance team if the refund is not found within 48 hours"
+    ],
+    "suggestedReply": "Hi there,\n\nI’m sorry to hear that your refund hasn’t appeared yet. I’ve checked our system and your return was received two weeks ago, and the refund was issued on [date]. I’ve just sent a trace request to our payment processor and will let you know the result as soon as I hear back.\n\nIn the meantime, you should see the refund within 3–5 business days of the processor receiving it. I’ll keep you updated and will follow up if there’s any delay.\n\nThank you for your patience – let me know if you have any other questions.",
+    "reliabilitySignal": "HIGH",
+    "warnings": []
+  },
+  "shop-two-payments": {
+    "scenarioSha256": "29ecc110d3200d34f9e5f78878e46a738103816f901d6c14d682d5e4d17512fc",
+    "capturedAt": "2026-11-24T01:02:03.428087Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "PAYMENT",
+    "urgency": "HIGH",
+    "slaRisk": "HIGH",
+    "sentiment": "ANGRY",
+    "summary": "Customer reports double charge after checkout page froze and payment attempted twice",
+    "evidence": [
+      {
+        "quote": "The checkout page froze, I pressed pay again, and now my bank app shows two payments for the same order 59902.",
+        "meaning": "Customer paid twice for same order due to frozen checkout"
+      }
+    ],
+    "policyIds": [
+      "DOUBLE_CHARGE"
+    ],
+    "explanation": "The DOUBLE_CHARGE policy requires checking the payment processor first, refunding the second capture immediately, and explaining that a pending authorization will drop off in 5 days if applicable.",
+    "recommendedActions": [
+      "Check payment processor for double capture",
+      "Refund second payment immediately",
+      "Notify customer of refund timeline"
+    ],
+    "suggestedReply": "Hi,\n\nThank you for reaching out. I’m sorry for the inconvenience. I’ve confirmed that a duplicate payment was processed. We’ve issued a refund for the second charge and it should reflect in your bank account within 3‑5 business days.\n\nIf you have any further questions or need additional assistance, please let us know.\n\nBest regards,\nCustomer Support",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": []
+  }
+}

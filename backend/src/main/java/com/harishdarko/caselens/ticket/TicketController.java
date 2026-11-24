@@ -8,8 +8,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import com.harishdarko.caselens.triage.LatestTriageReader;
+import com.harishdarko.caselens.triage.TriageResultView;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
@@ -29,8 +32,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/tickets")
 class TicketController {
     private final TicketService service;
+    private final LatestTriageReader triage;
 
-    TicketController(TicketService service) { this.service = service; }
+    TicketController(TicketService service, LatestTriageReader triage) {
+        this.service = service;
+        this.triage = triage;
+    }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -41,7 +48,8 @@ class TicketController {
 
     @GetMapping("/{ticketId}")
     TicketResponse get(@AuthenticationPrincipal DemoPrincipal principal, @PathVariable UUID ticketId) {
-        return TicketResponse.from(service.get(principal.workspaceId(), ticketId));
+        Ticket ticket = service.get(principal.workspaceId(), ticketId);
+        return TicketResponse.from(ticket, triage.forTickets(principal.workspaceId(), List.of(ticket.getId())).get(ticket.getId()));
     }
 
     @GetMapping
@@ -50,7 +58,11 @@ class TicketController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(50) int size,
             @RequestParam(required = false) TicketStatus status,
             @RequestParam(required = false) TicketChannel channel) {
-        return TicketPageResponse.from(service.list(principal.workspaceId(), page, size, status, channel));
+        Page<Ticket> tickets = service.list(principal.workspaceId(), page, size, status, channel);
+        // One read of the newest results and reviews for the whole page, not one per ticket.
+        Map<UUID, LatestTriageReader.Latest> latest = triage.forTickets(principal.workspaceId(),
+                tickets.getContent().stream().map(Ticket::getId).toList());
+        return TicketPageResponse.from(tickets, latest);
     }
 
     /** At least 5 characters once surrounding whitespace is stripped. */
@@ -71,17 +83,24 @@ class TicketController {
             String message,
             @NotNull TicketChannel channel) {}
 
+    /** latestResult and latestFeedback are null for a ticket that has not been triaged (or reviewed). */
     record TicketResponse(UUID id, String displayId, String subject, String message, TicketChannel channel,
-            TicketStatus status, String scenarioKey, Instant createdAt, Instant updatedAt) {
+            TicketStatus status, String scenarioKey, Instant createdAt, Instant updatedAt,
+            TriageResultView latestResult, LatestTriageReader.LatestFeedback latestFeedback) {
         static TicketResponse from(Ticket ticket) {
+            return from(ticket, null);
+        }
+
+        static TicketResponse from(Ticket ticket, LatestTriageReader.Latest latest) {
             return new TicketResponse(ticket.getId(), ticket.getDisplayId(), ticket.getSubject(), ticket.getMessage(),
-                    ticket.getChannel(), ticket.getStatus(), ticket.getScenarioKey(), ticket.getCreatedAt(), ticket.getUpdatedAt());
+                    ticket.getChannel(), ticket.getStatus(), ticket.getScenarioKey(), ticket.getCreatedAt(), ticket.getUpdatedAt(),
+                    latest == null ? null : latest.result(), latest == null ? null : latest.feedback());
         }
     }
 
     record TicketPageResponse(List<TicketResponse> content, int page, int size, long totalElements, int totalPages) {
-        static TicketPageResponse from(Page<Ticket> tickets) {
-            return new TicketPageResponse(tickets.map(TicketResponse::from).getContent(), tickets.getNumber(),
+        static TicketPageResponse from(Page<Ticket> tickets, Map<UUID, LatestTriageReader.Latest> latest) {
+            return new TicketPageResponse(tickets.map(ticket -> TicketResponse.from(ticket, latest.get(ticket.getId()))).getContent(), tickets.getNumber(),
                     tickets.getSize(), tickets.getTotalElements(), tickets.getTotalPages());
         }
     }

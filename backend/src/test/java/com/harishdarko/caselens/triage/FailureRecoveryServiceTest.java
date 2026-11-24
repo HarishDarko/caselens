@@ -127,4 +127,27 @@ class FailureRecoveryServiceTest {
         job.retryableFailure(errorCode, failedAt);
         return job;
     }
+
+    /** Recorded results have no event, job or model call: they are no fallback, no provider call and no activity. */
+    @Test
+    void theOverviewLeavesRecordedResultsOut() {
+        UUID workspaceId = UUID.randomUUID();
+        TriageResult recorded = TriageResult.recorded(workspaceId,
+                new TriageDecision(UUID.randomUUID(), Category.of("GENERAL"), Urgency.LOW, SlaRisk.LOW, Sentiment.NEUTRAL,
+                        "A captured answer to a seeded ticket.", java.util.List.of(), java.util.List.of(),
+                        "The captured explanation is long enough.", java.util.List.of("Reply"), "Thank you for writing in.",
+                        ReliabilitySignal.HIGH, java.util.List.of(), 10, java.util.List.of(), DecisionSource.RULES_FALLBACK,
+                        "openai/gpt-oss-20b", "triage-v2"),
+                NOW.minusSeconds(3600), new tools.jackson.databind.ObjectMapper());
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(java.util.List.of());
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(java.util.List.of(ResultFacts.of(recorded)));
+
+        OperationsOverview overview = service().overview(workspaceId);
+
+        org.assertj.core.api.Assertions.assertThat(overview.fallbackCount()).isZero();
+        org.assertj.core.api.Assertions.assertThat(overview.providerFailureCount()).isZero();
+        org.assertj.core.api.Assertions.assertThat(overview.recent()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(overview.providers()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(overview.queue().completed()).isZero();
+    }
 }

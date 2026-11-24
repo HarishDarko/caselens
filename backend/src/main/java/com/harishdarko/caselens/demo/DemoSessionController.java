@@ -100,7 +100,8 @@ class DemoSessionController {
         DemoSessionService.OpenedWorkspace opened = sessions.openSeeded(industry, clientKey);
         DemoSessionService.DemoSession session = opened.session();
         return new SessionResponse(session.token(), session.expiresAt(), session.industry(),
-                opened.tickets().stream().map(ScenarioTicketResponse::from).toList(), opened.runtime());
+                opened.tickets().stream()
+                        .map(ticket -> ScenarioTicketResponse.from(ticket, opened.latest().get(ticket.getId()))).toList(), opened.runtime());
     }
 
     private static Scenario scenario(DemoScenario scenario) {

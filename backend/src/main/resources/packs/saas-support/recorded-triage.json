@@ -1,0 +1,100 @@
+{
+  "saas-api-outage": {
+    "scenarioSha256": "2e8740934d637ea879462908db1859dcaa7c15158d3a944894bc629faeae21bb",
+    "capturedAt": "2026-11-24T01:00:37.408988Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "PERFORMANCE",
+    "urgency": "CRITICAL",
+    "slaRisk": "HIGH",
+    "sentiment": "NEGATIVE",
+    "summary": "API returns 503 for every request causing checkout integration to be down for all customers.",
+    "evidence": [
+      {
+        "quote": "API returns 503 for every request",
+        "meaning": "The API is consistently returning a 503 Service Unavailable error."
+      },
+      {
+        "quote": "Every call to your REST API has returned 503 for the past 20 minutes, and our checkout integration is down for all customers right now.",
+        "meaning": "The error has persisted for 20 minutes and impacts checkout for all customers."
+      }
+    ],
+    "policyIds": [
+      "OUTAGE_INCIDENT"
+    ],
+    "explanation": "The customer reports a 503 error on all REST API calls for 20 minutes, indicating a service outage that affects checkout functionality for all customers. This qualifies as an outage incident. The appropriate response is to check the status page, link the ticket to the open incident, and inform the customer that the issue is being addressed.",
+    "recommendedActions": [
+      "Check the status page for ongoing incidents.",
+      "Link this ticket to the relevant open incident on the status page.",
+      "Notify the customer that the issue is being investigated and provide an estimated time to resolution."
+    ],
+    "suggestedReply": "Hello,\n\nThank you for reaching out. We’re aware of the 503 errors affecting our REST API and the resulting impact on checkout for all customers. Our engineering team is actively investigating the issue, and we’re working to restore service as quickly as possible.\n\nWe’ll keep you updated with any new information and will let you know as soon as the service is fully restored.\n\nWe apologize for the inconvenience and appreciate your patience.\n\nBest regards,\nSupport Team",
+    "reliabilitySignal": "HIGH",
+    "warnings": []
+  },
+  "saas-custom-field-question": {
+    "scenarioSha256": "007c57da0de6954991d6ae330e438901f13ea1b7ab7a025b7fcdb0cd45261373",
+    "capturedAt": "2026-11-24T01:01:28.995990Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "GENERAL",
+    "urgency": "LOW",
+    "slaRisk": "LOW",
+    "sentiment": "NEUTRAL",
+    "summary": "Customer wants to add a custom field to the project form but cannot find the option in settings.",
+    "evidence": [
+      {
+        "quote": "How do I add a custom field?",
+        "meaning": "Customer is asking how to add a custom field"
+      },
+      {
+        "quote": "I could not find the option in the settings.",
+        "meaning": "Customer could not locate the setting"
+      }
+    ],
+    "policyIds": [],
+    "explanation": "The request is for a feature usage question about adding a custom field to a project form, which falls under general product usage. No policies apply.",
+    "recommendedActions": [
+      "Explain that custom fields for project forms are available in the Project Settings > Custom Fields section.",
+      "Provide step‑by‑step instructions: 1. Go to Settings > Projects, 2. Click Custom Fields, 3. Add new field with desired type and label, 4. Save.",
+      "Mention any prerequisites such as admin permissions."
+    ],
+    "suggestedReply": "Hi there! Adding a custom field to your project form is easy. Just head to Settings → Projects → Custom Fields, click “Add Field,” choose the field type, give it a name, and save. You’ll then see it on the project form. If you need any help with the steps, let us know!",
+    "reliabilitySignal": "HIGH",
+    "warnings": []
+  },
+  "saas-sso-lockout": {
+    "scenarioSha256": "56da3d4694347ed541febc92eda9164528c22e74833e8217ca5e6677a8389120",
+    "capturedAt": "2026-11-24T00:59:28.870646Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "LOGIN_ACCESS",
+    "urgency": "HIGH",
+    "slaRisk": "HIGH",
+    "sentiment": "NEGATIVE",
+    "summary": "The whole team cannot sign in after an SSO certificate rotation, causing a complete work stoppage.",
+    "evidence": [
+      {
+        "quote": "Whole team locked out after an SSO change",
+        "meaning": "Ticket title indicates all users are locked out"
+      },
+      {
+        "quote": "Since this morning none of our 40 users can sign in. Our admin rotated the SSO certificate in the identity provider and now every login ends on an error page. We are blocked from all work.",
+        "meaning": "Description confirms all users are affected and login failures are due to recent SSO change"
+      }
+    ],
+    "policyIds": [
+      "SSO_LOCKOUT"
+    ],
+    "explanation": "The incident matches the SSO_LOCKOUT policy: a workspace admin rotated the SSO certificate, resulting in error pages for all users. The policy requires confirming admin status, reading the SAML or OIDC error, and offering a temporary bypass while the identity provider settings are fixed.",
+    "recommendedActions": [
+      "Confirm the requester is a workspace admin",
+      "Review the SAML or OIDC error details",
+      "Provide a temporary SSO bypass for affected users",
+      "Coordinate with the identity provider to restore the original certificate or deploy the new one correctly"
+    ],
+    "suggestedReply": "Hi,\n\nI’m sorry to hear that everyone is locked out after the SSO certificate rotation. I’m going to check the SAML/OIDC error details and see if we can provide a temporary bypass so your team can get back to work while we sort out the certificate issue. I’ll keep you updated as soon as I have a resolution.\n\nThank you for your patience.\n\nBest,\nSupport Team",
+    "reliabilitySignal": "HIGH",
+    "warnings": []
+  }
+}

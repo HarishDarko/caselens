@@ -51,7 +51,9 @@ public class FailureRecoveryService {
     public OperationsOverview overview(UUID workspaceId) {
         List<TriageJob> storedJobs = jobs.findByWorkspaceId(workspaceId);
         // Column reads, not entities: this runs on every 5 s Operations poll (CL-20).
-        List<ResultFacts> storedResults = results.findFactsByWorkspaceId(workspaceId);
+        // Live results only: a recorded result was captured earlier, has no job or model call, and is no fallback here.
+        List<ResultFacts> storedResults = results.findFactsByWorkspaceId(workspaceId).stream()
+                .filter(result -> !result.recorded()).toList();
         List<UUID> ticketIds = storedJobs.stream().map(TriageJob::getTicketId).distinct().toList();
         List<ModelInvocation> storedInvocations = ticketIds.isEmpty() ? List.of() : invocations.findByTicketIds(ticketIds);
         Map<UUID, ResultFacts> resultByEvent = storedResults.stream()

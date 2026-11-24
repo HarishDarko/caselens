@@ -192,6 +192,107 @@ class EvaluationServiceTest {
         assertThat(service().summarize(workspaceId).failureRate()).isEqualTo(0.0);
     }
 
+    @Test
+    void recordedResultsNeverReachLiveLatencyProviderUsageOrRecentActivity() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID liveTicketId = UUID.randomUUID();
+        UUID recordedTicketId = UUID.randomUUID();
+        TriageResult live = result(workspaceId, liveTicketId);
+        TriageResult recorded = recordedAt(workspaceId, recordedTicketId, CREATED.minusSeconds(3600));
+        TriageJob job = TriageJob.queued(UUID.randomUUID(), live.getEventId(), workspaceId, liveTicketId, 1, CREATED);
+        job.claim(CREATED.plusMillis(100));
+        job.complete(FINISHED);
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(recorded, live));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of(job));
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(invocations.findByTicketIds(List.of(liveTicketId))).thenReturn(List.of(ModelInvocation.from(
+                new ModelInvocationRecord(liveTicketId, "mock", "mock-v1", "triage-v1", CREATED, CREATED.plusMillis(50),
+                        50, "SUCCESS", null, 120L, 40L))));
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.triageResults()).isEqualTo(1);
+        assertThat(summary.recordedResults()).isEqualTo(1);
+        assertThat(summary.medianLatencyMs()).isEqualTo(2000L);
+        assertThat(summary.p95LatencyMs()).isEqualTo(2000L);
+        assertThat(summary.providerUsage()).singleElement().satisfies(usage -> assertThat(usage.requests()).isEqualTo(1));
+        assertThat(summary.recentEvents()).extracting(EvaluationEvent::resultId).containsExactly(live.getId());
+    }
+
+    @Test
+    void aWorkspaceWithOnlyRecordedResultsHasNullLatenciesAndRatesNotZero() {
+        UUID workspaceId = UUID.randomUUID();
+        TriageResult first = recordedAt(workspaceId, UUID.randomUUID(), CREATED.minusSeconds(60));
+        TriageResult second = recordedAt(workspaceId, UUID.randomUUID(), CREATED.minusSeconds(30));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(first, second));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId)).thenReturn(List.of());
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(tickets.findScenarioKeys(org.mockito.ArgumentMatchers.eq(workspaceId), org.mockito.ArgumentMatchers.anySet()))
+                .thenReturn(List.of());
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.recordedResults()).isEqualTo(2);
+        assertThat(summary.triageResults()).isZero();
+        assertThat(summary.medianLatencyMs()).isNull();
+        assertThat(summary.p95LatencyMs()).isNull();
+        assertThat(summary.failureRate()).isNull();
+        assertThat(summary.agreementRate()).isNull();
+        assertThat(summary.categoryAgreementRate()).isNull();
+        assertThat(summary.urgencyAgreementRate()).isNull();
+        assertThat(summary.reviewedResults()).isZero();
+        assertThat(summary.acceptedResults()).isZero();
+        assertThat(summary.acceptanceRate()).isNull();
+        assertThat(summary.overrideRate()).isNull();
+        assertThat(summary.providerUsage()).isEmpty();
+        assertThat(summary.recentEvents()).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(invocations);
+    }
+
+    @Test
+    void acceptanceAndOverrideRatesCountEachResultsLatestReviewIncludingRecordedResults() {
+        UUID workspaceId = UUID.randomUUID();
+        UUID ticketA = UUID.randomUUID();
+        UUID ticketB = UUID.randomUUID();
+        UUID ticketC = UUID.randomUUID();
+        TriageResult accepted = recordedAt(workspaceId, ticketA, CREATED.minusSeconds(60));
+        TriageResult corrected = recordedAt(workspaceId, ticketB, CREATED.minusSeconds(50));
+        TriageResult unreviewed = recordedAt(workspaceId, ticketC, CREATED.minusSeconds(40));
+        TriageFeedback firstCorrection = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketA, accepted.getId(),
+                null, Urgency.HIGH, null, "Changed my mind", "demo-reviewer", CREATED.minusSeconds(30));
+        TriageFeedback thenAccepted = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketA, accepted.getId(),
+                FeedbackDecision.ACCEPTED, null, null, null, null, "demo-reviewer", CREATED.minusSeconds(20));
+        TriageFeedback override = TriageFeedback.submit(UUID.randomUUID(), workspaceId, ticketB, corrected.getId(),
+                null, Urgency.CRITICAL, null, "Escalate", "demo-reviewer", CREATED.minusSeconds(10));
+        when(results.findFactsByWorkspaceId(workspaceId)).thenReturn(facts(accepted, corrected, unreviewed));
+        when(jobs.findByWorkspaceId(workspaceId)).thenReturn(List.of());
+        when(feedback.findByWorkspaceIdOrderByCreatedAtAscIdAsc(workspaceId))
+                .thenReturn(List.of(firstCorrection, thenAccepted, override));
+        when(groundTruth.findAll()).thenReturn(List.of());
+        when(tickets.findScenarioKeys(org.mockito.ArgumentMatchers.eq(workspaceId), org.mockito.ArgumentMatchers.anySet()))
+                .thenReturn(List.of());
+
+        EvaluationSummary summary = service().summarize(workspaceId);
+
+        assertThat(summary.reviewedResults()).isEqualTo(2);
+        assertThat(summary.acceptedResults()).isEqualTo(1);
+        assertThat(summary.acceptanceRate()).isEqualTo(0.5);
+        assertThat(summary.overrideRate()).isEqualTo(0.5);
+        assertThat(summary.recordedResults()).isEqualTo(3);
+    }
+
+    private TriageResult recordedAt(UUID workspaceId, UUID ticketId, Instant capturedAt) {
+        return TriageResult.recorded(workspaceId,
+                new TriageDecision(ticketId, Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM,
+                        Sentiment.NEGATIVE, "Charging session did not start", List.of(), List.of(),
+                        "The session did not start.", List.of("Inspect the charger"), "We are reviewing it.",
+                        ReliabilitySignal.HIGH, List.of(), 55, List.of(), DecisionSource.AI_VALIDATED,
+                        "openai/gpt-oss-20b", "triage-v2"),
+                capturedAt, new ObjectMapper());
+    }
+
     private EvaluationService service() {
         return new EvaluationService(results, jobs, tickets, feedback, groundTruth, invocations,
                 Clock.fixed(FINISHED, ZoneOffset.UTC));
