@@ -7,6 +7,9 @@ public final class TriageFailureClassifier {
         if (failure instanceof TransientDataAccessException) return new FailureClassification(true, "DATABASE_TRANSIENT");
         if (failure instanceof ProviderCallException provider) {
             if ("AUTHENTICATION_FAILURE".equals(provider.errorCode())) return new FailureClassification(false, "PROVIDER_AUTHENTICATION");
+            if (TriageRequest.TIME_BUDGET_EXHAUSTED.equals(provider.errorCode())) {
+                return new FailureClassification(true, TriageRequest.TIME_BUDGET_EXHAUSTED);
+            }
             if (provider.errorCode().startsWith("HTTP_429")) return new FailureClassification(true, "PROVIDER_RATE_LIMIT");
             if (provider.errorCode().startsWith("HTTP_5") || "PROVIDER_IO".equals(provider.errorCode())
                     || "TIMEOUT".equals(provider.errorCode())) return new FailureClassification(true, "PROVIDER_TIMEOUT");

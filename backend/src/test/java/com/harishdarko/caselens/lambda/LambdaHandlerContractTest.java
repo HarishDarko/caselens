@@ -2,6 +2,7 @@ package com.harishdarko.caselens.lambda;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -50,7 +51,7 @@ class LambdaHandlerContractTest {
         String valid = "{\"schemaVersion\":1,\"eventId\":\"%s\",\"workspaceId\":\"%s\",\"ticketId\":\"%s\",\"correlationId\":\"corr\"}"
                 .formatted(eventId, UUID.randomUUID(), UUID.randomUUID());
         TriageWorker worker = mock(TriageWorker.class);
-        when(worker.process(any())).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
+        when(worker.process(any(), anyInt(), any())).thenReturn(WorkerResult.retry("PROVIDER_TIMEOUT"));
         JsonNode records = mapper.readTree("""
                 {"Records":[
                   {"messageId":"retry-1","body":%s},
@@ -69,7 +70,7 @@ class LambdaHandlerContractTest {
         UUID databaseDown = UUID.randomUUID();
         UUID completed = UUID.randomUUID();
         TriageWorker worker = mock(TriageWorker.class);
-        when(worker.process(any())).thenAnswer(invocation -> {
+        when(worker.process(any(), anyInt(), any())).thenAnswer(invocation -> {
             UUID eventId = ((com.harishdarko.caselens.triage.QueueMessage) invocation.getArgument(0)).eventId();
             if (eventId.equals(illegalArgument)) throw new IllegalArgumentException("thrown deep inside processing");
             if (eventId.equals(databaseDown)) throw new IllegalStateException("database unavailable");
@@ -87,6 +88,44 @@ class LambdaHandlerContractTest {
 
         assertThat(WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker))
                 .containsExactly(Map.of("itemIdentifier", "iae-1"), Map.of("itemIdentifier", "db-1"));
+    }
+
+    @Test
+    void passesSqsReceiveCountToTheWorkerSoItKnowsTheFinalDelivery() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        TriageWorker worker = mock(TriageWorker.class);
+        when(worker.process(any(), anyInt(), any())).thenReturn(WorkerResult.ack());
+        JsonNode records = mapper.readTree("""
+                {"Records":[
+                  {"messageId":"third","attributes":{"ApproximateReceiveCount":"3"},"body":%s},
+                  {"messageId":"unknown","body":%s}
+                ]}
+                """.formatted(body(mapper, UUID.randomUUID()), body(mapper, UUID.randomUUID()))).path("Records");
+
+        WorkerHandler.retryableFailures(records, new QueueMessageCodec(mapper), worker);
+
+        org.mockito.Mockito.verify(worker).process(any(), org.mockito.ArgumentMatchers.eq(3), any());
+        org.mockito.Mockito.verify(worker).process(any(), org.mockito.ArgumentMatchers.eq(0), any());
+    }
+
+    @Test
+    void passesTheLambdasRemainingTimeToTheWorker() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        TriageWorker worker = mock(TriageWorker.class);
+        java.util.concurrent.atomic.AtomicLong remainingSeen = new java.util.concurrent.atomic.AtomicLong(-1);
+        when(worker.process(any(), anyInt(), any())).thenAnswer(invocation -> {
+            remainingSeen.set(((java.util.function.LongSupplier) invocation.getArgument(2)).getAsLong());
+            return WorkerResult.ack();
+        });
+        com.amazonaws.services.lambda.runtime.Context context = mock(com.amazonaws.services.lambda.runtime.Context.class);
+        when(context.getRemainingTimeInMillis()).thenReturn(42_000);
+        String event = "{\"Records\":[{\"messageId\":\"m-1\",\"attributes\":{\"ApproximateReceiveCount\":\"1\"},\"body\":"
+                + body(mapper, UUID.randomUUID()) + "}]}";
+
+        new WorkerHandler(() -> mapper, () -> worker).handleRequest(
+                new ByteArrayInputStream(event.getBytes(StandardCharsets.UTF_8)), new ByteArrayOutputStream(), context);
+
+        assertThat(remainingSeen).hasValue(42_000);
     }
 
     private static String body(ObjectMapper mapper, UUID eventId) throws Exception {
