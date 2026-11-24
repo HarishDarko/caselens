@@ -44,18 +44,19 @@ Cloudflare Web Analytics).
 
 ![CaseLens start page with three sample queues (EV charging, E-commerce, SaaS support) and a recorded example result](docs/images/product-tour/01-queue-picker.png)
 
-The start page offers three synthetic queues. Each opens a private workspace
-that is deleted after 24 hours. A recorded result from the picked queue is
-shown first, so the evidence and policy are visible before anything is opened.
+The start page offers three synthetic queues. Each opens a temporary, isolated
+workspace that expires after 24 hours. A recorded result from the picked queue
+is shown first, so the evidence and policy are visible before anything is
+opened.
 
 ### A ticket with its evidence
 
 ![CaseLens inbox with a critical ticket open, showing highlighted evidence quotes, the priority breakdown, the matched policy and checks](docs/images/product-tour/02-ticket-evidence.png)
 
 The inbox lists triaged tickets by priority. The open ticket highlights the
-exact words the model relied on and numbers them to the reasons. Beside it are
-the category, the matched policy, the priority breakdown and the checks. A
-recorded result is marked as recorded.
+exact words the model quoted as evidence, numbered to match each reason. Beside
+it are the category, the matched policy, the priority breakdown and the checks.
+A recorded result is marked as recorded.
 
 ### Accept or override
 
@@ -69,22 +70,24 @@ Reviews are appended and the original result is never changed.
 ![CaseLens Quality and operations screen with queue and reliability counts, reviewer acceptance, benchmark match and provider usage](docs/images/product-tour/04-quality-operations.png)
 
 The screen shows the live queue and reliability counts, reviewer acceptance
-and override rate, benchmark match, recent live jobs and provider usage. It
-also holds **Simulate provider timeout**, which creates a bounded synthetic
-failure to retry. The counts here come from a fresh workspace, so most are
-empty.
+and override rate, benchmark match, recent live jobs and provider usage.
+Benchmark match is how often results agree with each scenario's hidden answer
+key. **Simulate provider timeout** sends one demo ticket to a provider that
+never answers, so you can watch it fail and retry it. This screenshot is from a
+fresh workspace, so most counts are empty.
 
 ### How it's built
 
 ![CaseLens How it's built dialog showing the five steps from saving a ticket to the reviewer's call, and the AI verified and Rules fallback outcomes](docs/images/product-tour/05-how-its-built.png)
 
-The dialog follows one ticket from the outbox to the reviewer's call. Every
-answer is checked before it is shown. If the model fails or an answer fails a
-check, the pack's keyword rules decide and the ticket says so.
+The dialog follows one ticket from the click to the reviewer's call. The
+ticket and its job are saved together in one database transaction (an outbox).
+Every answer is checked before it is shown. If the model fails or an answer
+fails a check, the industry's keyword rules decide and the ticket says so.
 
 ### On a phone
 
-![CaseLens inbox on a phone with triaged and not yet triaged tickets](docs/images/product-tour/06-phone-inbox.png)
+<img src="docs/images/product-tour/06-phone-inbox.png" alt="CaseLens inbox on a phone, with triaged tickets above tickets not triaged yet" width="260">
 
 The inbox collapses to one column on a phone. Opening a ticket shows its
 detail, and the menu holds Quality and operations and How it's built.
