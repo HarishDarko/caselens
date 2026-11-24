@@ -1,0 +1,95 @@
+{
+  "charger-offline-site-wide": {
+    "scenarioSha256": "07e4f1268d7b9fb8da734834355dedf413bf48f3b743a22fd72367cc6f7eee13",
+    "capturedAt": "2026-11-24T01:04:06.061389Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "CONNECTIVITY",
+    "urgency": "HIGH",
+    "slaRisk": "HIGH",
+    "sentiment": "NEGATIVE",
+    "summary": "All six chargers at demo site SITE-DEMO-TOR-07 are offline since 09:18 UTC, with last heartbeat at 09:16 UTC and three drivers waiting.",
+    "evidence": [
+      {
+        "quote": "All six chargers at synthetic site SITE-DEMO-TOR-07 show Offline since 09:18 UTC. Charger CHG-CA-2001 last reported a heartbeat at 09:16 UTC and three drivers are waiting.",
+        "meaning": "All chargers are offline and heartbeat missing, drivers affected."
+      }
+    ],
+    "policyIds": [
+      "OCPP_CONNECTIVITY"
+    ],
+    "explanation": "The report indicates a complete loss of connectivity across all chargers at the site, with no recent heartbeat. This is a classic OCPP connectivity issue that requires immediate investigation of network path and heartbeat status.",
+    "recommendedActions": [
+      "Verify network connectivity to the OCPP gateway for site SITE-DEMO-TOR-07.",
+      "Check the OCPP gateway logs for heartbeat failures for charger CHG-CA-2001 and others.",
+      "Restart the OCPP gateway or reload firmware if necessary.",
+      "Notify site operators and update them on progress.",
+      "Escalate to operations if issue persists beyond initial investigation."
+    ],
+    "suggestedReply": "Hi,\n\nThank you for alerting us. All six chargers at SITE‑DEMO‑TOR‑07 are currently offline with the last heartbeat recorded at 09:16 UTC. We are treating this as a high‑priority connectivity issue and are investigating the OCPP gateway and network path right now.\n\nWe’ll keep you updated and will work to restore service as quickly as possible.\n\nBest regards,\nSupport Team",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": []
+  },
+  "connector-fault-single-port": {
+    "scenarioSha256": "c79ab9d5d3efac04195ec9387ab11a5d70a6236822b8b78e8e4df55554f9b2a9",
+    "capturedAt": "2026-11-24T01:05:14.730939Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "CHARGER_HARDWARE",
+    "urgency": "MEDIUM",
+    "slaRisk": "LOW",
+    "sentiment": "NEUTRAL",
+    "summary": "Connector 1 on charger CHG-CA-3110 is faulted with EVSE-DEMO-OVER_CURRENT; Connector 2 is operational.",
+    "evidence": [
+      {
+        "quote": "Connector 1 on fictional charger CHG-CA-3110 reports Faulted with demo error code EVSE-DEMO-OVER_CURRENT",
+        "meaning": "Connector 1 has a fault"
+      },
+      {
+        "quote": "Connector 2 is still available and no active session is affected",
+        "meaning": "Connector 2 operational; session unaffected"
+      }
+    ],
+    "policyIds": [
+      "CONNECTOR_FAULT"
+    ],
+    "explanation": "The user reports that connector 1 on charger CHG-CA-3110 is faulted with error code EVSE-DEMO-OVER_CURRENT, while connector 2 remains available and no active charging session is affected. This indicates a hardware fault on the specific connector, which falls under the CONNECTOR_FAULT policy. The ticket does not show an impact on the entire charger or site, so the urgency is moderate, and the SLA risk is low.",
+    "recommendedActions": [
+      "Verify the fault status on connector 1 and attempt a reset or power cycle.",
+      "Check for physical damage or loose connections on connector 1.",
+      "If fault persists, switch the user to connector 2 and monitor for any issues.",
+      "Escalate to maintenance if hardware replacement is required.",
+      "Provide the user with an estimated time for repair and alternative charging options."
+    ],
+    "suggestedReply": "Hello,\n\nThank you for reporting the issue. I see that Connector 1 on charger CHG-CA‑3110 is faulted with error code EVSE‑DEMO‑OVER_CURRENT, while Connector 2 is available and no session is affected.\n\nWe will:\n1. Attempt a reset/power‑cycle on Connector 1.\n2. Inspect the connector for any visible damage or loose wiring.\n3. If the fault remains, we will switch your session to Connector 2 and keep you updated on the repair timeline.\n\nWe apologize for the inconvenience and will keep you informed. Let us know if you need further assistance.\n\nBest regards,\nSupport Team",
+    "reliabilitySignal": "HIGH",
+    "warnings": []
+  },
+  "receipt-request-general": {
+    "scenarioSha256": "0d402ba87dfb89baf9c09d4f6c725cb5732862f1b573eee1df47a69a59636174",
+    "capturedAt": "2026-11-24T01:06:05.982442Z",
+    "modelVersion": "openai/gpt-oss-20b",
+    "promptVersion": "triage-v2",
+    "category": "BILLING",
+    "urgency": "LOW",
+    "slaRisk": "LOW",
+    "sentiment": "NEUTRAL",
+    "summary": "Customer requests a receipt for a completed charging session that had no issues.",
+    "evidence": [
+      {
+        "quote": "Please send a receipt for fictional session SESSION-DEMO-90817 completed yesterday at CHG-CA-8044. The total was CAD 12.75 and there were no charging problems.",
+        "meaning": "User is requesting a receipt for a completed session with specified details."
+      }
+    ],
+    "policyIds": [],
+    "explanation": "The ticket is a straightforward billing inquiry asking for a receipt. No policies are triggered and the issue is low priority.",
+    "recommendedActions": [
+      "Verify session ID SESSION-DEMO-90817 and location CHG-CA-8044.",
+      "Generate and email the receipt showing CAD 12.75.",
+      "Confirm no outstanding balance or issues."
+    ],
+    "suggestedReply": "Hello,\n\nThank you for your request. Here is the receipt for session SESSION-DEMO-90817 completed yesterday at CHG-CA-8044. The total charge was CAD 12.75.\n\nIf you have any further questions, feel free to reach out.\n\nBest regards,\nEV Charging Support",
+    "reliabilitySignal": "MEDIUM",
+    "warnings": []
+  }
+}

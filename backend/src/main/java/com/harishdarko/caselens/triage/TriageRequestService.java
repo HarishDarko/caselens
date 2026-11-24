@@ -237,7 +237,6 @@ public class TriageRequestService {
         if (result == null || result.getDecisionSource() != DecisionSource.RULES_FALLBACK) return null;
         if (invocations == null || job == null) return FallbackReason.PROVIDER_UNAVAILABLE;
         ModelInvocation latest = new JobInvocations(invocations.findByTicketIds(List.of(job.getTicketId()))).latestFor(job);
-        String errorCode = latest != null && "FAILURE".equals(latest.getStatus()) ? latest.getSanitizedErrorCode() : null;
-        return FallbackReason.fromErrorCode(errorCode);
+        return FallbackReason.fromInvocation(latest);
     }
 }

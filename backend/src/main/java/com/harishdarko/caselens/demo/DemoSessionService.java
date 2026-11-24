@@ -2,11 +2,13 @@ package com.harishdarko.caselens.demo;
 
 import com.harishdarko.caselens.ticket.Ticket;
 import com.harishdarko.caselens.ticket.TicketService;
+import com.harishdarko.caselens.triage.LatestTriageReader;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,14 +21,16 @@ public class DemoSessionService {
     private final Clock clock;
     private final TicketService tickets;
     private final RuntimeSummary runtime;
+    private final LatestTriageReader triage;
 
     DemoSessionService(DemoWorkspaceRepository workspaces, DemoTokenService tokens, Clock clock, TicketService tickets,
-            RuntimeSummary runtime) {
+            RuntimeSummary runtime, LatestTriageReader triage) {
         this.workspaces = workspaces;
         this.tokens = tokens;
         this.clock = clock;
         this.tickets = tickets;
         this.runtime = runtime;
+        this.triage = triage;
     }
 
     @Transactional
@@ -66,10 +70,16 @@ public class DemoSessionService {
     public OpenedWorkspace openSeeded(String industry, String clientKey) {
         DemoSession session = create(industry, clientKey);
         tickets.reset(session.workspaceId());
-        return new OpenedWorkspace(session, tickets.list(session.workspaceId(), 0, 50, null, null).getContent(), runtime);
+        List<Ticket> seeded = tickets.list(session.workspaceId(), 0, 50, null, null).getContent();
+        // The recorded results come with the tickets, in one read for all of them, so the page opens in one call.
+        Map<UUID, LatestTriageReader.Latest> latest = triage.forTickets(session.workspaceId(),
+                seeded.stream().map(Ticket::getId).toList());
+        return new OpenedWorkspace(session, seeded, runtime, latest);
     }
 
     public record DemoSession(UUID workspaceId, String token, Instant expiresAt, String industry) {}
 
-    public record OpenedWorkspace(DemoSession session, List<Ticket> tickets, RuntimeSummary runtime) {}
+    /** latest maps a ticket id to its newest result and review; tickets without a result are not in it. */
+    public record OpenedWorkspace(DemoSession session, List<Ticket> tickets, RuntimeSummary runtime,
+            Map<UUID, LatestTriageReader.Latest> latest) {}
 }

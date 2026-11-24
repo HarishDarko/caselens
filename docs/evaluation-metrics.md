@@ -22,6 +22,21 @@ events. It does not use fabricated dashboard values.
   source, whether ground truth exists, and whether the latest reviewer
   feedback changed the result.
 
+Recorded results are real model answers captured earlier and seeded with each
+workspace (three per industry, `recorded = true`, no event, job or model call).
+They are measured and reviewed like any result, but they are not live runs:
+
+- `recordedResults` counts them. `triageResults`, `medianLatencyMs`,
+  `p95LatencyMs`, `failureRate`, `providerUsage` and `recentEvents` are live
+  only, and the Operations queue, fallback and provider figures leave them out.
+- `agreementRate` and its two parts include them (they are scored against the
+  same ground truth), so a new workspace already has a benchmark figure.
+- `reviewedResults` counts results with a review, `acceptedResults` those whose
+  latest review is `ACCEPTED`, `acceptanceRate` is accepted divided by reviewed
+  and `overrideRate` is corrected divided by reviewed.
+- A figure with nothing to measure is `null`, never 0: no latency before a live
+  run, no rate before a case or a review.
+
 The Operations view uses a separate workspace-scoped overview endpoint:
 
 - queue counts are derived from persisted triage jobs;
