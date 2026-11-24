@@ -35,44 +35,59 @@ only. No account is required.
 The first launch or triage request can take several seconds when Lambda or
 Neon has scaled down. Later requests normally use warm infrastructure. The
 public domain uses DNS-only Cloudflare records in front of the existing
-CloudFront distribution.
+CloudFront distribution. The public demo uses cookieless analytics (PostHog and
+Cloudflare Web Analytics).
 
 ## Product tour
 
-### Isolated review queue
+### Pick a sample queue
 
-![CaseLens ticket inbox with synthetic scenarios and deployed runtime services](docs/images/product-tour/01-inbox-overview.png)
+![CaseLens start page with three sample queues (EV charging, E-commerce, SaaS support) and a recorded example result](docs/images/product-tour/01-queue-picker.png)
 
-Each launch creates a temporary workspace with synthetic tickets, scenario
-controls, and the deployed runtime services visible in the console.
+The start page offers three synthetic queues. Each opens a private workspace
+that is deleted after 24 hours. A recorded result from the picked queue is
+shown first, so the evidence and policy are visible before anything is opened.
 
-### Evidence-grounded triage
+### A ticket with its evidence
 
-![CaseLens triage explanation with exact evidence and recommended actions](docs/images/product-tour/02-triage-explanation.png)
+![CaseLens inbox with a critical ticket open, showing highlighted evidence quotes, the priority breakdown, the matched policy and checks](docs/images/product-tour/02-ticket-evidence.png)
 
-The result keeps the category, urgency, reliability signal, explanation, exact
-ticket evidence, recommended actions, and policy guardrail together.
+The inbox lists triaged tickets by priority. The open ticket highlights the
+exact words the model relied on and numbers them to the reasons. Beside it are
+the category, the matched policy, the priority breakdown and the checks. A
+recorded result is marked as recorded.
 
-### Durable processing trace
+### Accept or override
 
-![CaseLens durable processing trace from outbox commit through Groq validation](docs/images/product-tour/03-processing-trace.png)
+![CaseLens review bar open to change the urgency of a ticket from Critical, with a reason field and Save button](docs/images/product-tour/03-review-override.png)
 
-The application exposes the persisted outbox, SQS, worker, model-validation,
-decision-source, and attempt states behind the recommendation.
+A reviewer accepts the call or overrides its urgency, with an optional reason.
+Reviews are appended and the original result is never changed.
 
-### Human correction and evaluation
+### Quality and operations
 
-![CaseLens evaluation view with persisted correction and provider metrics](docs/images/product-tour/04-evaluation.png)
+![CaseLens Quality and operations screen with queue and reliability counts, reviewer acceptance, benchmark match and provider usage](docs/images/product-tour/04-quality-operations.png)
 
-Reviewer corrections remain separate from the original model result and update
-agreement, correction, latency, provider-usage, and activity metrics.
+The screen shows the live queue and reliability counts, reviewer acceptance
+and override rate, benchmark match, recent live jobs and provider usage. It
+also holds **Simulate provider timeout**, which creates a bounded synthetic
+failure to retry. The counts here come from a fresh workspace, so most are
+empty.
 
-### Recoverable failure handling
+### How it's built
 
-![CaseLens Operations view with a retryable synthetic provider timeout](docs/images/product-tour/05-operations-recovery.png)
+![CaseLens How it's built dialog showing the five steps from saving a ticket to the reviewer's call, and the AI verified and Rules fallback outcomes](docs/images/product-tour/05-how-its-built.png)
 
-The controlled retry scenario records a synthetic timeout and surfaces its queue
-state, processing evidence, provider telemetry, and reviewer recovery action.
+The dialog follows one ticket from the outbox to the reviewer's call. Every
+answer is checked before it is shown. If the model fails or an answer fails a
+check, the pack's keyword rules decide and the ticket says so.
+
+### On a phone
+
+![CaseLens inbox on a phone with triaged and not yet triaged tickets](docs/images/product-tour/06-phone-inbox.png)
+
+The inbox collapses to one column on a phone. Opening a ticket shows its
+detail, and the menu holds Quality and operations and How it's built.
 
 ## Technical overview
 
