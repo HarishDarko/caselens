@@ -303,6 +303,7 @@ mark.ev .ref { display: inline-grid; place-items: center; min-width: 16px; heigh
 .urg-opt[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
 .urg-opt:disabled { cursor: not-allowed; background: var(--raised); color: var(--muted); border-style: solid; }
 .ai-tag { font-size: 12px; font-weight: 600; color: var(--coral-ink); }
+.urg-opt[aria-pressed="true"] .ai-tag { color: #f5ddd6; }
 .rv-reason { display: grid; gap: 6px; flex: 1; min-width: 200px; font-size: 13px; font-weight: 600; }
 .rv-reason input { height: 36px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--control); background: #fff; font-weight: 400; font-size: 14px; }
 .rv-reason input::placeholder { color: var(--faint); }
@@ -441,7 +442,7 @@ mark.ev .ref { display: inline-grid; place-items: center; min-width: 16px; heigh
   .rv-actions .btn { flex: 1; height: 44px; }
   .urg-set { width: 100%; }
   .urg-opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .urg-opt { height: 44px; justify-content: center; }
+  .urg-opt { height: auto; min-height: 44px; padding: 6px 10px; flex-wrap: wrap; justify-content: center; text-align: center; }
   .rv-reason { flex-basis: 100%; }
   .stages { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .trace-recorded { flex-wrap: wrap; }

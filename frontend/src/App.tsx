@@ -84,6 +84,8 @@ function App() {
   // triage poll from the old workspace stops and never writes into the next one.
   const sessionAbortRef = useRef(new AbortController())
   const busyTicketsRef = useRef(new Set<string>())
+  // Tickets that show a result but may have a newer one: opening one reads its status (GET) once.
+  const refreshOnOpenRef = useRef(new Set<string>())
   const savingTicketsRef = useRef(new Set<string>())
   const selectedRef = useRef<string | null>(null)
   // After "Start a new demo", focus follows the page: the landing heading while the workspace opens, then the inbox.
@@ -225,6 +227,7 @@ function App() {
     sessionAbortRef.current.abort()
     sessionAbortRef.current = new AbortController()
     busyTicketsRef.current = new Set()
+    refreshOnOpenRef.current = new Set()
     savingTicketsRef.current = new Set()
     return sessionAbortRef.current.signal
   }
@@ -233,7 +236,7 @@ function App() {
     api.setToken('')
     setTickets([]); setSelectedTicketId(null); setPane('list')
     setEvaluation(null); setOperationsOverview(null); setFailures(null); setRuntime(null); setWorkspaceIndustryId(null)
-    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null); setRetryDemoStartedAt(null); retryDemoRef.current = { running: false, ticketId: null }
+    setBusyTicketIds(new Set()); setSavingTicketIds(new Set()); setTriageStages({}); setTicketErrors({}); setQualityFocus(0); setError(null); setSessionEnded(false); setView('inbox'); setAnnouncement(''); setDialog(null); setRetryDemoStartedAt(null); retryDemoRef.current = { running: false, ticketId: null }
   }
   function closeDemo() { startSession(); resetWorkspace(); setBusy(false); setSessionOpen(false) }
   function startNewDemo() { restartFocusRef.current = true; closeDemo(); void openWorkspace() }
@@ -252,7 +255,9 @@ function App() {
   function clearTicketError(ticketId: string) {
     setTicketErrors((current) => ticketId in current ? Object.fromEntries(Object.entries(current).filter(([id]) => id !== ticketId)) : current)
   }
-  const announce = (text: string) => setAnnouncement(text)
+  // The same sentence twice in a row still has to be heard: a changed text node is what a screen reader announces, so a
+  // repeat gets a trailing no-break space.
+  const announce = (text: string) => setAnnouncement((current) => current === text ? text + ' ' : text)
 
   async function openWorkspace() {
     const signal = startSession()
@@ -290,7 +295,7 @@ function App() {
   // resume: the ticket's job is already queued, so only its status is read (GET), never a new triage request (POST).
   async function hydrateTriage(ticket: Ticket, { rerun = false, resume = false } = {}) {
     // A review being saved belongs to the current result, so a re-run waits until it is saved.
-    if (!ticket.backendId || (ticket.result && !rerun) || busyTicketsRef.current.has(ticket.backendId) || savingTicketsRef.current.has(ticket.backendId)) return
+    if (!ticket.backendId || (ticket.result && !rerun && !resume) || busyTicketsRef.current.has(ticket.backendId) || savingTicketsRef.current.has(ticket.backendId)) return
     const ticketId = ticket.backendId
     const previousResultId = ticket.result?.id ?? null
     const signal = sessionAbortRef.current.signal
@@ -314,6 +319,8 @@ function App() {
         }
         const job = processing.job
         const status = job?.status ?? 'QUEUED'
+        // Reading a ticket that already has a result: nothing newer is queued, so the shown result is the newest one.
+        if (resume && previousResultId && (!job || status === 'COMPLETED')) return
         if (status === 'TERMINAL_FAILURE') throw new PlainError(TRIAGE_FAILED_TEXT)
         if (status === 'RETRYABLE_FAILURE' && job?.lastErrorCode === 'SYNTHETIC_PROVIDER_TIMEOUT') throw new PlainError(RETRY_DEMO_STOPPED_TEXT)
         // A real provider failure is retried by the queue on its own, so keep waiting and say so.
@@ -352,7 +359,8 @@ function App() {
     // A ticket whose worker gave up shows the failure first; its Try again button runs it again. A ticket whose wait ran
     // out reads its status again; any other error (network, busy) simply tries again.
     const failure = ticket ? ticketErrors[ticket.backendId] : undefined
-    if (ticket && !failure?.hold) void hydrateTriage(ticket, { resume: Boolean(failure?.resume) })
+    const refresh = ticket ? refreshOnOpenRef.current.delete(ticket.backendId) : false
+    if (ticket && !failure?.hold) void hydrateTriage(ticket, { resume: Boolean(failure?.resume) || refresh })
   }
   function backToList() {
     const id = selectedTicketId
@@ -386,11 +394,33 @@ function App() {
       return true
     }
     catch (cause: unknown) {
-      if (!signal.aborted && stillShows(ticketId, result.id)) showTicketError(ticketId, cause, 'Could not save the review. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT)
+      if (!signal.aborted && stillShows(ticketId, result.id)) {
+        showTicketError(ticketId, cause, 'Could not save the review. Try again in a few seconds.', CORRECTION_CONFLICT_TEXT)
+        // The API refused because a newer result exists: read it now, and open the ticket again to read it if this fails.
+        if (cause instanceof ApiError && cause.status === 409 && cause.code !== 'workspace-limit') void refreshNewest(ticketId, result.id)
+      }
       return false
     }
     finally { if (!signal.aborted) { saving.delete(ticketId); setSavingTicketIds(new Set(saving)) } }
   }
+  // Reads one ticket's status once (GET only, never a triage request) and shows a result newer than the one on screen.
+  // If the read fails, the ticket is marked to read its status again the next time it is opened.
+  async function refreshNewest(ticketId: string, shownResultId: string) {
+    const signal = sessionAbortRef.current.signal
+    try {
+      const processing = await api.getProcessing(ticketId, signal)
+      if (signal.aborted) return
+      const result = processing.result
+      if (result && result.id !== shownResultId && stillShows(ticketId, shownResultId)) {
+        setTickets((current) => current.map((item) => item.backendId === ticketId ? { ...item, result: result as TriageResult, job: processing.job, review: null, reviewsLogged: 0 } : item))
+        return
+      }
+      if (processing.job && processing.job.status !== 'COMPLETED') markResume(ticketId)
+    }
+    catch { if (!signal.aborted) markResume(ticketId) }
+  }
+  // Opening the ticket again reads its status instead of trusting the result on screen.
+  function markResume(ticketId: string) { refreshOnOpenRef.current.add(ticketId) }
   // The retry goes through the screen's own reads: its follow-up refresh failing never reports the retry as failed,
   // and leaving the screen drops it quietly.
   async function retryFailure() {
@@ -402,6 +432,8 @@ function App() {
     try {
       if (!(await retry(failure.id)) || signal.aborted) return
       clearTicketError(failure.ticketId)
+      // A ticket that already has a result keeps showing it while the retried job runs; opening it reads the newer one.
+      if (ticketsRef.current.some((item) => item.backendId === failure.ticketId && item.result)) markResume(failure.ticketId)
       setFailures((current) => current && { ...current, content: current.content.filter((item) => item.id !== failure.id), totalElements: Math.max(0, current.totalElements - 1) })
       announce('Retried. The job is back in the queue and there are no unresolved failures.')
       setQualityFocus((value) => value + 1)
@@ -439,7 +471,7 @@ function App() {
     finally { demo.running = false; if (!signal.aborted) setBusy(false) }
   }
 
-  function navigate(next: NavView) { setView(next); setError(null) }
+  function navigate(next: NavView) { setView(next); setError(null); setQualityFocus(0) }
   const activity = (ticket: Ticket): TicketActivity => ({ running: busyTicketIds.has(ticket.backendId), stage: triageStages[ticket.backendId]?.stage ?? null, failed: Boolean(ticketErrors[ticket.backendId]) })
   const hasRecorded = inboxTickets.some((ticket) => ticket.result?.recorded)
   // Pending from the click until the synthetic failure is listed (each 5-second refresh re-checks), or 90 seconds.
@@ -454,7 +486,7 @@ function App() {
   </>
 
   const navItem = (target: NavView) => (
-    <button type="button" aria-label={VIEW_TITLE[target]} className="nav-item" aria-current={view === target ? 'page' : undefined} onClick={() => navigate(target)}>
+    <button type="button" className="nav-item" aria-current={view === target ? 'page' : undefined} onClick={() => navigate(target)}>
       <NavIcon view={target} /><span>{VIEW_TITLE[target]}</span>
       {target === 'inbox' && toReview > 0 && <span className="nav-count">{toReview} to review</span>}
       {target === 'quality' && failures?.totalElements ? <span className="nav-count">{failures.totalElements}<span className="sr-only"> failed</span></span> : null}

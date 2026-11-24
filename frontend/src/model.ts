@@ -50,7 +50,7 @@ export const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the tick
 export const SESSION_ENDED_TEXT = 'Your demo session has ended. Close the demo and open a new one.'
 // The API answers every refused review with the same 409 (an unchanged result, a result that is not the latest, or one
 // that belongs to another ticket), so the sentence covers all of them.
-export const CORRECTION_CONFLICT_TEXT = 'This correction conflicts with the current triage result of this ticket, so it was not saved. Open the ticket again and check it.'
+export const CORRECTION_CONFLICT_TEXT = 'This review conflicts with a newer result for this ticket, so it was not saved. The newest result is shown now.'
 export const WORKSPACE_LIMIT_TEXT = 'This demo workspace has reached its limit. Start a new demo to keep going.'
 export const SESSION_ENDED_BANNER_TEXT = 'Your demo session has ended. Start a new demo to keep exploring.'
 

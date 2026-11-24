@@ -107,7 +107,7 @@ export function QualityOps({ evaluation, overview, failures, live, loading, reco
   const inFlight = queue.queued + queue.processing
   // The failures still waiting for a retry, so the card agrees with the banner; a replayed job leaves the list.
   const failed = count
-  const attempts = queue.retryableFailures + queue.terminalFailures
+  const failedJobs = queue.retryableFailures + queue.terminalFailures
   const health: { text: string; tone: Tone } = count ? { text: 'Recovery required', tone: 'coral' }
     : overview.providerFailureCount > 0 ? { text: 'Degraded', tone: 'amber' } : { text: 'Healthy', tone: 'teal' }
   const reviewed = evaluation.reviewedResults
@@ -151,7 +151,7 @@ export function QualityOps({ evaluation, overview, failures, live, loading, reco
         <div className="qo-figures">
           <Figure label="In flight" value={inFlight} detail={`${queue.queued} queued, ${queue.processing} processing`} />
           <Figure label="Completed live" value={queue.completed} detail="Live worker runs; recorded results are not counted" tone={queue.completed ? 'teal' : 'plain'} />
-          <Figure label="Recoverable failures" value={failed} detail={failed ? `Waiting for a retry here; ${attempts} failed attempt${attempts === 1 ? '' : 's'} in all` : `None waiting; ${attempts} failed attempt${attempts === 1 ? '' : 's'} in all`} tone={failed ? 'coral' : 'plain'} />
+          <Figure label="Recoverable failures" value={failed} detail={failed ? `Waiting for a retry here; ${failedJobs} failed job${failedJobs === 1 ? '' : 's'} in all` : `None waiting; ${failedJobs} failed job${failedJobs === 1 ? '' : 's'} in all`} tone={failed ? 'coral' : 'plain'} />
           <Figure label="Rules fallbacks" value={overview.fallbackCount} detail={`${overview.providerFailureCount} provider failure${overview.providerFailureCount === 1 ? '' : 's'}`} tone={overview.fallbackCount ? 'amber' : 'plain'} />
         </div>
       </section>
@@ -166,7 +166,7 @@ export function QualityOps({ evaluation, overview, failures, live, loading, reco
         </div>
         <p className="qo-note">
           Benchmark match compares each result with its scenario's hidden answer key; acceptance and overrides are what reviewers did, and the two are kept apart.
-          {isNumber(recorded) && recorded > 0 && (reviewed === 0 ? ` 0 of ${recorded} recorded tickets reviewed.` : ` Recorded results count toward reviews only, never toward latency or provider figures.`)}
+          {isNumber(recorded) && recorded > 0 && (reviewed === 0 ? ` 0 of ${recorded} recorded tickets reviewed.` : ` Recorded results count toward benchmark match and reviews, never toward the live queue, latency or provider figures.`)}
         </p>
       </section>
 
