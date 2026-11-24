@@ -27,8 +27,8 @@ export const RETRY_DEMO_SCENARIO = 'provider-retry-demo'
 
 // A worker whose SnapStart snapshot was dropped after 14 idle days rebuilds it before SQS redelivers the job (about
 // 90 seconds in production), and a rate-limited triage is retried once after about 90 seconds, so the worst case is
-// about 135 seconds. Wait 150 seconds and back off while waiting.
-export const TRIAGE_WAIT_MS = 150_000
+// about 135 seconds (149 s at most on the backend). Wait 180 seconds and back off while waiting.
+export const TRIAGE_WAIT_MS = 180_000
 export const SLOW_TRIAGE_NOTICE_MS = 8_000
 // A triage takes about 4 to 6 seconds, and the API allows 5 requests a second for all visitors together, so check
 // once a second (every 2 seconds after 30 seconds). Checking four times a second only used up that shared budget.

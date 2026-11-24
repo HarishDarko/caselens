@@ -868,8 +868,8 @@ test('reads the status again, without a new triage request, when a ticket whose 
   const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST').length
 
   fireEvent.click(row(PAYMENT))
-  // The page waits 150 seconds (a rate-limited triage is retried once after about 90 s); still waiting at 140 s.
-  await act(async () => { await vi.advanceTimersByTimeAsync(140_000) })
+  // The page waits 180 seconds (a rate-limited triage is retried once after about 90 s); still waiting at 170 s.
+  await act(async () => { await vi.advanceTimersByTimeAsync(170_000) })
   expect(detail().queryByRole('alert')).not.toBeInTheDocument()
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
   await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running. Open the ticket again in a minute to see the result.'))
@@ -1231,7 +1231,7 @@ test('keeps the stage text of a ticket still in triage when another ticket finis
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
 
-// CL2-09: a live triage can wait two and a half minutes. Only that ticket waits; other tickets stay usable.
+// CL2-09: a live triage can wait three minutes. Only that ticket waits; other tickets stay usable.
 test('keeps other tickets reviewable while one ticket waits for live triage', async () => {
   mockSeededBackend([chargerTicket, recordedReceipt], { 'ticket-a104': () => pendingJob('QUEUED', null, 'ticket-a104') })
   render(<App />)
