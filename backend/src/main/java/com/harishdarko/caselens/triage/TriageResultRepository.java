@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TriageResultRepository extends JpaRepository<TriageResult, UUID> {
-    Optional<TriageResult> findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDesc(UUID ticketId, UUID workspaceId);
+    Optional<TriageResult> findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDescIdDesc(UUID ticketId, UUID workspaceId);
     Optional<TriageResult> findByEventId(UUID eventId);
     Optional<TriageResult> findByIdAndWorkspaceId(UUID id, UUID workspaceId);
     /** The workspace's results, oldest first, as ResultFacts: no JSON or long text columns. */

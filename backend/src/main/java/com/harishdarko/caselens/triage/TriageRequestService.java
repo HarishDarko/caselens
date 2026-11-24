@@ -205,12 +205,22 @@ public class TriageRequestService {
         publicationService.persist(event);
     }
 
+    /**
+     * The ticket's latest job with its attempts and result. A ticket that has never been queued but has a recorded
+     * result answers with no job and that result; a ticket with neither is not found, as before.
+     */
     @Transactional(readOnly = true)
     public TriageProcessingSnapshot processing(UUID workspaceId, UUID ticketId) {
         tickets.findByIdAndWorkspaceId(ticketId, workspaceId).orElseThrow(TicketNotFoundException::new);
         TriageJob job = jobs.findFirstByTicketIdAndWorkspaceIdAndContentVersionOrderByCreatedAtDesc(
-                ticketId, workspaceId, 1)
-                .orElseThrow(TicketNotFoundException::new);
+                ticketId, workspaceId, 1).orElse(null);
+        if (job == null) {
+            TriageResult recorded = results == null ? null
+                    : results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDescIdDesc(ticketId, workspaceId)
+                            .filter(TriageResult::isRecorded).orElseThrow(TicketNotFoundException::new);
+            if (recorded == null) throw new TicketNotFoundException();
+            return new TriageProcessingSnapshot(null, recorded, List.of(), fallbackReason(null, recorded));
+        }
         List<TriageAttemptSnapshot> timeline = attempts == null ? List.of()
                 : attempts.findByJobIdOrderByAttemptNumberAsc(job.getId()).stream()
                         .map(TriageAttempt::snapshot).toList();
@@ -225,7 +235,7 @@ public class TriageRequestService {
      */
     private FallbackReason fallbackReason(TriageJob job, TriageResult result) {
         if (result == null || result.getDecisionSource() != DecisionSource.RULES_FALLBACK) return null;
-        if (invocations == null) return FallbackReason.PROVIDER_UNAVAILABLE;
+        if (invocations == null || job == null) return FallbackReason.PROVIDER_UNAVAILABLE;
         ModelInvocation latest = new JobInvocations(invocations.findByTicketIds(List.of(job.getTicketId()))).latestFor(job);
         String errorCode = latest != null && "FAILURE".equals(latest.getStatus()) ? latest.getSanitizedErrorCode() : null;
         return FallbackReason.fromErrorCode(errorCode);

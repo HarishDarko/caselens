@@ -72,7 +72,7 @@ class DemoSessionController {
         }
         List<Industry> industries = packs.ids().stream()
                 .map(id -> new Industry(id, packs.require(id).name(), scenario(scenarios.featured(id)),
-                        scenarios.forIndustry(id).stream().map(DemoSessionController::scenario).toList()))
+                        scenarios.seededForIndustry(id).stream().map(DemoSessionController::scenario).toList()))
                 .sorted(Comparator.comparing((Industry industry) -> !industry.id().equals(DemoWorkspace.DEFAULT_INDUSTRY))
                         .thenComparing(Industry::name))
                 .toList();
