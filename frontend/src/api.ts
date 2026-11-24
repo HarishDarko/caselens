@@ -112,8 +112,8 @@ export type EvaluationSummary = {
   generatedAt: string
   triageResults: number
   evaluatedResults: number
-  categoryAgreementRate: number
-  urgencyAgreementRate: number
+  categoryAgreementRate: number | null
+  urgencyAgreementRate: number | null
   // null when nothing has been measured yet (an API with recorded results); an older API sends 0.
   agreementRate: number | null
   correctionRate: number | null
@@ -122,6 +122,12 @@ export type EvaluationSummary = {
   failureRate: number | null
   providerUsage: Array<{ provider: string; requests: number; successes: number; failures: number; inputTokens: number; outputTokens: number }>
   recentEvents: EvaluationEvent[]
+  // Reviewer figures, added with recorded results; an older API leaves them out. Empty rates are null.
+  reviewedResults?: number
+  acceptedResults?: number
+  acceptanceRate?: number | null
+  overrideRate?: number | null
+  recordedResults?: number
 }
 
 // latencyMs is null while a job has not finished (the API sends 0 instead before it made the field nullable).

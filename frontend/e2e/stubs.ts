@@ -14,14 +14,19 @@ const industries = [
   { id: 'saas-support', name: 'SaaS support', featuredScenario: { key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }, scenarios: [{ key: 'saas-sso-lockout', label: 'Whole team locked out after an SSO change' }] },
 ]
 const runtime = { environment: 'AWS_DEMO', database: 'NEON_POSTGRESQL', queue: 'AMAZON_SQS', aiProvider: 'GROQ' }
-const evaluation = { generatedAt: now, triageResults: 3, evaluatedResults: 3, categoryAgreementRate: 1, urgencyAgreementRate: 1, agreementRate: 1, correctionRate: 0, medianLatencyMs: 2900, p95LatencyMs: 3100, failureRate: 0, providerUsage: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2400, outputTokens: 900 }], recentEvents: [] }
-const operationsOverview = { generatedAt: now, queue: { queued: 0, processing: 0, completed: 2, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 1, providerFailureCount: 0, recent: [], providers: [] }
+const evaluation = { generatedAt: now, triageResults: 5, evaluatedResults: 2, categoryAgreementRate: 1, urgencyAgreementRate: 0.5, agreementRate: 0.5, correctionRate: 0.5, medianLatencyMs: 2880, p95LatencyMs: 2880, failureRate: 0, providerUsage: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2400, outputTokens: 900 }], recentEvents: [], reviewedResults: 2, acceptedResults: 1, acceptanceRate: 0.5, overrideRate: 0.5, recordedResults: 3 }
+const recentJob = (id: string, decisionSource: string, latencyMs: number) => ({ jobId: `job-${id}`, ticketId: id, status: 'COMPLETED', attemptCount: 1, createdAt: now, updatedAt: now, completedAt: now, lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource, latencyMs })
+const operationsOverview = { generatedAt: now, queue: { queued: 0, processing: 0, completed: 2, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 1, providerFailureCount: 0, recent: [recentJob('00000000-0000-4000-8000-000000000005', 'RULES_FALLBACK', 3120), recentJob('00000000-0000-4000-8000-000000000004', 'AI_VALIDATED', 2880)], providers: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2400, outputTokens: 900, averageLatencyMs: 2950 }] }
+const retryTicket = { id: '00000000-0000-4000-8000-000000000009', displayId: 'CL-9D2A01', subject: 'Synthetic provider timeout for retry review', message: 'A synthetic ticket used to show failure recovery.', channel: 'WEB', status: 'NEW', scenarioKey: 'provider-retry-demo', createdAt: now, updatedAt: now }
+const syntheticFailure = { id: 'job-retry-1', eventId: 'event-retry-1', ticketId: retryTicket.id, status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: now, completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }
 
 type Live = Record<string, { job: Record<string, unknown>; result: Record<string, unknown> }>
 
 /** Routes every /api call. queuedFor keeps the named tickets queued, to show the live progress and cold-start states. */
 export async function installApiStubs(page: Page, { queuedPolls = 1, stuckTickets = [] as string[] } = {}) {
   const polls = new Map<string, number>()
+  // The retry demo: its ticket fails on its first triage and shows in the failures list until it is retried.
+  let retryFailed = false
   const live = workspace.live as Live
   await page.route('**/api/**', async (route) => {
     const request = route.request()
@@ -34,7 +39,10 @@ export async function installApiStubs(page: Page, { queuedPolls = 1, stuckTicket
     else if (path.endsWith('/api/demo/session')) body = { token: 'e2e-token', expiresAt: now, industry: workspace.industry, tickets: workspace.tickets, runtime }
     else if (path.endsWith('/api/evaluation')) body = evaluation
     else if (path.endsWith('/api/operations/overview')) body = operationsOverview
-    else if (path.endsWith('/api/operations/failures')) body = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }
+    else if (path.endsWith('/api/operations/failures')) body = retryFailed ? { content: [syntheticFailure], page: 0, size: 50, totalElements: 1, totalPages: 1 } : { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 }
+    else if (path.endsWith('/api/operations/failures/job-retry-1/retry')) { retryFailed = false; body = { ...syntheticFailure, status: 'QUEUED', lastErrorCode: null } }
+    else if (path.endsWith('/api/demo/scenarios/provider-retry-demo')) { status = 201; body = retryTicket }
+    else if (path.endsWith(`/api/tickets/${retryTicket.id}/triage`)) { retryFailed = true; status = 202; body = { ...syntheticFailure, status: 'QUEUED', lastErrorCode: null } }
     else if (ticketMatch?.[2] === 'triage') { status = 202; body = { id: `job-${ticketMatch[1]}`, eventId: `event-${ticketMatch[1]}`, ticketId: ticketMatch[1], status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] } }
     else if (ticketMatch?.[2] === 'processing') {
       const id = ticketMatch[1]

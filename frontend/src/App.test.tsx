@@ -315,7 +315,7 @@ test('says where to go when triage fails, on that ticket', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['TERMINAL_FAILURE'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(500) })
 
-  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.'))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Quality and operations to retry it.'))
   expect(row(PAYMENT)).toHaveTextContent('Triage failed')
   expect(detail().queryByText('Open this ticket to run the live AI on it.')).not.toBeInTheDocument()
   expect(screen.queryByText(/terminal failure/i)).not.toBeInTheDocument()
@@ -325,7 +325,7 @@ test('explains the controlled retry demo stop in plain words', async () => {
   await openTicketWithFakeTimers({ pollSteps: ['SYNTHETIC_FAILURE'] })
   await act(async () => { await vi.advanceTimersByTimeAsync(500) })
 
-  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The retry demo stopped this triage on purpose. Open Operations to retry it.'))
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The retry demo stopped this triage on purpose. Open Quality and operations to retry it.'))
   expect(screen.queryByText(/retryable failure/i)).not.toBeInTheDocument()
 })
 
@@ -360,51 +360,198 @@ test('requires a reason before saving an override on an API that records correct
   expect(detail().getByText('Add a reason to save.')).toBeInTheDocument()
 })
 
-test('runs the controlled retry demo from Operations and keeps its ticket out of the inbox', async () => {
-  const fetchMock = mockBackend()
+const QO = 'Quality and operations'
+async function openQuality() {
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Live queue and reliability' })).toBeInTheDocument())
+}
+
+test('simulates a provider timeout from Quality and operations, then offers Retry case, and keeps the ticket out of the inbox', async () => {
+  let failed = false
+  let retriedOnce = false
+  const backend = mockBackend()
+  const fetchMock = stubOver(backend, (url) => {
+    if (url.endsWith('/ticket-a105/triage')) { failed = true; return undefined }
+    if (url.endsWith('/job-retry-1/retry')) { failed = false; retriedOnce = true; return response({ id: 'job-retry-2', eventId: 'event-retry-1', ticketId: 'ticket-a105', status: 'QUEUED', attemptCount: 0, startedAt: null, completedAt: null, lastErrorCode: null, attempts: [] }) }
+    if (url.includes('/api/operations/failures') && failed) return response({ content: [{ id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-a105', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    // The replayed job stays a RETRYABLE_FAILURE row in the queue counts; only the failures list drops it.
+    if (url.endsWith('/api/operations/overview') && retriedOnce) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 0, completed: 1, retryableFailures: 1, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [], providers: [] })
+    return undefined
+  })
   render(<App />)
   await openInbox()
+  await openQuality()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run controlled retry demo' })).toBeEnabled())
+  expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument()
   const overviewReads = calls(fetchMock, '/api/operations/overview')
-  fireEvent.click(screen.getByRole('button', { name: 'Run controlled retry demo' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate provider timeout' }))
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/tickets/ticket-a105/triage'), expect.objectContaining({ method: 'POST' })))
-  // Operations reads again at once instead of waiting for its next 5-second tick.
-  await waitFor(() => expect(calls(fetchMock, '/api/operations/overview')).toBe(overviewReads + 1), { timeout: 1_000 })
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/demo/scenarios/provider-retry-demo'), expect.objectContaining({ method: 'POST' }))
-  expect(screen.getByRole('heading', { name: 'Operations' })).toBeInTheDocument()
+  // The screen reads again at once instead of waiting for its next 5-second tick, and the banner flips in place.
+  await waitFor(() => expect(calls(fetchMock, '/api/operations/overview')).toBe(overviewReads + 1), { timeout: 1_000 })
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Recovery required' })).toBeInTheDocument())
+  expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled()
+  expect(screen.getByText('Recovery required', { selector: '.qo-health' })).toBeInTheDocument()
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Recovery required. The synthetic provider timeout is ready to retry.')
+  const failuresCard = () => screen.getByText('Recoverable failures', { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(failuresCard()).toHaveTextContent('1')
+  expect(failuresCard()).toHaveClass('tone-coral')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+  // After the retry the banner reads healthy again, focus moves to it, and the demo can run again.
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toHaveFocus())
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Retried. The job is back in the queue and there are no unresolved failures.')
+  expect(screen.getByRole('button', { name: 'Simulate provider timeout' })).toBeEnabled()
+  // The card follows the failures list, not the queue's cumulative failed rows, so it agrees with the banner.
+  await waitFor(() => expect(failuresCard()).toHaveTextContent('None waiting; 1 failed attempt in all'))
+  expect(failuresCard().querySelector('.qo-value')).toHaveTextContent('0')
+  expect(failuresCard()).not.toHaveClass('tone-coral')
   fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
   expect(screen.queryByText('Synthetic provider timeout for retry review')).not.toBeInTheDocument()
 })
 
-test('shows measured evaluation and operational failure views', async () => {
+test('shows a pending simulation until the failure is listed', async () => {
+  const fetchMock = mockBackend()
   render(<App />)
   await openInbox()
+  await openQuality()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
-  expect(screen.getByRole('heading', { name: 'Evaluation signal' })).toBeInTheDocument()
-  expect(screen.getByText('Agreement')).toBeInTheDocument()
-
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate provider timeout' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Simulating a provider timeout' })).toHaveFocus())
+  expect(screen.getByRole('button', { name: 'Simulate provider timeout' })).toBeDisabled()
+  expect(document.querySelector('.qo [aria-live="polite"]')).toHaveTextContent('Simulating a provider timeout. The failure shows here in a few seconds.')
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/demo/scenarios/provider-retry-demo'))).toHaveLength(1)
 })
 
-test('surfaces persisted evaluation activity and operations telemetry', async () => {
+test('shows live queue, reliability, quality and review figures, the job log and provider usage on one screen', async () => {
+  const backend = mockBackend()
+  stubOver(backend, (url) => {
+    if (url.endsWith('/api/evaluation')) return response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 5, evaluatedResults: 4, categoryAgreementRate: 1, urgencyAgreementRate: 0.75, agreementRate: 0.75, correctionRate: 0.2, medianLatencyMs: 2900, p95LatencyMs: 4100, failureRate: 0, providerUsage: [], recentEvents: [], reviewedResults: 4, acceptedResults: 3, acceptanceRate: 0.75, overrideRate: 0.25, recordedResults: 3 })
+    if (url.endsWith('/api/operations/overview')) return response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 1, processing: 1, completed: 2, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 1, providerFailureCount: 0, recent: [{ jobId: 'job-1', ticketId: 'ticket-a102', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:14:00Z', updatedAt: '2026-07-11T09:14:02Z', completedAt: '2026-07-11T09:14:02Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'AI_VALIDATED', latencyMs: 2900 }, { jobId: 'job-2', ticketId: 'ticket-a103', status: 'COMPLETED', attemptCount: 1, createdAt: '2026-07-11T09:15:00Z', updatedAt: '2026-07-11T09:15:03Z', completedAt: '2026-07-11T09:15:03Z', lastErrorCode: null, provider: 'groq', modelVersion: 'openai/gpt-oss-20b', decisionSource: 'RULES_FALLBACK', latencyMs: 3100 }, { jobId: 'job-3', ticketId: 'ticket-a104', status: 'TERMINAL_FAILURE', attemptCount: 3, createdAt: '2026-07-11T09:16:00Z', updatedAt: '2026-07-11T09:18:00Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', provider: 'groq', modelVersion: null, decisionSource: null, latencyMs: null }, { jobId: 'job-4', ticketId: 'ticket-a105', status: 'RETRYABLE_FAILURE', attemptCount: 1, createdAt: '2026-07-11T09:19:00Z', updatedAt: '2026-07-11T09:19:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', provider: null, modelVersion: null, decisionSource: null, latencyMs: null }], providers: [{ provider: 'groq', requests: 2, successes: 2, failures: 0, inputTokens: 2000, outputTokens: 600, averageLatencyMs: 2950 }] })
+    return undefined
+  })
   render(<App />)
   await openInbox()
+  await openQuality()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
-  await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
-  expect(screen.getByText('openai/gpt-oss-20b')).toBeInTheDocument()
-  expect(screen.getByText('AI_VALIDATED')).toBeInTheDocument()
-  expect(screen.getAllByText('184 ms').length).toBeGreaterThan(0)
+  const figure = (label: string) => screen.getByText(label, { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(figure('In flight')).toHaveTextContent('2')
+  expect(figure('Completed live')).toHaveTextContent('2')
+  expect(figure('Rules fallbacks')).toHaveTextContent('1')
+  expect(figure('Reviewer acceptance')).toHaveTextContent('75%')
+  expect(figure('Reviewer acceptance')).toHaveTextContent('3 of 4 reviewed results accepted')
+  expect(figure('Override rate')).toHaveTextContent('25%')
+  expect(figure('Benchmark match')).toHaveTextContent('75%')
+  expect(figure('Live latency')).toHaveTextContent('p50 2900 ms')
+  expect(figure('Live latency')).toHaveTextContent('p95 4100 ms')
+  expect(screen.getByText('AI verified', { selector: '.qo-log .badge' })).toBeInTheDocument()
+  expect(screen.getByText('Rules fallback', { selector: '.qo-log .badge' })).toBeInTheDocument()
+  expect(screen.getAllByText('openai/gpt-oss-20b', { exact: false }).length).toBeGreaterThan(0)
+  expect(document.querySelector('.qo-providers li')).toHaveTextContent('Groq · 2 calls · 2 succeeded · 0 failed · 2600 tokens')
+  expect(screen.getByText('How retries and dead-letter recovery work')).toBeInTheDocument()
+  expect(screen.getByText('Healthy', { selector: '.qo-health' })).toBeInTheDocument()
+  const logRow = (status: string) => screen.getByText(status, { selector: '.qo-log b' }).closest('li')!
+  expect(logRow('Failed').querySelector('.qo-log-latency')).toHaveTextContent('Not measured yet')
+  expect(logRow('Stopped on purpose').querySelector('.qo-log-latency')).toHaveTextContent('Not measured yet')
+  expect(screen.queryByText('Pending')).not.toBeInTheDocument()
+  expect(screen.queryByText('Retrying')).not.toBeInTheDocument()
+  expect(screen.queryByText('Needs a newer backend')).not.toBeInTheDocument()
+  expect(document.body.textContent).not.toContain('\u2014')
+})
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
-  await waitFor(() => expect(screen.getByText('Provider failures')).toBeInTheDocument())
-  expect(screen.getByText('Completed jobs')).toBeInTheDocument()
-  expect(screen.getByText('1', { selector: '.ops-value' })).toBeInTheDocument()
+test('asks for a newer backend when an API sends no reviewer figures, and uses its correction rate for overrides', async () => {
+  render(<App />)
+  await openInbox()
+  await openQuality()
+
+  const figure = (label: string) => screen.getByText(label, { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(figure('Reviewer acceptance')).toHaveTextContent('Needs a newer backend')
+  expect(figure('Reviewer acceptance')).toHaveTextContent('Not measured yet')
+  expect(figure('Override rate')).toHaveTextContent('0%')
+  expect(figure('Override rate')).toHaveTextContent('Corrections as a share of results')
+  expect(screen.queryByText('No reviews yet')).not.toBeInTheDocument()
+})
+
+test('shows the session-ended state, not a loading line, when the first read is refused', async () => {
+  // The seeded open reads nothing from evaluation, so only the screen's first read is refused.
+  stubOver(mockSeededBackend(), (url) => url.endsWith('/api/evaluation') ? response({ detail: 'Unauthorized' }, 401) : undefined)
+  render(<App />)
+  await openInbox()
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your demo session has ended, so live updates stopped.'))
+  expect(screen.queryByText(/Loading the latest numbers/)).not.toBeInTheDocument()
+  expect(document.querySelector('.qo-skeleton')).toBeNull()
+})
+
+test('creates one retry demo ticket on a double click, and reuses it when its triage request failed', async () => {
+  let triageAttempts = 0
+  const fetchMock = stubOver(mockBackend(), (url) => url.endsWith('/ticket-a105/triage') && triageAttempts++ === 0 ? response({ detail: 'Busy' }, 500) : undefined)
+  render(<App />)
+  await openInbox()
+  await openQuality()
+  const scenarioPosts = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/demo/scenarios/provider-retry-demo')).length
+  const triagePosts = () => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a105/triage') && init?.method === 'POST').length
+
+  const simulate = screen.getByRole('button', { name: 'Simulate provider timeout' })
+  act(() => { simulate.click(); simulate.click() })
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The CaseLens service had a problem.'))
+  expect(scenarioPosts()).toBe(1)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate provider timeout' }))
+  await waitFor(() => expect(triagePosts()).toBe(2))
+  expect(scenarioPosts()).toBe(1)
+})
+
+test('drops a refresh that was already on its way when a retry lands, so the old failure never comes back', async () => {
+  let failed = true
+  let hold: () => void = () => undefined
+  let holdNext = false
+  const failure = { id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-retry-1', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }
+  const page = (withFailure: boolean) => response(withFailure ? { content: [failure], page: 0, size: 50, totalElements: 1, totalPages: 1 } : { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 })
+  const fetchMock = stubOver(mockBackend(), (url) => {
+    if (url.endsWith('/retry')) { failed = false; return response({ ...failure, id: 'job-retry-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.includes('/api/operations/failures') && holdNext) { holdNext = false; const answer = page(failed); return new Promise<Response>((resolve) => { hold = () => resolve(answer) }) as unknown as Response }
+    if (url.includes('/api/operations/failures')) return page(failed)
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled())
+
+  // A routine refresh starts and its failure list (read before the retry) is slow to answer.
+  holdNext = true
+  await advance(5_000)
+  const reads = calls(fetchMock, '/api/operations/overview')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  // No second set of reads runs beside the one in flight.
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(reads)
+
+  await act(async () => { hold() })
+  await waitFor(() => expect(calls(fetchMock, '/api/operations/overview')).toBe(reads + 1))
+  expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Recovery required' })).not.toBeInTheDocument()
+})
+
+test('never reports a retry as failed because the refresh after it was throttled', async () => {
+  let retried = false
+  const failure = { id: 'job-retry-1', eventId: 'event-retry-1', ticketId: 'ticket-retry-1', status: 'RETRYABLE_FAILURE', attemptCount: 1, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'SYNTHETIC_PROVIDER_TIMEOUT', attempts: [] }
+  stubOver(mockBackend(), (url) => {
+    if (url.endsWith('/retry')) { retried = true; return response({ ...failure, id: 'job-retry-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.endsWith('/api/operations/overview') && retried) return response({ detail: 'Busy' }, 503)
+    if (url.includes('/api/operations/failures')) return response({ content: [failure], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  await openQuality()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry case' }))
+
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers.'), { timeout: 3_000 })
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
 test('labels a controlled synthetic timeout as reviewer recovery rather than provider degradation', async () => {
@@ -412,13 +559,13 @@ test('labels a controlled synthetic timeout as reviewer recovery rather than pro
   render(<App />)
   await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  fireEvent.click(screen.getByRole('button', { name: QO }))
 
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Recovery required' })).toBeInTheDocument())
   expect(screen.getByText('A controlled synthetic timeout was recorded. Retry the case to verify the recovery path.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Retry case' })).toBeInTheDocument()
-  expect(screen.queryByText(/Provider degraded/)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Operations' })).toHaveTextContent('1 failed')
+  expect(screen.queryByText('Degraded')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: QO })).toHaveTextContent('1 failed')
 })
 
 // Live refresh: the tab can be hidden, and a visitor can walk away. Timers and Date are faked only after the
@@ -436,12 +583,12 @@ function calls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
   return fetchMock.mock.calls.filter(([url]) => String(url).endsWith(path)).length
 }
 
-async function openView(name: 'Evaluation' | 'Operations', backend: Parameters<typeof mockBackend>[0] = {}) {
+async function openView(backend: Parameters<typeof mockBackend>[0] = {}) {
   const fetchMock = mockBackend(backend)
   render(<App />)
   await openInbox()
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
-  fireEvent.click(screen.getByRole('button', { name }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await advance(0)
   return fetchMock
 }
@@ -451,12 +598,16 @@ afterEach(() => {
   delete (document as { visibilityState?: string }).visibilityState
 })
 
-test('refreshes Evaluation every 5 seconds only while the tab is visible', async () => {
-  const fetchMock = await openView('Evaluation')
+test('refreshes Quality and operations every 5 seconds, with the same three reads, only while the tab is visible', async () => {
+  const fetchMock = await openView()
   const start = calls(fetchMock, '/api/evaluation')
 
+  const overview = calls(fetchMock, '/api/operations/overview')
+  const failures = calls(fetchMock, '/api/operations/failures?page=0&size=50')
   await advance(60_000)
   expect(calls(fetchMock, '/api/evaluation') - start).toBe(12)
+  expect(calls(fetchMock, '/api/operations/overview') - overview).toBe(12)
+  expect(calls(fetchMock, '/api/operations/failures?page=0&size=50') - failures).toBe(12)
   expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
 
   setVisibility('hidden')
@@ -469,8 +620,8 @@ test('refreshes Evaluation every 5 seconds only while the tab is visible', async
   expect(calls(fetchMock, '/api/evaluation')).toBe(hidden + 1)
 })
 
-test('makes no Operations requests from a hidden tab', async () => {
-  const fetchMock = await openView('Operations')
+test('makes no requests from a hidden tab', async () => {
+  const fetchMock = await openView()
   setVisibility('hidden')
   const overview = calls(fetchMock, '/api/operations/overview')
   const failures = calls(fetchMock, '/api/operations/failures?page=0&size=50')
@@ -482,7 +633,7 @@ test('makes no Operations requests from a hidden tab', async () => {
 })
 
 test('stops refreshing after 10 minutes without activity, says so, and resumes on request', async () => {
-  const fetchMock = await openView('Evaluation')
+  const fetchMock = await openView()
 
   await advance(10 * 60_000 + 5_000)
   expect(screen.getByRole('status')).toHaveTextContent('Live updates are paused because there was no activity for 10 minutes.')
@@ -497,7 +648,7 @@ test('stops refreshing after 10 minutes without activity, says so, and resumes o
 })
 
 test('announces only state changes, not every routine refresh', async () => {
-  await openView('Evaluation')
+  await openView()
   await advance(5_000)
   const announced = screen.getByRole('status').textContent
   const updated = screen.getByText(/Last updated at/).textContent
@@ -510,7 +661,7 @@ test('announces only state changes, not every routine refresh', async () => {
 })
 
 test('waits for a slow refresh instead of sending overlapping requests', async () => {
-  const fetchMock = await openView('Evaluation', { laterEvaluation: () => new Promise<Response>(() => undefined) })
+  const fetchMock = await openView({ laterEvaluation: () => new Promise<Response>(() => undefined) })
   const started = calls(fetchMock, '/api/evaluation')
 
   await advance(60_000)
@@ -520,22 +671,22 @@ test('waits for a slow refresh instead of sending overlapping requests', async (
 })
 
 test('ignores a late answer for a view the reviewer has already left', async () => {
-  let failLate: (reason: Error) => void = () => undefined
-  await openView('Evaluation', { laterEvaluation: () => new Promise<Response>((_, reject) => { failLate = reject }) })
+  const failLate: Array<(reason: Error) => void> = []
+  await openView({ laterEvaluation: () => new Promise<Response>((_, reject) => { failLate.push(reject) }) })
+  await advance(5_000)
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await advance(0)
-  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
-
-  await act(async () => { failLate(new Error('Failed to fetch')) })
+  await act(async () => { failLate[0]?.(new Error('Failed to fetch')) })
   await advance(0)
 
-  expect(screen.getByRole('status')).toHaveTextContent('Live: updates every 5 seconds while this tab is open.')
+  expect(screen.getByRole('status')).not.toHaveTextContent('Could not load the latest numbers.')
   expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
 })
 
 test('says in plain words when the latest numbers could not load', async () => {
-  await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Request failed with status 503' }, 503)) })
+  await openView({ laterEvaluation: () => Promise.resolve(response({ detail: 'Request failed with status 503' }, 503)) })
 
   // The client tries a GET once more after a 503 (1 second later), so the failed state comes after that try.
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not load the latest numbers. The service may be starting or busy. Trying again in 5 seconds.'), { timeout: 3_000 })
@@ -590,7 +741,7 @@ test('opens a seeded workspace with one request and keeps its runtime for How it
   expect(apiCallsAfterLaunch(fetchMock)).toEqual(['POST /api/demo/session?seed=true'])
   const sessionCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/api/demo/session?seed=true') && init?.method === 'POST')
   expect(JSON.parse(String(sessionCall?.[1]?.body))).toEqual({ industry: 'saas-support' })
-  expect(screen.getByRole('button', { name: 'Operations' })).not.toHaveTextContent(/failed/)
+  expect(screen.getByRole('button', { name: 'Quality and operations' })).not.toHaveTextContent(/failed/)
   fireEvent.click(screen.getByRole('button', { name: "How it's built" }))
   expect(screen.getByText('This workspace runs on AWS: Neon Postgres, Amazon SQS and Groq.')).toBeInTheDocument()
 })
@@ -607,23 +758,22 @@ test('still opens through reset and the separate reads when the API returns a ba
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/triage'))).toBe(false)
 })
 
-test('loads Evaluation and Operations when they are opened, and never shows numbers from an earlier workspace', async () => {
+test('loads Quality and operations when it is opened, and never shows numbers from an earlier workspace', async () => {
   const fetchMock = mockSeededBackend()
   render(<App />)
   await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
-  await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
-  await waitFor(() => expect(screen.getByRole('heading', { name: 'No unresolved failures' })).toBeInTheDocument())
+  await openQuality()
   expect(calls(fetchMock, '/api/evaluation')).toBe(1)
+  expect(calls(fetchMock, '/api/operations/overview')).toBe(1)
   expect(calls(fetchMock, '/api/operations/failures?page=0&size=50')).toBe(1)
 
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
   await openInbox()
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
-  expect(screen.getByText('Loading the evaluation numbers for this workspace...')).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByText('Agreement')).toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: QO }))
+  expect(screen.getByRole('status')).toHaveTextContent('Loading the latest numbers for this workspace.')
+  expect(document.querySelector('.qo-skeleton')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'Live queue and reliability' })).toBeInTheDocument())
 })
 
 test('lists triaged tickets first, by the AI priority score and then SLA risk, and untriaged ones after in API order', async () => {
@@ -851,7 +1001,7 @@ test('shows a background failure when the ticket is opened again, and retries on
   await waitFor(() => expect(row(PAYMENT)).toHaveTextContent('Triage failed'))
   fireEvent.click(row(PAYMENT))
 
-  expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Operations to retry it.')
+  expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged. Open Quality and operations to retry it.')
   expect(detail().queryByText('Open this ticket to run the live AI on it.')).not.toBeInTheDocument()
   expect(triagePosts()).toBe(1)
   fireEvent.click(detail().getByRole('button', { name: 'Try again' }))
@@ -883,7 +1033,7 @@ test('reads the status again, without a new triage request, when a ticket whose 
   expect(calls(fetchMock, '/ticket-a102/processing')).toBeGreaterThan(reads)
 })
 
-test('clears a ticket\'s failure once Operations retries it, so opening it loads the result', async () => {
+test('clears a ticket\'s failure once Quality and operations retries it, so opening it loads the result', async () => {
   const backend = mockBackend({ pollSteps: ['TERMINAL_FAILURE'] })
   let retried = false
   const failedJob = { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'TERMINAL_FAILURE', attemptCount: 3, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', attempts: [] }
@@ -897,7 +1047,7 @@ test('clears a ticket\'s failure once Operations retries it, so opening it loads
   fireEvent.click(row(PAYMENT))
   await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.'))
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry failed case' })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: 'Retry failed case' }))
   await waitFor(() => expect(retried).toBe(true))
@@ -921,17 +1071,33 @@ test('keeps Re-run live off while a review is being saved', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Close demo' }))
 })
 
-test('shows a dash, never 0% or "null ms", for rates and latencies an API leaves empty', async () => {
+test('shows a dash, never 0% or "null ms", for rates and latencies an API leaves empty, and the empty-state copy', async () => {
   const backend = mockBackend()
-  stubOver(backend, (url) => url.endsWith('/api/evaluation') ? response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 3, evaluatedResults: 0, categoryAgreementRate: null, urgencyAgreementRate: null, agreementRate: null, correctionRate: null, medianLatencyMs: null, p95LatencyMs: null, failureRate: null, providerUsage: [], recentEvents: [] }) : undefined)
+  stubOver(backend, (url) => url.endsWith('/api/evaluation') ? response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 3, evaluatedResults: 0, categoryAgreementRate: null, urgencyAgreementRate: null, agreementRate: null, correctionRate: null, medianLatencyMs: null, p95LatencyMs: null, failureRate: null, providerUsage: [], recentEvents: [], reviewedResults: 0, acceptedResults: 0, acceptanceRate: null, overrideRate: null, recordedResults: 3 })
+    : url.endsWith('/api/operations/overview') ? response({ generatedAt: '2026-07-11T09:14:02Z', queue: { queued: 0, processing: 0, completed: 0, retryableFailures: 0, terminalFailures: 0 }, fallbackCount: 0, providerFailureCount: 0, recent: [], providers: [] }) : undefined)
   render(<App />)
   await openInbox()
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  await openQuality()
 
-  await waitFor(() => expect(screen.getByText('Correction rate')).toBeInTheDocument())
-  expect(screen.queryByText('0%')).not.toBeInTheDocument()
-  expect(screen.queryByText(/null/)).not.toBeInTheDocument()
-  expect(screen.getByText('p95 —')).toBeInTheDocument()
+  expect(screen.queryByText(/\d%/)).not.toBeInTheDocument()
+  expect(document.body.textContent).not.toMatch(/null|0 ms/)
+  expect(screen.getAllByText('Not measured yet').length).toBeGreaterThanOrEqual(4)
+  expect(screen.getByText('No reviews yet')).toBeInTheDocument()
+  expect(screen.getByText(/0 of 3 recorded tickets reviewed\./)).toBeInTheDocument()
+  expect(screen.getByText('No live worker runs yet. Open any untriaged ticket in the Inbox to run it live, or use Simulate provider timeout above to test failure recovery.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Simulate provider timeout' })).toBeEnabled()
+})
+
+test('shows an older API\'s 0 rate as a dash when nothing has been scored', async () => {
+  const backend = mockBackend()
+  stubOver(backend, (url) => url.endsWith('/api/evaluation') ? response({ generatedAt: '2026-07-11T09:14:02Z', triageResults: 0, evaluatedResults: 0, categoryAgreementRate: 0, urgencyAgreementRate: 0, agreementRate: 0, correctionRate: 0, medianLatencyMs: 0, p95LatencyMs: 0, failureRate: 0, providerUsage: [], recentEvents: [] }) : undefined)
+  render(<App />)
+  await openInbox()
+  await openQuality()
+
+  const benchmark = screen.getByText('Benchmark match', { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(benchmark).toHaveTextContent('Not measured yet')
+  expect(benchmark).not.toHaveTextContent('0%')
 })
 
 test('lists a reason whose quote is not in the ticket, and says how many quotes were found', async () => {
@@ -1027,9 +1193,10 @@ test('on a phone, the menu holds the screens, How it\'s built and the byline', a
   const menu = screen.getByRole('dialog', { name: 'Menu' })
   expect(within(menu).getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
   expect(within(menu).getByText('Demo workspace, EV charging')).toBeInTheDocument()
-  fireEvent.click(within(menu).getByRole('button', { name: 'Evaluation' }))
+  expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual(['', 'Inbox', 'Quality and operations', "How it's built", 'Close demo'])
+  fireEvent.click(within(menu).getByRole('button', { name: 'Quality and operations' }))
   expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
-  expect(screen.getByRole('heading', { name: 'Evaluation signal' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Quality and operations' })).toBeInTheDocument()
 })
 
 // Neon review CL-13, CL-23, CL-24 and CL-16: polling stops with the workspace, an ended session stops live updates,
@@ -1061,7 +1228,7 @@ test('stops the triage poll when the demo closes, and the next workspace starts 
 })
 
 test('stops live updates when the session has ended and offers a new demo', async () => {
-  const fetchMock = await openView('Evaluation', { laterEvaluation: () => Promise.resolve(response({ detail: 'Unauthorized' }, 401)) })
+  const fetchMock = await openView({ laterEvaluation: () => Promise.resolve(response({ detail: 'Unauthorized' }, 401)) })
 
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your demo session has ended, so live updates stopped.'))
   const ended = calls(fetchMock, '/api/evaluation')
@@ -1080,7 +1247,7 @@ test('keeps the error from a failed action on screen while the view refreshes in
   render(<App />)
   await openInbox()
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await advance(0)
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry case' })).toBeEnabled())
 
@@ -1164,17 +1331,13 @@ test('shows an unfinished job as Pending and Not called, not as a 0 ms rules dec
   render(<App />)
   await openInbox()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
-  await waitFor(() => expect(screen.getByText('Recent triage activity')).toBeInTheDocument())
-  await waitFor(() => expect(screen.getByText('Pending', { selector: '.activity-latency' })).toBeInTheDocument())
-  expect(screen.getByText('Not called')).toBeInTheDocument()
+  await openQuality()
+  await waitFor(() => expect(screen.getByText('Pending', { selector: '.qo-log-latency' })).toBeInTheDocument())
+  expect(screen.getByText(/^Not called · 0 attempts · updated/)).toBeInTheDocument()
   expect(screen.queryByText('Rules fallback')).not.toBeInTheDocument()
-  expect(screen.queryByText('0 ms', { selector: '.activity-latency' })).not.toBeInTheDocument()
-
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
-  await waitFor(() => expect(screen.getByText('Recent processing')).toBeInTheDocument())
-  await waitFor(() => expect(screen.getByText('Pending', { selector: '.activity-latency' })).toBeInTheDocument())
-  expect(screen.getByText(/^Not called · updated/)).toBeInTheDocument()
+  expect(screen.queryByText('0 ms', { selector: '.qo-log-latency' })).not.toBeInTheDocument()
+  const latency = screen.getByText('Live latency', { selector: '.qo-label' }).closest('.qo-figure')!
+  expect(latency).not.toHaveTextContent('0 ms')
 })
 
 test('offers a new demo when a ticket action finds the session ended, and moves focus to the new inbox', async () => {
@@ -1274,14 +1437,14 @@ test('shows a saved review only on the ticket it was saved for', async () => {
 
 // CL2-13: a throttled live read waits up to 5 seconds before its retry. Leaving the view or closing the demo aborts it,
 // so the retry is never sent with the old token.
-test('stops a throttled Evaluation read from retrying once the reviewer leaves the view', async () => {
-  // The seeded open reads nothing from Evaluation, so only the live read is throttled.
+test('stops a throttled live read from retrying once the reviewer leaves the view', async () => {
+  // The seeded open reads nothing from evaluation, so only the live read is throttled.
   const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/evaluation') ? new Response('', { status: 429, headers: { 'Retry-After': '3' } }) : undefined)
   render(<App />)
   await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
 
-  fireEvent.click(screen.getByRole('button', { name: 'Evaluation' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await advance(1_000)
   expect(calls(fetchMock, '/api/evaluation')).toBe(1)
   fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
@@ -1290,14 +1453,14 @@ test('stops a throttled Evaluation read from retrying once the reviewer leaves t
   expect(calls(fetchMock, '/api/evaluation')).toBe(1)
 })
 
-test('stops throttled Operations reads from retrying when the demo closes', async () => {
+test('stops throttled operations reads from retrying when the demo closes', async () => {
   const throttled = () => new Response('', { status: 429, headers: { 'Retry-After': '3' } })
   const fetchMock = stubOver(mockSeededBackend(), (url) => url.endsWith('/api/operations/overview') || url.includes('/api/operations/failures') ? throttled() : undefined)
   render(<App />)
   await openInbox()
   vi.useFakeTimers({ shouldAdvanceTime: true })
 
-  fireEvent.click(screen.getByRole('button', { name: 'Operations' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Quality and operations' }))
   await advance(1_000)
   const failureReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/operations/failures')).length
   expect(calls(fetchMock, '/api/operations/overview')).toBe(1)

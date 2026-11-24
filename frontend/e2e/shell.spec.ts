@@ -44,12 +44,16 @@ test('completes the reviewer journey from landing to reviewed tickets and the me
   await expect(page.getByRole('dialog').getByRole('link', { name: 'Harish Darko' })).toHaveAttribute('href', 'https://harishdarko.com')
   await page.getByRole('button', { name: 'Close', exact: true }).click()
 
-  await page.getByRole('button', { name: 'Evaluation' }).click()
-  await expect(page.getByRole('heading', { name: 'Evaluation signal' })).toBeVisible()
-  await page.getByRole('button', { name: 'Operations' }).click()
-  // The rules fallback above counts as a degraded provider; the retry demo is still offered.
-  await expect(page.getByRole('heading', { name: /Provider degraded/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Run controlled retry demo' })).toBeVisible()
+  // Quality and operations: simulate a provider timeout, see it land in the same banner, retry it.
+  await page.getByRole('button', { name: 'Quality and operations' }).click()
+  await expect(page.getByRole('heading', { name: 'Quality and operations' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'No unresolved failures' })).toBeVisible()
+  await page.getByRole('button', { name: 'Simulate provider timeout' }).click()
+  await expect(page.getByRole('button', { name: 'Retry case' })).toBeVisible({ timeout: 10_000 })
+  await page.getByRole('button', { name: 'Retry case' }).click()
+  await expect(page.getByRole('heading', { name: 'No unresolved failures' })).toBeVisible()
+  await page.getByRole('button', { name: 'Inbox' }).click()
+  await expect(page.locator('.queue').getByText('Synthetic provider timeout for retry review')).toHaveCount(0)
 })
 
 test('works one-handed on a phone: list, then detail with the review bar in reach', async ({ page }, testInfo) => {

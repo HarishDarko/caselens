@@ -17,19 +17,20 @@ Fallback URL: [https://d27d60ya5pvyzq.cloudfront.net](https://d27d60ya5pvyzq.clo
 
 ## Review the live system
 
-Open the live demo and select **Launch live demo**. CaseLens creates an
-isolated, 24-hour workspace containing synthetic records only. No account is
-required.
+Open the live demo, pick a sample queue and select **Open the ... queue**.
+CaseLens creates an isolated, 24-hour workspace containing synthetic records
+only. No account is required.
 
-1. Load **charger-offline-site-wide** from the ticket inbox.
-2. Open the case and inspect its deterministic priority, exact evidence,
-   policy, recommended actions, and suggested reply.
-3. Expand **Durable processing trace** to follow the database outbox, SQS job,
-   worker attempt, provider validation, and stored result.
-4. Save an urgency correction, then open **Evaluation** to see metrics derived
-   from persisted results and feedback.
-5. Run the controlled retry scenario and use **Operations** to inspect and
-   recover its bounded synthetic failure.
+1. The inbox opens on the most urgent ticket. Its evidence quotes are
+   highlighted inside the customer's message, numbered to the reasons, beside
+   the matched policy and the deterministic priority breakdown.
+2. **Accept** the call or **Override urgency**. Reviews are appended; the
+   original result is never changed.
+3. Open a ticket under **Not triaged yet** to run it live, then expand the trace
+   line to follow the outbox event, SQS job, worker attempts and stored result.
+4. Open **Quality and operations** to see the live queue, reviewer acceptance,
+   benchmark match and provider usage, then select **Simulate provider timeout**
+   and **Retry case** to recover a bounded synthetic failure.
 
 The first launch or triage request can take several seconds when Lambda or
 Neon has scaled down. Later requests normally use warm infrastructure. The
@@ -184,8 +185,8 @@ The local UI supports:
   reviewer correction state;
 - live operations telemetry for queued, processing, completed, retryable, and
   terminal jobs, provider failures, rules fallbacks, recent processing, and
-  retry actions. Evaluation and Operations refresh every five seconds while
-  their views are open.
+  retry actions. Quality and operations refreshes every five seconds while it is
+  open, pauses in a hidden tab and stops after 10 minutes without activity.
 
 ## Verification commands
 
@@ -273,7 +274,7 @@ validates the complete structured result and falls back to deterministic rules
 when provider output is unavailable or invalid. Gemini remains available via
 its separate adapter. Ticket text is redacted before provider submission.
 Model invocation records store provider metadata, timing, status, and usage
-counts—not API keys, raw tickets, request bodies, or raw provider responses.
+counts, not API keys, raw tickets, request bodies, or raw provider responses.
 
 The first release intentionally does not include customer authentication, RAG,
 embeddings, Kubernetes, real OCPP traffic, real payment processing, or a live
