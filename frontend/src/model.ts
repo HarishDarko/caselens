@@ -156,7 +156,7 @@ export function provenanceOf(result: TriageResult): Provenance {
 const FALLBACK_TEXT: Record<FallbackReason, string> = {
   PROVIDER_UNAVAILABLE: 'The AI provider did not answer.',
   PROVIDER_RATE_LIMITED: 'The AI provider was busy and turned the request away.',
-  BUDGET_SPENT: "Today's live AI budget for this demo is spent.",
+  BUDGET_SPENT: "Today's live AI budget for this demo is used up. Recorded results and the rules still work; live AI is back after midnight UTC.",
   ANSWER_FAILED_CHECKS: "The AI's answer failed a check, for example a quote that is not in the ticket.",
   ANSWER_UNREADABLE: "The AI's answer was not in the required format.",
 }

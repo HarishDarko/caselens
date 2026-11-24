@@ -49,11 +49,15 @@ caselens:
     tickets-per-workspace: ${CASELENS_LIMIT_TICKETS_PER_WORKSPACE:50}
     feedback-per-workspace: ${CASELENS_LIMIT_FEEDBACK_PER_WORKSPACE:100}
   ai:
+    # Sized for Groq's free plan (docs checked 2026-11-24): openai/gpt-oss-20b allows 30 requests/min, 1,000 requests/day,
+    # 8,000 tokens/min and 200,000 tokens/day. A measured triage used about 1,700 tokens (1,164 in, 517 out), about 2,000
+    # on average, so the token cap fits roughly 100 triages a day; 80 keeps headroom, and 20 per client stops one visitor
+    # taking a quarter of it.
     # AI provider calls per UTC day across all instances; past it, triage uses the rules provider. 0 turns AI off.
-    daily-call-budget: ${CASELENS_AI_DAILY_CALL_BUDGET:300}
+    daily-call-budget: ${CASELENS_AI_DAILY_CALL_BUDGET:80}
     # The most of that budget one client network (an IPv4 address or an IPv6 /64) can spend per UTC day; past it, that
     # client's triage uses the rules provider and everyone else still gets AI. 0 turns the share off.
-    daily-call-share-per-client: ${CASELENS_AI_DAILY_CALL_SHARE_PER_CLIENT:30}
+    daily-call-share-per-client: ${CASELENS_AI_DAILY_CALL_SHARE_PER_CLIENT:20}
   cleanup:
     initial-delay-ms: ${CASELENS_CLEANUP_INITIAL_DELAY_MS:21600000}
     fixed-delay-ms: ${CASELENS_CLEANUP_FIXED_DELAY_MS:21600000}

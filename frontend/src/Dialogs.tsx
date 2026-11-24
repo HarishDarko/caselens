@@ -94,7 +94,7 @@ export function HowItsBuilt({ runtime, onClose }: { runtime: RuntimeSummary | nu
         </li>
       </ol>
       <div className="guards">
-        <div className="guard"><b>30 a day</b><span>live AI runs per network, 300 in total, so a busy day cannot run up a bill</span></div>
+        <div className="guard"><b>20 a day</b><span>live AI runs per network, 80 in total, so a busy day stays inside the free AI quota</span></div>
         <div className="guard"><b>24 hours</b><span>then the demo workspace and everything in it is deleted</span></div>
         <div className="guard"><b>0 real customers</b><span>every ticket is synthetic, written for its industry</span></div>
       </div>
