@@ -88,7 +88,7 @@ class PostgresClientIdAndResetIntegrationTest {
         }));
         await(resetDone);
         CompletableFuture<FeedbackSnapshot> submit = CompletableFuture.supplyAsync(() -> feedbackService.submit(
-                workspaceId, ticket.getId(), result.getId(), null, Urgency.HIGH, null, "Escalation confirmed", null));
+                workspaceId, ticket.getId(), result.getId(), FeedbackDecision.CORRECTED, null, Urgency.HIGH, null, "Escalation confirmed", null));
         waitForALockWait();
         release.countDown();
 

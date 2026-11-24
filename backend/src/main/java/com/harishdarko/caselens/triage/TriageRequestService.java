@@ -216,7 +216,7 @@ public class TriageRequestService {
                 ticketId, workspaceId, 1).orElse(null);
         if (job == null) {
             TriageResult recorded = results == null ? null
-                    : results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDesc(ticketId, workspaceId)
+                    : results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDescIdDesc(ticketId, workspaceId)
                             .filter(TriageResult::isRecorded).orElseThrow(TicketNotFoundException::new);
             if (recorded == null) throw new TicketNotFoundException();
             return new TriageProcessingSnapshot(null, recorded, List.of(), fallbackReason(null, recorded));

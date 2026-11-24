@@ -154,6 +154,57 @@ class FeedbackDecisionApiIntegrationTest {
         assertThat(results.findById(review.resultId).orElseThrow().getUrgency()).isEqualTo(Urgency.MEDIUM);
     }
 
+    @Test
+    void feedbackOnASupersededResultIsAConflictButAResendOfAnEarlierSaveIsIdempotent() throws Exception {
+        Review review = review();
+        UUID requestId = UUID.randomUUID();
+        String accept = "{\"decision\":\"ACCEPTED\",\"originalResultId\":\"" + review.resultId + "\",\"requestId\":\"" + requestId + "\"}";
+        review.submit(accept).andExpect(status().isCreated());
+
+        // A live triage after the recorded result: the earlier result is no longer the one the ticket shows.
+        UUID latestId = review.addResult(Instant.parse("2026-07-11T16:00:00Z"));
+
+        review.submit("{\"decision\":\"ACCEPTED\",\"originalResultId\":\"" + review.resultId + "\"}")
+                .andExpect(status().isConflict());
+        review.submit("{\"decision\":\"CORRECTED\",\"originalResultId\":\"" + review.resultId + "\",\"urgency\":\"HIGH\"}")
+                .andExpect(status().isConflict());
+        review.submit(accept).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(requestId.toString()))
+                .andExpect(jsonPath("$.originalResultId").value(review.resultId.toString()));
+        review.list().andExpect(jsonPath("$.content.length()").value(1));
+
+        review.submit("{\"decision\":\"ACCEPTED\",\"originalResultId\":\"" + latestId + "\"}").andExpect(status().isCreated())
+                .andExpect(jsonPath("$.originalResultId").value(latestId.toString()));
+        review.list().andExpect(jsonPath("$.content.length()").value(2));
+    }
+
+    @Test
+    void feedbackWithoutAResultIdGoesToTheLatestResult() throws Exception {
+        Review review = review();
+        UUID latestId = review.addResult(Instant.parse("2026-07-11T16:00:00Z"));
+
+        review.submit("{\"decision\":\"ACCEPTED\"}").andExpect(status().isCreated())
+                .andExpect(jsonPath("$.originalResultId").value(latestId.toString()));
+    }
+
+    @Test
+    void resultsCreatedAtTheSameInstantHaveOneDeterministicLatestByIdDescending() throws Exception {
+        Review review = review();
+        UUID other = review.addResult(Instant.parse("2026-07-11T15:00:02Z"));
+        UUID higher = unsignedCompare(review.resultId, other) > 0 ? review.resultId : other;
+        UUID lower = higher.equals(other) ? review.resultId : other;
+
+        review.submit("{\"decision\":\"ACCEPTED\",\"originalResultId\":\"" + lower + "\"}").andExpect(status().isConflict());
+        review.submit("{\"decision\":\"ACCEPTED\",\"originalResultId\":\"" + higher + "\"}").andExpect(status().isCreated());
+        review.submit("{\"decision\":\"ACCEPTED\"}").andExpect(status().isCreated())
+                .andExpect(jsonPath("$.originalResultId").value(higher.toString()));
+    }
+
+    /** Databases order UUIDs as unsigned bytes; UUID.compareTo is signed. */
+    private static int unsignedCompare(UUID a, UUID b) {
+        int high = Long.compareUnsigned(a.getMostSignificantBits(), b.getMostSignificantBits());
+        return high != 0 ? high : Long.compareUnsigned(a.getLeastSignificantBits(), b.getLeastSignificantBits());
+    }
+
     private Review review() throws Exception {
         String token = objectMapper.readTree(mvc.perform(post("/api/demo/session").contentType(MediaType.APPLICATION_JSON))
                 .andReturn().getResponse().getContentAsString()).get("token").asText();
@@ -161,24 +212,35 @@ class FeedbackDecisionApiIntegrationTest {
         UUID ticketId = UUID.fromString(objectMapper.readTree(mvc.perform(
                         post("/api/demo/scenarios/payment-captured-session-not-started").header("Authorization", "Bearer " + token))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asText());
-        TriageResult result = results.save(TriageResult.recorded(principal.workspaceId(), new TriageDecision(ticketId,
+        TriageResult result = save(principal.workspaceId(), ticketId, Instant.parse("2026-07-11T15:00:02Z"));
+        return new Review(token, ticketId, result.getId(), principal.workspaceId());
+    }
+
+    private TriageResult save(UUID workspaceId, UUID ticketId, Instant createdAt) {
+        return results.save(TriageResult.recorded(workspaceId, new TriageDecision(ticketId,
                 Category.of("CHARGING_SESSION"), Urgency.MEDIUM, SlaRisk.MEDIUM, Sentiment.NEGATIVE,
                 "Charging did not start", List.of(), List.of(), "The session did not start.",
                 List.of("Inspect the charger"), "We are reviewing the session.", ReliabilitySignal.HIGH,
                 List.of(), 55, List.of(), DecisionSource.AI_VALIDATED, "mock-v1", "triage-v1"),
-                Instant.parse("2026-07-11T15:00:02Z"), objectMapper));
-        return new Review(token, ticketId, result.getId());
+                createdAt, objectMapper));
     }
 
     private final class Review {
         private final String token;
         private final UUID ticketId;
         private final UUID resultId;
+        private final UUID workspaceId;
 
-        Review(String token, UUID ticketId, UUID resultId) {
+        Review(String token, UUID ticketId, UUID resultId, UUID workspaceId) {
             this.token = token;
             this.ticketId = ticketId;
             this.resultId = resultId;
+            this.workspaceId = workspaceId;
+        }
+
+        /** Another result on the same ticket, as a live triage after a recorded one would add. */
+        UUID addResult(Instant createdAt) {
+            return save(workspaceId, ticketId, createdAt).getId();
         }
 
         ResultActions submit(String body) throws Exception {

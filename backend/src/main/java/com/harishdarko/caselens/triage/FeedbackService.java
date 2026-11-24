@@ -38,17 +38,6 @@ public class FeedbackService {
     }
 
     /**
-     * A correction, as clients sent before the review decision existed. Transactional itself: the call below is a
-     * self-invocation, which the proxy does not see, and the workspace lock needs the transaction.
-     */
-    @Transactional
-    public FeedbackSnapshot submit(UUID workspaceId, UUID ticketId, UUID requestedResultId,
-            Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, UUID requestId) {
-        return submit(workspaceId, ticketId, requestedResultId, FeedbackDecision.CORRECTED, correctedCategory,
-                correctedUrgency, correctedSlaRisk, note, requestId);
-    }
-
-    /**
      * Saves a reviewer decision: ACCEPTED keeps the AI's call (no field may change, no note needed), CORRECTED changes
      * at least one field (a note is optional). Entries are only ever added, never edited, so a changed review is a
      * new entry. requestId, when the client sends one, becomes the feedback id, so the same submit arriving twice
@@ -85,13 +74,23 @@ public class FeedbackService {
             throw new ConstraintViolationException("Category is not part of this workspace's industry", Set.of());
         }
         Ticket ticket = scopedTicket(workspaceId, ticketId);
-        TriageResult result = requestedResultId == null
-                ? results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDesc(ticketId, workspaceId)
-                        .orElseThrow(() -> new IllegalArgumentException("A completed triage result is required"))
-                : results.findByIdAndWorkspaceId(requestedResultId, workspaceId)
-                        .orElseThrow(() -> new IllegalArgumentException("Triage result not found"));
-        if (!result.getTicketId().equals(ticket.getId())) {
-            throw new IllegalArgumentException("Triage result does not belong to the ticket");
+        TriageResult latest = results.findFirstByTicketIdAndWorkspaceIdOrderByCreatedAtDescIdDesc(ticketId, workspaceId)
+                .orElse(null);
+        TriageResult result;
+        if (requestedResultId == null) {
+            if (latest == null) throw new IllegalArgumentException("A completed triage result is required");
+            result = latest;
+        } else {
+            result = results.findByIdAndWorkspaceId(requestedResultId, workspaceId)
+                    .orElseThrow(() -> new IllegalArgumentException("Triage result not found"));
+            if (!result.getTicketId().equals(ticket.getId())) {
+                throw new IllegalArgumentException("Triage result does not belong to the ticket");
+            }
+            // Feedback belongs to the result the ticket shows now. Once a newer result exists (a live triage on top of a
+            // recorded one) a stale tab gets a 409. A resend of an entry saved earlier was answered above, before this.
+            if (latest == null || !latest.getId().equals(result.getId())) {
+                throw new IllegalArgumentException("Triage result is not the latest for the ticket");
+            }
         }
         TriageFeedback candidate = TriageFeedback.submit(requestId == null ? UUID.randomUUID() : requestId, workspaceId,
                 ticketId, result.getId(), effective, correctedCategory, correctedUrgency, correctedSlaRisk, note,

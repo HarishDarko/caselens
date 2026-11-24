@@ -10,7 +10,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,7 @@ class RecordedResultsMigrationIntegrationTest {
 
     @Test
     void addsRecordedResultsAndFeedbackDecisionsWithoutBreakingRowsOrWritersFromBeforeIt() throws Exception {
-        flyway("10").migrate();
+        freshAt("10");
         UUID workspace = UUID.randomUUID();
         UUID ticket = UUID.randomUUID();
         UUID oldResult = UUID.randomUUID();
@@ -51,7 +53,7 @@ class RecordedResultsMigrationIntegrationTest {
 
         Flyway latest = flyway(null);
         latest.migrate();
-        assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("11");
+        assertThat(latest.info().current().getVersion().getVersion()).isEqualTo("14");
 
         try (Connection connection = connection(); Statement statement = connection.createStatement()) {
             assertThat(single(statement, "SELECT recorded FROM triage_result WHERE id = '" + oldResult + "'")).isEqualTo("f");
@@ -83,10 +85,86 @@ class RecordedResultsMigrationIntegrationTest {
     }
 
     @Test
-    void theMigrationFailsFastInsteadOfWaitingBehindALongTransaction() throws Exception {
-        String sql = Files.readString(Path.of("src/main/resources/db/migration/V11__add_recorded_results_and_feedback_decision.sql"));
+    void everyStepFailsFastInsteadOfWaitingBehindALongTransaction() throws Exception {
+        List<Path> steps = migrations();
 
-        assertThat(sql).contains("SET LOCAL lock_timeout = '5s';");
+        assertThat(steps).hasSize(4);
+        for (Path step : steps) {
+            assertThat(Files.readString(step)).as(step.getFileName().toString()).contains("SET LOCAL lock_timeout = '5s';");
+        }
+    }
+
+    @Test
+    void eachTableIsChangedInItsOwnMigrationSoNoTransactionLocksBothAndValidationRunsLater() throws Exception {
+        String result = code(migration("V11"));
+        String feedback = code(migration("V12"));
+        String validateResult = code(migration("V13"));
+        String validateFeedback = code(migration("V14"));
+
+        assertThat(result).contains("triage_result").doesNotContain("triage_feedback").doesNotContain("VALIDATE CONSTRAINT");
+        assertThat(feedback).contains("triage_feedback").doesNotContain("triage_result").doesNotContain("VALIDATE CONSTRAINT");
+        assertThat(validateResult).contains("VALIDATE CONSTRAINT chk_triage_result_live_event")
+                .doesNotContain("triage_feedback").doesNotContain("ADD COLUMN");
+        assertThat(validateFeedback).contains("VALIDATE CONSTRAINT chk_feedback_decision")
+                .doesNotContain("triage_result").doesNotContain("ADD COLUMN");
+    }
+
+    @Test
+    void oldRowsAndOldVersionInsertsWorkBeforeTheConstraintsAreValidatedAndAfter() throws Exception {
+        freshAt("10");
+        UUID workspace = UUID.randomUUID();
+        UUID ticket = UUID.randomUUID();
+        try (Connection connection = connection(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("INSERT INTO demo_workspaces(id, created_at, expires_at) VALUES ('" + workspace
+                    + "', now(), now() + interval '24 hours')");
+            statement.executeUpdate("INSERT INTO tickets(id, workspace_id, display_id, subject, message, channel, status, "
+                    + "created_at, updated_at) VALUES ('" + ticket + "', '" + workspace + "', 'CL-0000A2', 'Synthetic issue', "
+                    + "'A synthetic ticket message that passes database validation.', 'WEB', 'COMPLETED', now(), now())");
+            UUID result = UUID.randomUUID();
+            statement.executeUpdate(oldResultInsert(workspace, ticket, result, outboxEvent(statement, workspace, ticket)));
+            statement.executeUpdate(oldFeedbackInsert(workspace, ticket, result, UUID.randomUUID()));
+
+            // Between the deploy's steps the constraints exist but are not validated yet, and the old version still works.
+            flyway("12").migrate();
+            assertThat(single(statement, "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_triage_result_live_event'"))
+                    .isEqualTo("f");
+            assertThat(single(statement, "SELECT convalidated FROM pg_constraint WHERE conname = 'chk_feedback_decision'"))
+                    .isEqualTo("f");
+            UUID later = UUID.randomUUID();
+            statement.executeUpdate(oldResultInsert(workspace, ticket, later, outboxEvent(statement, workspace, ticket)));
+            statement.executeUpdate(oldFeedbackInsert(workspace, ticket, later, UUID.randomUUID()));
+            assertThatThrownBy(() -> statement.executeUpdate(resultInsert(workspace, ticket, UUID.randomUUID(), null, false)))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("chk_triage_result_live_event");
+
+            flyway(null).migrate();
+            assertThat(single(statement, "SELECT count(*) FROM pg_constraint WHERE conname IN "
+                    + "('chk_triage_result_live_event', 'chk_feedback_decision') AND convalidated")).isEqualTo("2");
+            assertThat(single(statement, "SELECT count(*) FROM triage_feedback WHERE decision = 'CORRECTED'")).isEqualTo("2");
+            statement.executeUpdate(oldResultInsert(workspace, ticket, UUID.randomUUID(), outboxEvent(statement, workspace, ticket)));
+        }
+    }
+
+    private static List<Path> migrations() throws Exception {
+        try (var files = Files.list(Path.of("src/main/resources/db/migration"))) {
+            return files.filter(path -> path.getFileName().toString().matches("V1[1-9]__.*\\.sql")).sorted().toList();
+        }
+    }
+
+    private static Path migration(String version) throws Exception {
+        return migrations().stream().filter(path -> path.getFileName().toString().startsWith(version + "__")).findFirst()
+                .orElseThrow(() -> new AssertionError("no migration " + version));
+    }
+
+    /** The statements only: comments may mention the other table. */
+    private static String code(Path path) throws Exception {
+        return Files.readAllLines(path).stream().filter(line -> !line.trim().startsWith("--")).collect(Collectors.joining("\n"));
+    }
+
+    /** The container is shared by the tests of this class: start each from an empty schema at the given version. */
+    private void freshAt(String version) {
+        Flyway flyway = flyway(version);
+        flyway.clean();
+        flyway.migrate();
     }
 
     private Flyway flyway(String target) {
