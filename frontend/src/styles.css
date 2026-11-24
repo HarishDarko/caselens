@@ -299,8 +299,8 @@ mark.ev .ref { display: inline-grid; place-items: center; min-width: 16px; heigh
 .urg-set legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
 .urg-opts { display: flex; gap: 6px; flex-wrap: wrap; }
 .urg-opt { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: var(--radius); border: 1px solid var(--control); background: var(--sheet); font-weight: 600; transition: background-color 150ms ease, border-color 150ms ease; }
-.urg-opt:hover:not(:disabled) { background: var(--raised); }
-.urg-opt[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.urg-opt:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--raised); }
+.urg-opt[aria-pressed="true"], .urg-opt[aria-pressed="true"]:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); color: #fff; }
 .urg-opt:disabled { cursor: not-allowed; background: var(--raised); color: var(--muted); border-style: solid; }
 .ai-tag { font-size: 12px; font-weight: 600; color: var(--coral-ink); }
 .urg-opt[aria-pressed="true"] .ai-tag { color: #f5ddd6; }

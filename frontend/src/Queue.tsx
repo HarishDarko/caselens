@@ -18,7 +18,7 @@ function Row({ ticket, activity, selected, onSelect }: { ticket: Ticket; activit
   const urgency = triaged ? shownUrgency(ticket) : null
   const who = rowWho(ticket)
   let pill
-  if (activity.running) pill = <span className="pill p-running">{activity.stage === 'PROCESSING' || activity.stage === 'RETRYABLE_FAILURE' ? 'Reading and checking' : 'Queued'}</span>
+  if (activity.running) pill = <span className="pill p-running">{activity.stage === 'PROCESSING' || activity.stage === 'RETRYABLE_FAILURE' ? 'Reading and checking' : activity.stage === 'CHECKING' ? 'Checking' : 'Queued'}</span>
   else if (urgency) pill = <UrgencyPill urgency={urgency} />
   else if (activity.failed) pill = <span className="pill p-failed">Triage failed</span>
   else pill = <span className="pill p-run">Run live AI</span>

@@ -37,6 +37,7 @@ export function triagePollDelay(elapsedMs: number) { return elapsedMs < 30_000 ?
 // What the visitor reads while a ticket is triaged, for each state the job can be in.
 export const TRIAGE_STAGE_TEXT = {
   SENDING: 'Sending the ticket to the triage queue.',
+  CHECKING: 'Checking for the result.',
   QUEUED: 'Waiting for the triage worker to pick this up. After a quiet period it can take up to a minute to start.',
   PROCESSING: 'The AI model is reading the ticket. This usually takes a few seconds.',
   RETRYABLE_FAILURE: 'The AI model is busy. The worker tries again by itself in about a minute and a half.',
@@ -50,7 +51,9 @@ export const TRIAGE_STILL_RUNNING_TEXT = 'Triage is still running. Open the tick
 export const SESSION_ENDED_TEXT = 'Your demo session has ended. Close the demo and open a new one.'
 // The API answers every refused review with the same 409 (an unchanged result, a result that is not the latest, or one
 // that belongs to another ticket), so the sentence covers all of them.
-export const CORRECTION_CONFLICT_TEXT = 'This review conflicts with a newer result for this ticket, so it was not saved. The newest result is shown now.'
+export const CORRECTION_CONFLICT_TEXT = 'This review conflicts with a newer result for this ticket, so it was not saved. Loading the newest result.'
+export const CONFLICT_NEWEST_SHOWN_TEXT = 'This review conflicts with a newer result for this ticket, so it was not saved. The newest result is shown now.'
+export const CONFLICT_REOPEN_TEXT = 'This review conflicts with a newer result for this ticket, so it was not saved. Open the ticket again to see the newest result.'
 export const WORKSPACE_LIMIT_TEXT = 'This demo workspace has reached its limit. Start a new demo to keep going.'
 export const SESSION_ENDED_BANNER_TEXT = 'Your demo session has ended. Start a new demo to keep exploring.'
 

@@ -1056,7 +1056,8 @@ test('clears a ticket\'s failure once Quality and operations retries it, so open
   fireEvent.click(row(PAYMENT))
 
   await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
-  expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST')).toHaveLength(2)
+  // Opening the ticket after the Operations retry only reads its status: the one POST was the first open.
+  expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/ticket-a102/triage') && init?.method === 'POST')).toHaveLength(1)
 })
 
 test('keeps Re-run live off while a review is being saved', async () => {
@@ -1275,10 +1276,12 @@ test('says plainly when the API refuses a correction (409), without claiming whi
   await openInbox()
   await overrideToHigh()
 
-  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This review conflicts with a newer result for this ticket, so it was not saved. The newest result is shown now.'))
+  // The read returned the same result, so the newest one could not be confirmed: the copy says to open the ticket again.
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This review conflicts with a newer result for this ticket, so it was not saved. Open the ticket again to see the newest result.'))
   expect(screen.queryByText(/409|not valid|Try again in a few seconds/)).not.toBeInTheDocument()
-  // The override panel stays open with the reviewer's choice, so they can try again.
-  expect(detail().getByRole('button', { name: /^High/ })).toHaveAttribute('aria-pressed', 'true')
+  // The old draft is closed, so it can never be saved against a result it was not made for.
+  expect(detail().queryByRole('button', { name: /^High/ })).not.toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
 })
 
 test('says the workspace is full when the API refuses a correction for the workspace cap', async () => {
@@ -1548,4 +1551,181 @@ test('announces the same confirmation again, and keeps the failed count in the s
   fireEvent.click(detail().getByRole('button', { name: 'Accept' }))
   await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe(first))
   expect(screen.getByRole('status')).toHaveTextContent("Accepted. The AI's call is logged as confirmed.")
+})
+
+// One rule for the shared AI quota: POST /triage only on an explicit click, or the first open of a ticket with no result
+// and no request yet. Every other open only reads GET /processing.
+const triagePosts = (fetchMock: ReturnType<typeof vi.fn>, ticketId: string) => fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/${ticketId}/triage`) && init?.method === 'POST').length
+
+test('sends no extra triage request after a timeout, a transient error or a terminal failure; only Try again posts', async () => {
+  let mode: 'running' | 'error' | 'failed' | 'done' = 'running'
+  const fetchMock = mockSeededBackend([apiTicket, recordedReceipt], {
+    'ticket-a102': () => {
+      if (mode === 'error') throw new TypeError('Failed to fetch')
+      if (mode === 'failed') return pendingJob('TERMINAL_FAILURE')
+      return mode === 'done' ? completedProcessing('ticket-a102', 82, 'HIGH') : pendingJob('PROCESSING')
+    },
+  })
+  render(<App />)
+  await openInbox()
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const reopen = () => { fireEvent.click(row('Receipt requested')); fireEvent.click(row(PAYMENT)) }
+
+  // First open of an untriaged ticket: the one automatic request. The wait runs out while the job is still going.
+  fireEvent.click(row(PAYMENT))
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(185_000) })
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Triage is still running. Open the ticket again in a minute to see the result.'))
+
+  // Reopen: only a status read, worded as a check. Its transient failure does not turn the next open into a request.
+  mode = 'error'
+  reopen()
+  expect(screen.getByRole('status')).toHaveTextContent('Checking for the result.')
+  expect(screen.getByRole('status')).not.toHaveTextContent('Sending the ticket to the triage queue')
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Could not reach the CaseLens service.'), { timeout: 8_000 })
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+
+  // The job ended in a terminal failure meanwhile: opening it shows that, and still sends nothing.
+  mode = 'failed'
+  reopen()
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.'))
+  mode = 'error'
+  reopen()
+  expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.')
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+
+  // Only the explicit click posts.
+  mode = 'done'
+  fireEvent.click(detail().getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(detail().getByText('A test reason for ticket-a102.')).toBeInTheDocument())
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(2)
+  reopen()
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(2)
+})
+
+test('sends no triage request when an untriaged ticket is retried in Quality and operations and then opened', async () => {
+  const backend = mockBackend({ pollSteps: ['TERMINAL_FAILURE', 'TERMINAL_FAILURE', 'TERMINAL_FAILURE'] })
+  let retried = false
+  const failedJob = { id: 'job-1', eventId: 'event-1', ticketId: 'ticket-a102', status: 'TERMINAL_FAILURE', attemptCount: 3, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', attempts: [] }
+  const fetchMock = stubOver(backend, (url) => {
+    if (url.endsWith('/retry')) { retried = true; return response({ ...failedJob, id: 'job-2', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.includes('/api/operations/failures')) return response(retried ? { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 } : { content: [failedJob], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    return undefined
+  })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(row(PAYMENT))
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.'))
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+
+  fireEvent.click(screen.getByRole('button', { name: /^Quality and operations/ }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry failed case' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed case' }))
+  await waitFor(() => expect(retried).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: /^Inbox/ }))
+  // Back in the Inbox with the ticket still selected: one status read, which here still says the job failed.
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This ticket could not be triaged.'))
+  fireEvent.click(row(PAYMENT))
+  fireEvent.click(row(PAYMENT))
+  expect(triagePosts(fetchMock, 'ticket-a102')).toBe(1)
+})
+
+test('reads a recorded ticket once when the reviewer returns to the Inbox with it still selected after an Operations retry', async () => {
+  const failedJob = { id: 'job-9', eventId: 'event-9', ticketId: 'ticket-a104', status: 'TERMINAL_FAILURE', attemptCount: 3, startedAt: '2026-07-11T09:14:01Z', completedAt: null, lastErrorCode: 'PROVIDER_TIMEOUT', attempts: [] }
+  let retried = false
+  const fetchMock = mockSeededBackend([recordedOffline, recordedReceipt], { 'ticket-a104': () => retried ? liveDone() : response({ job: null, result: recordedOffline.latestResult }) })
+  const inner = fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/retry')) { retried = true; return response({ ...failedJob, id: 'job-10', status: 'QUEUED', lastErrorCode: null }) }
+    if (url.includes('/api/operations/failures')) return response(retried ? { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0 } : { content: [failedJob], page: 0, size: 50, totalElements: 1, totalPages: 1 })
+    return inner(input, init)
+  }))
+  render(<App />)
+  await openInbox()
+  expect(detail().getByText('Recorded AI result')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /^Quality and operations/ }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry failed case' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: 'Retry failed case' }))
+  await waitFor(() => expect(retried).toBe(true))
+  const reads = calls(fetchMock, '/ticket-a104/processing')
+
+  fireEvent.click(screen.getByRole('button', { name: /^Inbox/ }))
+
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(calls(fetchMock, '/ticket-a104/processing')).toBe(reads + 1)
+  expect(triagePosts(fetchMock, 'ticket-a104')).toBe(0)
+})
+
+// A 409 on a review: the API says a newer result exists. The draft closes, the newest result is read, and the review
+// actions stay off until that read settles.
+function with409Backend(readNewest: () => Promise<Response>) {
+  const inner = mockSeededBackend([recordedOffline, recordedReceipt], { 'ticket-a104': () => response({ job: null, result: recordedOffline.latestResult }) }, () => response({ detail: 'The requested operation is not valid' }, 409))
+  let refused = false
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (refused && String(input).endsWith('/ticket-a104/processing')) return readNewest()
+    if (String(input).endsWith('/feedback')) refused = true
+    return inner(input, init)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+const draftOverride = () => {
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  fireEvent.change(detail().getByLabelText(/^Reason/), { target: { value: 'Lower than the model said.' } })
+  fireEvent.click(detail().getByRole('button', { name: 'Save' }))
+}
+
+test('after a 409, says it is loading the newest result, keeps the review off until that read ends, then says it is shown', async () => {
+  let release: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  with409Backend(async () => { await gate; return liveDone() })
+  render(<App />)
+  await openInbox()
+
+  draftOverride()
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('This review conflicts with a newer result for this ticket, so it was not saved. Loading the newest result.'))
+  // The draft is gone and the review actions stay off while the newest result is read.
+  expect(detail().queryByRole('button', { name: /^High/ })).not.toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeDisabled()
+
+  release()
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('The newest result is shown now.'))
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
+})
+
+test('after a 409 whose newest-result read fails, says to open the ticket again, and opening it reads the status without a request', async () => {
+  let failing = true
+  const fetchMock = with409Backend(async () => { if (failing) throw new TypeError('Failed to fetch'); return liveDone() })
+  render(<App />)
+  await openInbox()
+
+  draftOverride()
+  await waitFor(() => expect(detail().getByRole('alert')).toHaveTextContent('Open the ticket again to see the newest result.'), { timeout: 8_000 })
+  expect(detail().queryByRole('button', { name: /^High/ })).not.toBeInTheDocument()
+  expect(detail().getByText('Recorded AI result')).toBeInTheDocument()
+  failing = false
+  fireEvent.click(row('Receipt requested'))
+  fireEvent.click(row('Every charger'))
+
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(triagePosts(fetchMock, 'ticket-a104')).toBe(0)
+})
+
+test('drops an open review draft when a newer result replaces the one it was made for', async () => {
+  const fetchMock = mockSeededBackend([recordedOffline], { 'ticket-a104': () => response({ job: { ...completedJob, ticketId: 'ticket-a104' }, result: liveOffline() }) })
+  render(<App />)
+  await openInbox()
+  fireEvent.click(detail().getByRole('button', { name: 'Override urgency' }))
+  fireEvent.click(detail().getByRole('button', { name: /^High/ }))
+  expect(detail().getByRole('button', { name: /^High/ })).toHaveAttribute('aria-pressed', 'true')
+
+  fireEvent.click(detail().getAllByRole('button', { name: 'Re-run live' })[0])
+
+  await waitFor(() => expect(detail().getByText('AI verified')).toBeInTheDocument())
+  expect(detail().queryByRole('button', { name: /^High/ })).not.toBeInTheDocument()
+  expect(detail().getByRole('button', { name: 'Override urgency' })).toBeEnabled()
+  expect(triagePosts(fetchMock, 'ticket-a104')).toBe(1)
 })

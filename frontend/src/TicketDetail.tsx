@@ -5,7 +5,7 @@ import { categoryLabel, channelLabel, deciderOf, fallbackText, formatTime, isOve
 import { ReviewBar, type ReviewActions } from './ReviewBar'
 import { CheckIcon, DashIcon, EvidenceText, UrgencyPill } from './ui'
 
-export type DetailState = { running: boolean; stage: TriageStage | null; slow: boolean; error: string | null; saving: boolean }
+export type DetailState = { running: boolean; stage: TriageStage | null; slow: boolean; error: string | null; saving: boolean; reviewEpoch: number }
 
 function BackIcon() {
   return <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -220,7 +220,7 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, heading
         </aside>
       </div>
       <Trace ticket={ticket} result={result} onRerun={onRerun} rerunDisabled={state.saving} />
-      <ReviewBar key={ticket.backendId} ticket={ticket} saving={state.saving} actions={actions} />
+      <ReviewBar key={`${ticket.backendId}:${result.id}:${state.reviewEpoch}`} ticket={ticket} saving={state.saving} actions={actions} />
     </section>
   )
 }
