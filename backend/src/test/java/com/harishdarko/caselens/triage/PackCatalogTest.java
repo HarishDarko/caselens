@@ -90,6 +90,31 @@ class PackCatalogTest {
     }
 
     @Test
+    void everyBundledPackLabelsEachCategoryAndPolicyForThePage() {
+        PackCatalog catalog = PackCatalog.builtIn();
+        for (String id : catalog.ids()) {
+            PackRules pack = catalog.require(id);
+            for (Category category : pack.categories()) {
+                assertThat(pack.categoryLabel(category)).as(id + " " + category.name()).isNotBlank();
+            }
+            for (String policy : pack.policies().ids()) {
+                assertThat(pack.policyLabel(policy)).as(id + " " + policy).isNotBlank();
+            }
+        }
+        PackRules ev = catalog.defaultPack();
+        assertThat(ev.categoryLabel(Category.of("CHARGER_HARDWARE"))).isEqualTo("Charger hardware");
+        assertThat(ev.policyLabel("CONNECTOR_FAULT")).isEqualTo("Connector fault");
+        assertThat(ev.policyVersion()).isEqualTo("v1");
+        assertThat(catalog.require("saas-support").categoryLabel(Category.of("LOGIN_ACCESS"))).isEqualTo("Login and access");
+    }
+
+    @Test
+    void aPackWithoutACategoryOrPolicyLabelIsRejected() {
+        assertBroken(TestPacks.SAAS_JSON.replace("\"INVOICE\": \"Invoice\",", ""), "INVOICE");
+        assertBroken(TestPacks.SAAS_JSON.replace(", \"label\": \"Account lockout\"", ""), "label");
+    }
+
+    @Test
     void aMissingPackFileFailsWithAClearMessage() {
         assertThatThrownBy(() -> PackRules.load("does-not-exist"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Pack file is missing: /packs/does-not-exist/pack.json");

@@ -1,5 +1,6 @@
 package com.harishdarko.caselens.triage;
 
+import com.harishdarko.caselens.triage.SemanticValidationException.Check;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -28,10 +29,12 @@ public final class SemanticValidator {
         Objects.requireNonNull(result, "Provider result is required");
         Objects.requireNonNull(ticket, "Redacted ticket is required");
         if (!pack.categories().contains(result.category())) {
-            throw new SemanticValidationException("Provider returned a category outside the industry pack");
+            throw new SemanticValidationException(Check.CATEGORY_OUTSIDE_PACK, "Provider returned a category outside the industry pack");
         }
         for (String policyId : result.policyIds()) {
-            if (!policies.contains(policyId)) throw new SemanticValidationException("Provider returned an unknown policy identifier");
+            if (!policies.contains(policyId)) {
+                throw new SemanticValidationException(Check.UNKNOWN_POLICY, "Provider returned an unknown policy identifier");
+            }
         }
         String subject = normalize(ticket.subject());
         String message = normalize(ticket.message());
@@ -39,11 +42,13 @@ public final class SemanticValidator {
         for (EvidenceItem item : result.evidence()) {
             String quote = normalize(item.quote());
             if (!subject.contains(quote) && !message.contains(quote)) {
-                throw new SemanticValidationException("Evidence quote was not found in the redacted ticket");
+                throw new SemanticValidationException(Check.QUOTE_NOT_FOUND, "Evidence quote was not found in the redacted ticket");
             }
             distinctQuotes.add(quote);
         }
-        if (distinctQuotes.isEmpty()) throw new SemanticValidationException("Provider returned no evidence");
+        if (distinctQuotes.isEmpty()) {
+            throw new SemanticValidationException(Check.NO_EVIDENCE, "Provider returned no evidence");
+        }
         String evidenceText = String.join(" ", distinctQuotes).toLowerCase(Locale.ROOT);
         ReliabilitySignal signal = distinctQuotes.size() >= 2 && supportsDecision(pack, result, evidenceText)
                 ? ReliabilitySignal.HIGH : ReliabilitySignal.MEDIUM;

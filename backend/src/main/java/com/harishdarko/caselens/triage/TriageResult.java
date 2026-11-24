@@ -17,7 +17,8 @@ import tools.jackson.databind.ObjectMapper;
 @Table(name = "triage_result")
 public class TriageResult {
     @Id private UUID id;
-    @Column(name = "event_id", nullable = false, unique = true) private UUID eventId;
+    /** The queued event this result answered; null only for a recorded result, which had no event. */
+    @Column(name = "event_id", unique = true) private UUID eventId;
     @Column(name = "workspace_id", nullable = false) private UUID workspaceId;
     @Column(name = "ticket_id", nullable = false) private UUID ticketId;
     @Convert(converter = CategoryConverter.class) @Column(nullable = false, length = 32) private Category category;
@@ -38,12 +39,20 @@ public class TriageResult {
     @Column(name = "model_version", nullable = false, length = 80) private String modelVersion;
     @Column(name = "prompt_version", nullable = false, length = 80) private String promptVersion;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
+    /**
+     * A real AI result captured earlier and seeded with the workspace, so the page has reviewed examples before any
+     * live call. It has no outbox event, job or model invocation, and live latency and provider figures leave it out.
+     */
+    @Column(nullable = false) private boolean recorded;
 
     protected TriageResult() {}
 
-    private TriageResult(UUID eventId, UUID workspaceId, TriageDecision decision, Instant now, ObjectMapper mapper) {
+    private TriageResult(UUID eventId, UUID workspaceId, TriageDecision decision, Instant now, ObjectMapper mapper,
+            boolean recorded) {
         this.id = UUID.randomUUID();
-        this.eventId = Objects.requireNonNull(eventId);
+        this.recorded = recorded;
+        if (!recorded) Objects.requireNonNull(eventId, "A live result needs its event id");
+        this.eventId = eventId;
         this.workspaceId = Objects.requireNonNull(workspaceId);
         this.ticketId = decision.ticketId();
         this.category = decision.category();
@@ -67,7 +76,12 @@ public class TriageResult {
     }
 
     public static TriageResult from(UUID eventId, UUID workspaceId, TriageDecision decision, Instant now, ObjectMapper mapper) {
-        return new TriageResult(eventId, workspaceId, decision, now, mapper);
+        return new TriageResult(eventId, workspaceId, decision, now, mapper, false);
+    }
+
+    /** A recorded result: no event id, and marked recorded so live figures leave it out. */
+    public static TriageResult recorded(UUID workspaceId, TriageDecision decision, Instant now, ObjectMapper mapper) {
+        return new TriageResult(null, workspaceId, decision, now, mapper, true);
     }
 
     private String json(ObjectMapper mapper, Object value) {
@@ -97,4 +111,5 @@ public class TriageResult {
     public String getModelVersion() { return modelVersion; }
     public String getPromptVersion() { return promptVersion; }
     public Instant getCreatedAt() { return createdAt; }
+    public boolean isRecorded() { return recorded; }
 }

@@ -99,7 +99,7 @@ export type FeedbackResponse = {
   id: string
   ticketId: string
   originalResultId: string
-  correctedCategory: string
+  correctedCategory: string | null
   correctedUrgency: Urgency | null
   correctedSlaRisk: 'LOW' | 'MEDIUM' | 'HIGH' | null
   note: string | null

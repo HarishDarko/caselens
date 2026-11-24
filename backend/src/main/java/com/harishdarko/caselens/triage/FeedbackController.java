@@ -2,10 +2,11 @@ package com.harishdarko.caselens.triage;
 
 import com.harishdarko.caselens.demo.DemoPrincipal;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -28,8 +29,9 @@ class FeedbackController {
     @ResponseStatus(HttpStatus.CREATED)
     FeedbackResponse submit(@AuthenticationPrincipal DemoPrincipal principal, @PathVariable UUID ticketId,
             @Valid @RequestBody FeedbackRequest request) {
-        return FeedbackResponse.from(service.submit(principal.workspaceId(), ticketId, request.triageResultId(),
-                request.category(), request.urgency(), request.slaRisk(), request.note(), request.requestId()));
+        return FeedbackResponse.from(service.submit(principal.workspaceId(), ticketId, request.resultId(),
+                request.decision(), request.category(), request.urgency(), request.slaRisk(), request.note(),
+                request.requestId()));
     }
 
     @GetMapping("/{ticketId}/feedback")
@@ -37,16 +39,29 @@ class FeedbackController {
         return new FeedbackListResponse(service.list(principal.workspaceId(), ticketId));
     }
 
-    /** requestId is optional: a client id for this submit, so a resent request saves one entry (CL-05). */
-    record FeedbackRequest(UUID triageResultId, Category category, Urgency urgency, SlaRisk slaRisk,
-            @NotBlank @Size(max = 500) String note, UUID requestId) {}
+    /**
+     * requestId is optional: a client id for this submit, so a resent request saves one entry (CL-05). decision
+     * defaults to CORRECTED, as every submit was before it existed; the note is optional for both decisions. The
+     * result may be named triageResultId (older clients) or originalResultId (the redesigned page); a request that
+     * names two different results is a validation error.
+     */
+    record FeedbackRequest(UUID triageResultId, UUID originalResultId, FeedbackDecision decision, Category category,
+            Urgency urgency, SlaRisk slaRisk, @Size(max = 500) String note, UUID requestId) {
+        UUID resultId() {
+            if (triageResultId != null && originalResultId != null && !triageResultId.equals(originalResultId)) {
+                throw new ConstraintViolationException("The request names two different results", Set.of());
+            }
+            return triageResultId != null ? triageResultId : originalResultId;
+        }
+    }
 
-    record FeedbackResponse(UUID id, UUID ticketId, UUID originalResultId, Category correctedCategory,
-            Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note, String submittedBy, Instant createdAt) {
+    record FeedbackResponse(UUID id, UUID ticketId, UUID originalResultId, FeedbackDecision decision,
+            Category correctedCategory, Urgency correctedUrgency, SlaRisk correctedSlaRisk, String note,
+            String submittedBy, Instant createdAt) {
         static FeedbackResponse from(FeedbackSnapshot feedback) {
             return new FeedbackResponse(feedback.id(), feedback.ticketId(), feedback.originalResultId(),
-                    feedback.correctedCategory(), feedback.correctedUrgency(), feedback.correctedSlaRisk(),
-                    feedback.note(), feedback.submittedBy(), feedback.createdAt());
+                    feedback.decision(), feedback.correctedCategory(), feedback.correctedUrgency(),
+                    feedback.correctedSlaRisk(), feedback.note(), feedback.submittedBy(), feedback.createdAt());
         }
     }
 

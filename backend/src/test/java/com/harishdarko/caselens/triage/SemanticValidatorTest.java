@@ -40,7 +40,25 @@ class SemanticValidatorTest {
 
         assertThatThrownBy(() -> validator.validate(result, ticket))
                 .isInstanceOf(SemanticValidationException.class)
-                .hasMessage("Evidence quote was not found in the redacted ticket");
+                .hasMessage("Evidence quote was not found in the redacted ticket")
+                .extracting(failure -> ((SemanticValidationException) failure).check())
+                .isEqualTo(SemanticValidationException.Check.QUOTE_NOT_FOUND);
+    }
+
+    @Test
+    void namesTheCategoryCheckWhenTheCategoryIsOutsideThePack() {
+        ProviderTriageResult result = new ProviderTriageResult(
+                Category.of("LOGIN_ACCESS"), Urgency.HIGH, SlaRisk.HIGH, Sentiment.NEGATIVE,
+                "Payment completed but the charging session did not begin.",
+                List.of(new EvidenceItem("session SESSION-DEMO-88421 never started", "Service blocked")),
+                List.of(), "Payment was captured while the expected charging service remained unavailable.",
+                List.of("Verify payment and session state"),
+                "We are checking the payment and charging session state now.", List.of(), "mock-v1", "triage-v1");
+
+        assertThatThrownBy(() -> validator.validate(result, ticket))
+                .isInstanceOf(SemanticValidationException.class)
+                .extracting(failure -> ((SemanticValidationException) failure).check())
+                .isEqualTo(SemanticValidationException.Check.CATEGORY_OUTSIDE_PACK);
     }
 
     @Test
@@ -56,7 +74,9 @@ class SemanticValidatorTest {
 
         assertThatThrownBy(() -> validator.validate(result, ticket))
                 .isInstanceOf(SemanticValidationException.class)
-                .hasMessage("Provider returned an unknown policy identifier");
+                .hasMessage("Provider returned an unknown policy identifier")
+                .extracting(failure -> ((SemanticValidationException) failure).check())
+                .isEqualTo(SemanticValidationException.Check.UNKNOWN_POLICY);
     }
 
     @Test

@@ -40,7 +40,7 @@ class FeedbackServiceTest {
         doThrow(new InvalidDemoTokenException()).when(workspaces).lockForUpdate(workspaceId);
 
         assertThatThrownBy(() -> service().submit(workspaceId, UUID.randomUUID(), null,
-                Category.of("CHARGING_SESSION"), Urgency.HIGH, null, "note", null))
+                FeedbackDecision.CORRECTED, Category.of("CHARGING_SESSION"), Urgency.HIGH, null, "note", null))
                 .isInstanceOf(InvalidDemoTokenException.class);
         verify(tickets, never()).findByIdAndWorkspaceId(any(), any());
         verify(packs, never()).forWorkspace(any());
@@ -53,7 +53,7 @@ class FeedbackServiceTest {
         when(tickets.findByIdAndWorkspaceId(ticketId, workspaceId)).thenReturn(Optional.empty());
 
         // A ticket that a concurrent reset deleted before this submit got the lock is a clean 404, not a 500.
-        assertThatThrownBy(() -> service().submit(workspaceId, ticketId, null, null, Urgency.HIGH, null, "note", null))
+        assertThatThrownBy(() -> service().submit(workspaceId, ticketId, null, FeedbackDecision.CORRECTED, null, Urgency.HIGH, null, "note", null))
                 .isInstanceOf(TicketNotFoundException.class);
         InOrder order = inOrder(workspaces, tickets);
         order.verify(workspaces).lockForUpdate(workspaceId);

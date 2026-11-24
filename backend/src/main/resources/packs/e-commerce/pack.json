@@ -3,6 +3,15 @@
   "name": "E-commerce",
   "categories": ["ORDER_STATUS", "DELIVERY", "RETURN_REFUND", "PAYMENT", "PRODUCT_ISSUE", "ACCOUNT_ACCESS", "GENERAL"],
   "generalCategory": "GENERAL",
+  "categoryLabels": {
+    "ORDER_STATUS": "Order status",
+    "DELIVERY": "Delivery",
+    "RETURN_REFUND": "Return or refund",
+    "PAYMENT": "Payment",
+    "PRODUCT_ISSUE": "Product issue",
+    "ACCOUNT_ACCESS": "Account access",
+    "GENERAL": "General"
+  },
   "categoryDescriptions": {
     "ORDER_STATUS": "Changes or cancellations before an order ships, and orders that have not shipped yet.",
     "DELIVERY": "Tracking, and parcels that are late, lost or delivered to the wrong place after shipping.",
@@ -14,12 +23,12 @@
   },
   "policyVersion": "shop-v1",
   "policies": [
-    { "id": "LOST_PARCEL_CLAIM", "guidance": "Check the carrier's proof of delivery (photo or GPS) and the address; within 48 hours of the delivered scan, ask the customer to check nearby, then open a claim." },
-    { "id": "DAMAGED_ITEM", "guidance": "Ask for a photo of the damage and offer a replacement or a refund under the returns policy." },
-    { "id": "REFUND_TRACE", "guidance": "Confirm the return was received; if the refund has not reached the customer, trace it with the payment provider and share the refund reference." },
-    { "id": "DOUBLE_CHARGE", "guidance": "Check the payment processor first: refund a second capture at once; if it is only a pending authorization, explain that it drops off within 5 days." },
-    { "id": "ADDRESS_CHANGE", "guidance": "Change the address only before the order ships; after that, ask the carrier to redirect it." },
-    { "id": "ACCOUNT_RECOVERY", "guidance": "Check for a locked account or an order placed as a guest before sending another reset; verify the account email and never ask for the password." }
+    { "id": "LOST_PARCEL_CLAIM", "label": "Lost parcel claim", "guidance": "Check the carrier's proof of delivery (photo or GPS) and the address; within 48 hours of the delivered scan, ask the customer to check nearby, then open a claim." },
+    { "id": "DAMAGED_ITEM", "label": "Damaged item", "guidance": "Ask for a photo of the damage and offer a replacement or a refund under the returns policy." },
+    { "id": "REFUND_TRACE", "label": "Refund trace", "guidance": "Confirm the return was received; if the refund has not reached the customer, trace it with the payment provider and share the refund reference." },
+    { "id": "DOUBLE_CHARGE", "label": "Double charge", "guidance": "Check the payment processor first: refund a second capture at once; if it is only a pending authorization, explain that it drops off within 5 days." },
+    { "id": "ADDRESS_CHANGE", "label": "Address change", "guidance": "Change the address only before the order ships; after that, ask the carrier to redirect it." },
+    { "id": "ACCOUNT_RECOVERY", "label": "Account recovery", "guidance": "Check for a locked account or an order placed as a guest before sending another reset; verify the account email and never ask for the password." }
   ],
   "rules": {
     "category": [

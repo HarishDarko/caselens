@@ -46,7 +46,7 @@ class DemoWorkspaceOpenApiTest {
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andExpect(jsonPath("$.expiresAt").isNotEmpty())
                 .andExpect(jsonPath("$.industry").value("saas-support"))
-                .andExpect(jsonPath("$.tickets.length()").value(9))
+                .andExpect(jsonPath("$.tickets.length()").value(8))
                 .andReturn().getResponse().getContentAsString());
         String bearer = "Bearer " + opened.get("token").asText();
 
@@ -81,18 +81,18 @@ class DemoWorkspaceOpenApiTest {
         String oldClient = "Bearer " + json(mvc.perform(post("/api/demo/session")).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString()).get("token").asText();
         mvc.perform(post("/api/demo/reset").header("Authorization", oldClient))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(9));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(8));
         mvc.perform(get("/api/tickets?page=0&size=50").header("Authorization", oldClient))
-                .andExpect(jsonPath("$.totalElements").value(9));
+                .andExpect(jsonPath("$.totalElements").value(8));
 
         String seeded = "Bearer " + json(mvc.perform(post("/api/demo/session?seed=true")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.industry").value("ev-charging"))
-                .andExpect(jsonPath("$.tickets.length()").value(9))
+                .andExpect(jsonPath("$.tickets.length()").value(8))
                 .andReturn().getResponse().getContentAsString()).get("token").asText();
         mvc.perform(post("/api/demo/reset").header("Authorization", seeded))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(9));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.seeded").value(8));
         mvc.perform(get("/api/tickets?page=0&size=50").header("Authorization", seeded))
-                .andExpect(jsonPath("$.totalElements").value(9));
+                .andExpect(jsonPath("$.totalElements").value(8));
     }
 
     @Test

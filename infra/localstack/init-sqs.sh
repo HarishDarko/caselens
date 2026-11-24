@@ -7,7 +7,7 @@ ATTRIBUTES_FILE="$(mktemp)"
 trap 'rm -f "$ATTRIBUTES_FILE"' EXIT
 
 cat > "$ATTRIBUTES_FILE" <<EOF
-{"RedrivePolicy":"{\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"5\"}"}
+{"VisibilityTimeout":"90","RedrivePolicy":"{\"deadLetterTargetArn\":\"${DLQ_ARN}\",\"maxReceiveCount\":\"5\"}"}
 EOF
 
 awslocal sqs create-queue \

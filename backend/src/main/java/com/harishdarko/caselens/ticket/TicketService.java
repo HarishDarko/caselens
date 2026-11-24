@@ -94,9 +94,9 @@ public class TicketService {
     public int reset(UUID workspaceId) {
         workspaces.lockForUpdate(workspaceId);
         tickets.deleteByWorkspaceId(workspaceId);
-        List<DemoScenario> all = scenarios.forWorkspace(workspaceId);
-        all.forEach(scenario -> saveScenario(workspaceId, scenario, UUID.randomUUID()));
-        return all.size();
+        List<DemoScenario> seeded = scenarios.seededForWorkspace(workspaceId);
+        seeded.forEach(scenario -> saveScenario(workspaceId, scenario, UUID.randomUUID()));
+        return seeded.size();
     }
 
     /**

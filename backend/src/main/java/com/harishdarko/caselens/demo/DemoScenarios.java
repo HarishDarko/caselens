@@ -13,7 +13,8 @@ import java.util.UUID;
 /**
  * The demo tickets of each industry. EV charging keeps its versioned file (demo/scenarios-v1.json); every other
  * industry has packs/&lt;id&gt;/scenarios.json. The retry demonstration is not about any industry, so every
- * workspace gets it.
+ * workspace can create it, but it is not seeded: a new workspace shows only its industry's tickets, and Quality and
+ * operations creates the retry ticket on demand.
  */
 public final class DemoScenarios {
     static final String SHARED_RETRY_SCENARIO = "provider-retry-demo";
@@ -60,6 +61,15 @@ public final class DemoScenarios {
         return forIndustry(workspaces.industryOf(workspaceId));
     }
 
+    /** The tickets a new or reset workspace of this industry starts with: every scenario but the retry demonstration. */
+    public List<DemoScenario> seededForIndustry(String industry) {
+        return forIndustry(industry).stream().filter(scenario -> !scenario.key().equals(SHARED_RETRY_SCENARIO)).toList();
+    }
+
+    public List<DemoScenario> seededForWorkspace(UUID workspaceId) {
+        return seededForIndustry(workspaces.industryOf(workspaceId));
+    }
+
     /** A scenario of the workspace's industry; the same error as before for a key the workspace does not have. */
     public DemoScenario require(UUID workspaceId, String key) {
         return forWorkspace(workspaceId).stream().filter(scenario -> scenario.key().equals(key)).findFirst()
@@ -68,7 +78,7 @@ public final class DemoScenarios {
 
     /** The scenario the inbox offers first: the first critical one in the file, or else the first one. */
     public DemoScenario featured(String industry) {
-        List<DemoScenario> scenarios = forIndustry(industry);
+        List<DemoScenario> scenarios = seededForIndustry(industry);
         return scenarios.stream().filter(scenario -> "CRITICAL".equals(scenario.expectedUrgency())).findFirst()
                 .orElse(scenarios.get(0));
     }
