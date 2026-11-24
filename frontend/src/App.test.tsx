@@ -926,7 +926,7 @@ test('says plainly why the pack rules decided a ticket, and labels it as a rules
   fireEvent.click(row(PAYMENT))
 
   await waitFor(() => expect(detail().getByText('Rules fallback', { selector: '.badge' })).toBeInTheDocument())
-  expect(document.querySelector('.fallback-note')).toHaveTextContent("Rules fallback. Today's live AI budget for this demo is spent. Fixed pack rules decided this ticket instead")
+  expect(document.querySelector('.fallback-note')).toHaveTextContent("Rules fallback. Today's live AI budget for this demo is used up. Recorded results and the rules still work; live AI is back after midnight UTC. Fixed pack rules decided this ticket instead")
   expect(detail().getByRole('heading', { name: 'Why the rules decided this' })).toBeInTheDocument()
   expect(document.querySelector('.d-subject mark.ev')).toHaveTextContent(PAYMENT)
   expect(row(PAYMENT)).toHaveTextContent('Rules fallback')

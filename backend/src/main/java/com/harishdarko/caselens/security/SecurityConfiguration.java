@@ -59,8 +59,8 @@ class SecurityConfiguration {
 
     @Bean
     AiCallBudget aiCallBudget(RateLimitService limits, Clock clock,
-            @Value("${caselens.ai.daily-call-budget:300}") int dailyCallBudget,
-            @Value("${caselens.ai.daily-call-share-per-client:30}") int dailyCallSharePerClient) {
+            @Value("${caselens.ai.daily-call-budget:80}") int dailyCallBudget,
+            @Value("${caselens.ai.daily-call-share-per-client:20}") int dailyCallSharePerClient) {
         return new AiCallBudget(limits, clock, dailyCallBudget, dailyCallSharePerClient);
     }
 
