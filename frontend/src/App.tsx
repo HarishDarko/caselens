@@ -8,6 +8,7 @@ import {
   reviewOrder, SESSION_ENDED_BANNER_TEXT, SLOW_TRIAGE_NOTICE_MS, TRIAGE_FAILED_TEXT, NOT_TRIAGED_TEXT, TRIAGE_STAGE_TEXT, TRIAGE_STILL_RUNNING_TEXT,
   TRIAGE_WAIT_MS, triagePollDelay, URGENCY_LABEL, deciderOf, WAKING_TEXT, type Ticket, type TriageStage, type Urgency,
 } from './model'
+import { rerunSource, track } from './analytics'
 import { LiveStatus, QualityOps, type LiveState } from './QualityOps'
 import { Queue, type TicketActivity } from './Queue'
 import { TicketDetail } from './TicketDetail'
@@ -66,6 +67,7 @@ function App() {
   const [liveState, setLiveState] = useState<LiveState>('loading')
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dialog, setDialog] = useState<'built' | 'menu' | null>(null)
+  useEffect(() => { if (dialog === 'built') track('how_its_built_opened') }, [dialog])
   const [retryDemoStartedAt, setRetryDemoStartedAt] = useState<number | null>(null)
   // One polite live region carries state changes (triage stage, review saved). It is never refreshed on a timer.
   const [announcement, setAnnouncement] = useState('')
@@ -296,6 +298,7 @@ function App() {
       const top = reviewOrder(opened.filter((ticket) => ticket.scenarioKey !== RETRY_DEMO_SCENARIO))[0]
       setSelectedTicketId(!isPhone() && top?.result ? top.id : null)
       setView('inbox'); setSessionOpen(true)
+      track('workspace_opened', { industry: session.industry ?? industryId })
     }
     catch (cause: unknown) { if (!signal.aborted) setError(plainError(cause, 'Could not open the demo workspace. Try again in a few seconds.')) } finally { if (!signal.aborted) setBusy(false) }
   }
@@ -306,10 +309,11 @@ function App() {
   // Reads a ticket's triage status and waits for its result. post: an explicit request (Run live AI, Re-run live, Try
   // again, or the first open of an untriaged ticket) that sends POST /triage first. Without it only GET /processing is
   // used, so it never spends AI quota. A recorded result is replaced only by a newer one.
-  async function hydrateTriage(ticket: Ticket, { post = false } = {}) {
+  async function hydrateTriage(ticket: Ticket, { post = false, source }: { post?: boolean; source?: 'first_open' | 'run_live' | 'rerun' | 'try_again' } = {}) {
     // A review being saved belongs to the current result, so a re-run waits until it is saved.
     if (!ticket.backendId || busyTicketsRef.current.has(ticket.backendId) || savingTicketsRef.current.has(ticket.backendId)) return
     const ticketId = ticket.backendId
+    if (post && source) track('live_triage_requested', { source })
     const previousResultId = ticket.result?.id ?? null
     const signal = sessionAbortRef.current.signal
     const busyTickets = busyTicketsRef.current
@@ -408,9 +412,10 @@ function App() {
     // A POST /triage only comes from an explicit click or the first open of an untriaged ticket nobody has requested yet.
     // Every other open (after a timeout, an error, a 409, an Operations retry) only reads the status. A ticket whose
     // worker gave up shows the failure first; its Try again button runs it again.
+    if (ticket) track('ticket_opened', ticket.result ? { recorded: Boolean(ticket.result.recorded), urgency: ticket.result.urgency, decision_source: ticket.result.decisionSource } : undefined)
     if (!ticket || ticketErrors[ticket.backendId]?.hold) return
     if (requestedRef.current.has(ticket.backendId)) void hydrateTriage(ticket)
-    else if (!ticket.result) void hydrateTriage(ticket, { post: true })
+    else if (!ticket.result) void hydrateTriage(ticket, { post: true, source: 'first_open' })
   }
   function backToList() {
     const id = selectedTicketId
@@ -434,6 +439,7 @@ function App() {
         ? { triageResultId: result.id, decision }
         : { triageResultId: result.id, ...(legacy ? {} : { decision }), urgency: urgency ?? undefined, ...(note ? { note } : {}) }, signal)
       if (signal.aborted) return false
+      track('review_saved', { decision })
       // The review belongs to the result it was made on; a newer result on the ticket starts unreviewed and hears nothing.
       setTickets((current) => applyReview(current, ticketId, result.id, { decision, urgency, note: note || null }))
       if (!stillShows(ticketId, result.id)) return false
@@ -533,6 +539,7 @@ function App() {
 
   function navigate(next: NavView) {
     setView(next); setError(null); setQualityFocus(0)
+    if (next === 'quality') track('quality_ops_viewed')
     // After an Operations retry the selected ticket may show a stale result: read its status once (GET).
     const retried = retriedSelectedRef.current
     if (next === 'inbox' && retried) {
@@ -598,7 +605,7 @@ function App() {
           {selectedTicket && detailState
             ? <TicketDetail key={selectedTicket.backendId} ticket={selectedTicket} state={detailState} industryName={industryName} hasRecorded={hasRecorded} headingLevel={pane === 'detail' && phoneLayout ? 'h1' : 'h2'}
               actions={{ onAccept: (ticket) => submitReview(ticket, 'ACCEPTED', null, ''), onOverride: (ticket, urgency, note) => submitReview(ticket, 'CORRECTED', urgency, note) }}
-              onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { post: true })} />
+              onBack={backToList} onRerun={() => void hydrateTriage(selectedTicket, { post: true, source: rerunSource(selectedTicket) })} />
             : <section className="detail" aria-label="Ticket detail"><div className="detail-empty"><p>{inboxTickets.some((ticket) => ticket.result) ? 'Pick a ticket from the inbox.' : 'Pick a ticket to run the live AI on it. Triage takes a few seconds.'}</p></div></section>}
           <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
         </>}

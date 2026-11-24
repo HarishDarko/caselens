@@ -40,8 +40,13 @@ run "edge_serves_real_404s_and_a_narrow_csp" {
   }
 
   assert {
-    condition     = strcontains(aws_cloudfront_response_headers_policy.frontend_security.security_headers_config[0].content_security_policy[0].content_security_policy, "connect-src 'self' https://abc123.execute-api.ca-central-1.amazonaws.com;")
-    error_message = "connect-src must name only the page itself and the API origin, not every https host."
+    condition     = strcontains(aws_cloudfront_response_headers_policy.frontend_security.security_headers_config[0].content_security_policy[0].content_security_policy, "connect-src 'self' https://abc123.execute-api.ca-central-1.amazonaws.com https://cloudflareinsights.com https://us.i.posthog.com https://us-assets.i.posthog.com https://eu.i.posthog.com https://eu-assets.i.posthog.com;")
+    error_message = "connect-src must name only the page itself, the API origin and the named analytics hosts, not every https host."
+  }
+
+  assert {
+    condition     = strcontains(aws_cloudfront_response_headers_policy.frontend_security.security_headers_config[0].content_security_policy[0].content_security_policy, "script-src 'self' https://static.cloudflareinsights.com https://us-assets.i.posthog.com https://eu-assets.i.posthog.com;")
+    error_message = "script-src must name only the page itself, the Cloudflare beacon and the PostHog assets hosts."
   }
 
   assert {

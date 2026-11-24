@@ -85,6 +85,9 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_BASE_URL: ${{ vars.CASELENS_API_BASE_URL }}
+          # Public PostHog project key and region host. Both empty when the variables are unset: analytics stay off.
+          VITE_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
         run: |
           test -n "$VITE_API_BASE_URL"
           npm run build

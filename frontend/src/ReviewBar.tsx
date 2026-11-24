@@ -1,3 +1,4 @@
+import { NO_CAPTURE } from './analytics'
 import { useRef, useState } from 'react'
 import { categoryLabel, deciderOf, isOverridden, supportsAccept, URGENCIES, URGENCY_LABEL, type Ticket, type Urgency } from './model'
 import { CheckIcon, UrgencyPill } from './ui'
@@ -86,7 +87,7 @@ export function ReviewBar({ ticket, saving, actions }: { ticket: Ticket; saving:
     return (
       <div className="review-bar is-done" role="region" aria-label="Review" ref={barRef}>
         <div className="rv-text"><span className="rv-lines">
-          <span className="rv-main"><b>Overridden.</b> <span className="rv-pair">{by.name}: <UrgencyPill urgency={ai} />, You: <UrgencyPill urgency={current} /></span>{review.note && <span className="rv-note">“{review.note}”</span>}</span>
+          <span className="rv-main"><b>Overridden.</b> <span className="rv-pair">{by.name}: <UrgencyPill urgency={ai} />, You: <UrgencyPill urgency={current} /></span>{review.note && <span className={`rv-note ${NO_CAPTURE}`}>“{review.note}”</span>}</span>
           <span className="rv-keep">The original {by.lower} result stays in the record; your override is added beside it.{logged}</span>
         </span></div>
         <div className="rv-actions"><button type="button" className="btn btn-secondary" onClick={startReview} disabled={saving}>Change review</button></div>
