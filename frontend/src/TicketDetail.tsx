@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { track } from './analytics'
 import type { TriageResult } from './api'
 import { meaningOf, placeEvidence, quoteOf, quoteSummary, type EvidencePlacement } from './evidence'
 import { categoryLabel, channelLabel, deciderOf, fallbackText, formatTime, isOverridden, policiesOf, provenanceOf, seconds, shownUrgency, TRIAGE_STAGE_TEXT, URGENCY_LABEL, WAKING_TEXT, type Ticket, type TriageStage } from './model'
@@ -113,6 +114,9 @@ export function TicketDetail({ ticket, state, industryName, hasRecorded, heading
   const quotes = result ? result.evidence.map(quoteOf) : []
   const placement = placeEvidence(ticket.subject, ticket.message, quotes)
   const fallback = result?.decisionSource === 'RULES_FALLBACK'
+  const budgetSpent = result?.fallbackReason === 'BUDGET_SPENT' && fallback
+  const budgetResultId = result?.id
+  useEffect(() => { if (budgetSpent) track('budget_spent_shown') }, [budgetSpent, budgetResultId])
   const urgency = result ? shownUrgency(ticket) : null
   const policies = result ? policiesOf(result) : []
   const found = placement.placed.size

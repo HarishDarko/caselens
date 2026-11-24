@@ -1,7 +1,26 @@
 locals {
   name = "${var.project_name}-${var.environment}"
-  # The page calls only its own origin and the API, so the CSP names exactly those (it used to allow every https host).
-  csp_connect_src = var.deploy_compute ? "'self' ${aws_apigatewayv2_api.api[0].api_endpoint}" : "'self'"
+  # The page calls only its own origin, the API and the analytics hosts below, so the CSP names exactly those (it used to allow every https host).
+  csp_connect_src = join(" ", concat(
+    [var.deploy_compute ? "'self' ${aws_apigatewayv2_api.api[0].api_endpoint}" : "'self'"],
+    local.csp_analytics_connect_hosts,
+  ))
+  # Anonymous analytics. Cloudflare Web Analytics: its beacon script and the endpoint it reports to. PostHog (off until
+  # the build has a key, but this policy is not built per key, so both regions are named): the ingestion host and the
+  # assets host that serves its session-recording script, for the US and the EU region. Nothing else is added.
+  csp_script_src = join(" ", [
+    "'self'",
+    "https://static.cloudflareinsights.com",
+    "https://us-assets.i.posthog.com",
+    "https://eu-assets.i.posthog.com",
+  ])
+  csp_analytics_connect_hosts = [
+    "https://cloudflareinsights.com",
+    "https://us.i.posthog.com",
+    "https://us-assets.i.posthog.com",
+    "https://eu.i.posthog.com",
+    "https://eu-assets.i.posthog.com",
+  ]
   # Every alarm notifies the same places: any topics passed in, plus the email topic when an address is set.
   alarm_actions = concat(var.alarm_topic_arns, aws_sns_topic.alarms[*].arn)
 }
@@ -73,7 +92,7 @@ resource "aws_cloudfront_response_headers_policy" "frontend_security" {
 
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; connect-src ${local.csp_connect_src}; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      content_security_policy = "default-src 'self'; connect-src ${local.csp_connect_src}; img-src 'self' data:; style-src 'self'; script-src ${local.csp_script_src}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
       override                = true
     }
     content_type_options { override = true }

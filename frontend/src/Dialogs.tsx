@@ -98,6 +98,7 @@ export function HowItsBuilt({ runtime, onClose }: { runtime: RuntimeSummary | nu
         <div className="guard"><b>24 hours</b><span>then the demo workspace and everything in it is deleted</span></div>
         <div className="guard"><b>0 real customers</b><span>every ticket is synthetic, written for its industry</span></div>
       </div>
+      <p className="step-p">Anonymous, cookieless analytics.</p>
       <div className="built-foot">
         <span>{runtime
           ? `This workspace runs on ${RUNTIME_LABELS.environment[runtime.environment]}: ${RUNTIME_LABELS.database[runtime.database]}, ${RUNTIME_LABELS.queue[runtime.queue]} and ${RUNTIME_LABELS.aiProvider[runtime.aiProvider]}.`
